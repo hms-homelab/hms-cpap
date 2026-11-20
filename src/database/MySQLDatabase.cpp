@@ -466,6 +466,7 @@ void MySQLDatabase::createSchema() {
             session_id  INT NOT NULL,
             kind        VARCHAR(8) NOT NULL,
             rel_path    VARCHAR(512) NOT NULL,
+            source      VARCHAR(16),
             UNIQUE KEY uq_session_file (session_id, rel_path(255)),
             KEY idx_session_files_session (session_id),
             KEY idx_session_files_path (rel_path(255))
@@ -1062,6 +1063,10 @@ void MySQLDatabase::migrateSchema() {
         // stored before. No default: NULL is "not counted yet" (see below).
         {"cpap_session_metrics", "unclassified_apneas",    "INT"},
 
+        // SDD-077 D1: where each session file came from. No default: NULL is
+        // "not filled yet" (see below).
+        {"cpap_session_files", "source",                   "VARCHAR(16)"},
+
         // Session bookkeeping the collector and SleepHQ export both read.
         {"cpap_sessions", "session_end",       "DATETIME"},
         {"cpap_sessions", "data_records",      "INT DEFAULT 0"},
@@ -1187,6 +1192,15 @@ void MySQLDatabase::migrateSchema() {
          "                                 WHERE e.session_id = m.session_id"
          "                                   AND e.event_type = 'Apnea')"
          " WHERE m.unclassified_apneas IS NULL");
+
+    // SDD-077 D1: a file row that predates source is filled from its path,
+    // once; that is the last time the path decides anything. Idempotent: a
+    // filled row is never NULL again.
+    exec("UPDATE cpap_session_files"
+         "   SET source = CASE WHEN rel_path LIKE 'as11/%' THEN 'ble-as11'"
+         "                     WHEN rel_path LIKE 'ds2/%'  THEN 'ble-ds2'"
+         "                     ELSE 'card' END"
+         " WHERE source IS NULL");
 
     // Split ResMed's lifetime PatientHours counter out of patient_hours, which
     // two writers had been filling with two different quantities. Runs after the
@@ -2471,14 +2485,18 @@ bool MySQLDatabase::replaceSessionFiles(
 
     int session_id = -1;
     {
+        // The nearest row within 5 s wins (SDD-077 D2): a card session saved
+        // a few seconds off a Bluetooth row must get its own files.
         const char* sql = "SELECT id FROM cpap_sessions WHERE device_id = ? "
-                          "AND ABS(TIMESTAMPDIFF(SECOND, session_start, ?)) <= 5 LIMIT 1";
+                          "AND ABS(TIMESTAMPDIFF(SECOND, session_start, ?)) <= 5 "
+                          "ORDER BY ABS(TIMESTAMPDIFF(SECOND, session_start, ?)) LIMIT 1";
         MysqlStmtGuard g;
         g.stmt = mysql_stmt_init(conn_);
         if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) return false;
-        ParamBinder p(2);
+        ParamBinder p(3);
         p.bindText(0, device_id);
         p.bindText(1, ts);
+        p.bindText(2, ts);
         mysql_stmt_bind_param(g.stmt, p.data());
         if (mysql_stmt_execute(g.stmt) != 0) return false;
         ResultBinder r(1);
@@ -2502,14 +2520,15 @@ bool MySQLDatabase::replaceSessionFiles(
 
     for (const auto& f : files) {
         const char* sql = "INSERT IGNORE INTO cpap_session_files "
-                          "(session_id, kind, rel_path) VALUES (?, ?, ?)";
+                          "(session_id, kind, rel_path, source) VALUES (?, ?, ?, ?)";
         MysqlStmtGuard g;
         g.stmt = mysql_stmt_init(conn_);
         if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) return false;
-        ParamBinder p(3);
+        ParamBinder p(4);
         p.bindInt(0, session_id);
         p.bindText(1, f.kind);
         p.bindText(2, f.rel_path);
+        p.bindText(3, f.source);
         mysql_stmt_bind_param(g.stmt, p.data());
         if (mysql_stmt_execute(g.stmt) != 0) {
             std::cerr << "MySQL: replaceSessionFiles insert error: "
@@ -2528,7 +2547,7 @@ std::vector<SessionFileRef> MySQLDatabase::getSessionFilesForDateFolder(
 
     const std::string pattern = "%DATALOG/" + date_folder + "/%";
     const char* sql = R"(
-        SELECT f.kind, f.rel_path
+        SELECT f.kind, f.rel_path, COALESCE(f.source, 'card')
         FROM cpap_session_files f
         JOIN cpap_sessions s ON s.id = f.session_id
         WHERE s.device_id = ? AND f.rel_path LIKE ?
@@ -2543,13 +2562,14 @@ std::vector<SessionFileRef> MySQLDatabase::getSessionFilesForDateFolder(
     mysql_stmt_bind_param(g.stmt, p.data());
     if (mysql_stmt_execute(g.stmt) != 0) return out;
 
-    ResultBinder r(2);
+    ResultBinder r(3);
     r.bindColString(0, 16);
     r.bindColStringN(1, 512);
+    r.bindColString(2, 16);
     mysql_stmt_bind_result(g.stmt, r.data());
     if (mysql_stmt_store_result(g.stmt) != 0) return out;
     while (mysql_stmt_fetch(g.stmt) == 0) {
-        out.push_back({r.colText(0), r.colText(1)});
+        out.push_back({r.colText(0), r.colText(1), r.colText(2)});
     }
     return out;
 }
@@ -3054,7 +3074,7 @@ bool MySQLDatabase::aggregateDailySummaryFromSessions(const std::string& device_
             (device_id, record_date, duration_minutes, patient_hours,
              ahi, hi, ai, oai, cai, uai, rin, mask_events, mask_pairs,
              mask_press_50, leak_50, leak_95, spo2_50, epr_level, mode,
-             index_source, updated_at)
+             index_kind, index_source, updated_at)
         SELECT
             s.device_id,
             DATE(DATE_SUB(s.session_start, INTERVAL 12 HOUR)) AS record_date,
@@ -3095,6 +3115,9 @@ bool MySQLDatabase::aggregateDailySummaryFromSessions(const std::string& device_
                     / NULLIF(SUM(CASE WHEN m.avg_epr_pressure > 0 THEN s.duration_seconds END), 0),
                 AVG(NULLIF(m.avg_epr_pressure, 0))), 2),
             MAX(COALESCE(m.therapy_mode, 0)),
+            -- SDD-024 / SDD-072 D1: the night's kind, as on SQLite (MAX over
+            -- text: any ungraded session makes the night ungraded).
+            MAX(COALESCE(m.index_kind, 'ahi')),
             'computed',
             NOW()
         FROM cpap_sessions s
@@ -3548,7 +3571,11 @@ std::vector<SessionMetrics> MySQLDatabase::getMetricsForDateRange(
             MAX(sm.therapy_mode) AS therapy_mode,
             -- Issue #78: the unclassified apnea is in the AHI, so a weekly
             -- summary without it lists types that do not add up to it.
-            SUM(sm.unclassified_apneas)          AS unclassified_apneas
+            SUM(sm.unclassified_apneas)          AS unclassified_apneas,
+            -- SDD-072 D1: what getNightlyMetrics gives the same night, its
+            -- index kind (SDD-024) and its therapy pressure (SDD-030).
+            MAX(COALESCE(sm.index_kind, 'ahi'))  AS index_kind,
+            SUM(c.s_therapy) / NULLIF(SUM(c.n_therapy), 0) AS avg_therapy_pressure
         FROM cpap_sessions s
         JOIN cpap_session_metrics sm ON sm.session_id = s.id
         LEFT JOIN (
@@ -3562,7 +3589,8 @@ std::vector<SessionMetrics> MySQLDatabase::getMetricsForDateRange(
                    SUM(mask_pressure) AS s_mask, COUNT(mask_pressure) AS n_mask,
                    SUM(epr_pressure) AS s_epr, COUNT(epr_pressure) AS n_epr,
                    SUM(snore_index) AS s_snore, COUNT(snore_index) AS n_snore,
-                   SUM(target_ventilation) AS s_tgt, COUNT(target_ventilation) AS n_tgt
+                   SUM(target_ventilation) AS s_tgt, COUNT(target_ventilation) AS n_tgt,
+                   SUM(therapy_pressure) AS s_therapy, COUNT(therapy_pressure) AS n_therapy
             FROM cpap_calculated_metrics GROUP BY session_id
         ) c ON c.session_id = sm.session_id
         LEFT JOIN (
@@ -3605,10 +3633,11 @@ std::vector<SessionMetrics> MySQLDatabase::getMetricsForDateRange(
         return {};
     }
 
-    // 31 output columns (0-30)
-    ResultBinder r(31);
+    // 33 output columns (0-32; 31 is index_kind, text)
+    ResultBinder r(33);
     r.bindColString(0);  // sleep_day
-    for (int i = 1; i < 31; ++i) r.bindColDouble(i);
+    for (int i = 1; i < 33; ++i) r.bindColDouble(i);
+    r.bindColString(31);  // SDD-072 D1: index_kind
     // Override int columns
     r.bindColInt(2);   // total_events
     r.bindColInt(3);   // OA
@@ -3659,6 +3688,9 @@ std::vector<SessionMetrics> MySQLDatabase::getMetricsForDateRange(
         m.leak_p95               = r.colOptDouble(28);
         m.therapy_mode           = r.colOptInt(29);
         m.unclassified_apneas    = r.colIsNull(30) ? 0 : r.colInt(30);   // issue #78
+        m.index_kind = (r.colText(31) == "ungraded") ? SessionMetrics::IndexKind::Ungraded
+                                                     : SessionMetrics::IndexKind::AHI;
+        m.avg_therapy_pressure   = r.colOptDouble(32);   // SDD-072 D1
 
         nights.push_back(std::move(m));
     }

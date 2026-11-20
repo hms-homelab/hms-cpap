@@ -135,7 +135,8 @@ Ds2NightImport::Result Ds2NightImport::run(const std::set<std::string>& removed)
             }
             std::vector<SessionFileRef> refs;
             for (const auto& rec : stored)
-                if (rec.session == number) refs.push_back({rec.stream == 1 ? "b01" : "b02", rec.rel_path});
+                if (rec.session == number)
+                    refs.push_back({rec.stream == 1 ? "b01" : "b02", rec.rel_path, kSourceBleDs2});
             db_->replaceSessionFiles(device_id_, start, refs);
             closeWithDataEnd(*db_, device_id_, start, s);   // SDD-037 D2
             seen_[key] = bytes;

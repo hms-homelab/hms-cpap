@@ -264,6 +264,7 @@ void SQLiteDatabase::createSchema() {
             session_id  INTEGER NOT NULL,
             kind        TEXT NOT NULL,
             rel_path    TEXT NOT NULL,
+            source      TEXT,
             UNIQUE (session_id, rel_path)
         )
     )");
@@ -272,6 +273,20 @@ void SQLiteDatabase::createSchema() {
     exec("CREATE INDEX IF NOT EXISTS idx_session_files_path "
          "ON cpap_session_files(rel_path)");
     backfillSessionFiles();
+
+    // SDD-077 D1: where each file came from ('card', 'ble-as11', 'ble-ds2').
+    // Added without a default: NULL is "not filled yet". A row that predates
+    // the column is filled from its path, once; that is the last time the
+    // path decides anything. Every write after this records its source.
+    sqlite3_exec(db_, "ALTER TABLE cpap_session_files ADD COLUMN source TEXT",
+                 nullptr, nullptr, nullptr);
+    exec(R"(
+        UPDATE cpap_session_files
+           SET source = CASE WHEN rel_path LIKE 'as11/%' THEN 'ble-as11'
+                             WHEN rel_path LIKE 'ds2/%'  THEN 'ble-ds2'
+                             ELSE 'card' END
+         WHERE source IS NULL
+    )");
 
     // cpap_session_metrics
     exec(R"(
@@ -1967,15 +1982,19 @@ bool SQLiteDatabase::replaceSessionFiles(
     {
         // Same +/-5s tolerance sessionExists uses: the stored start can differ
         // from the in-memory one by a rounding, and an exact match would then
-        // silently record nothing.
+        // silently record nothing. The nearest row wins (SDD-077 D2): a card
+        // session saved a few seconds off a Bluetooth row of the same stretch
+        // must get its own files, not hand them to the Bluetooth row.
         StmtGuard g;
         const char* sql = "SELECT id FROM cpap_sessions WHERE device_id = ? "
                           "AND session_start BETWEEN datetime(?, '-5 seconds') "
-                          "AND datetime(?, '+5 seconds')";
+                          "AND datetime(?, '+5 seconds') "
+                          "ORDER BY ABS(strftime('%s', session_start) - strftime('%s', ?)) LIMIT 1";
         if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) return false;
         bind_text(g.stmt, 1, device_id);
         bind_text(g.stmt, 2, start_str);
         bind_text(g.stmt, 3, start_str);
+        bind_text(g.stmt, 4, start_str);
         if (sqlite3_step(g.stmt) == SQLITE_ROW) session_id = sqlite3_column_int(g.stmt, 0);
     }
     // No session row yet is not an error: the caller records files right after
@@ -1994,11 +2013,12 @@ bool SQLiteDatabase::replaceSessionFiles(
     for (const auto& f : files) {
         StmtGuard g;
         const char* sql = "INSERT OR IGNORE INTO cpap_session_files "
-                          "(session_id, kind, rel_path) VALUES (?, ?, ?)";
+                          "(session_id, kind, rel_path, source) VALUES (?, ?, ?, ?)";
         if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) return false;
         sqlite3_bind_int(g.stmt, 1, session_id);
         bind_text(g.stmt, 2, f.kind);
         bind_text(g.stmt, 3, f.rel_path);
+        bind_text(g.stmt, 4, f.source);
         if (sqlite3_step(g.stmt) != SQLITE_DONE) {
             std::cerr << "SQLite: replaceSessionFiles insert error: "
                       << sqlite3_errmsg(db_) << std::endl;
@@ -2016,7 +2036,7 @@ std::vector<SessionFileRef> SQLiteDatabase::getSessionFilesForDateFolder(
 
     const std::string pattern = "%DATALOG/" + date_folder + "/%";
     const char* sql = R"(
-        SELECT f.kind, f.rel_path
+        SELECT f.kind, f.rel_path, COALESCE(f.source, 'card')
         FROM cpap_session_files f
         JOIN cpap_sessions s ON s.id = f.session_id
         WHERE s.device_id = ? AND f.rel_path LIKE ?
@@ -2027,7 +2047,7 @@ std::vector<SessionFileRef> SQLiteDatabase::getSessionFilesForDateFolder(
     bind_text(g.stmt, 1, device_id);
     bind_text(g.stmt, 2, pattern);
     while (sqlite3_step(g.stmt) == SQLITE_ROW) {
-        out.push_back({col_text(g.stmt, 0), col_text(g.stmt, 1)});
+        out.push_back({col_text(g.stmt, 0), col_text(g.stmt, 1), col_text(g.stmt, 2)});
     }
     return out;
 }
@@ -2998,7 +3018,13 @@ std::vector<SessionMetrics> SQLiteDatabase::getMetricsForDateRange(
             MAX(sm.therapy_mode) AS therapy_mode,
             -- Issue #78: the unclassified apnea is in the AHI, so a weekly
             -- summary without it lists types that do not add up to it.
-            SUM(sm.unclassified_apneas)                      AS unclassified_apneas
+            SUM(sm.unclassified_apneas)                      AS unclassified_apneas,
+            -- SDD-072 D1: a range's night carries what getNightlyMetrics
+            -- gives the same night, its index kind (SDD-024) and its therapy
+            -- pressure (SDD-030), so the weekly text cannot grade an index
+            -- the daily one refuses to.
+            MAX(COALESCE(sm.index_kind, 'ahi')) AS index_kind,
+            SUM(c.s_therapy) / NULLIF(SUM(c.n_therapy), 0) AS avg_therapy_pressure
         FROM cpap_sessions s
         JOIN cpap_session_metrics sm ON sm.session_id = s.id
         LEFT JOIN (
@@ -3012,7 +3038,8 @@ std::vector<SessionMetrics> SQLiteDatabase::getMetricsForDateRange(
                    SUM(mask_pressure) AS s_mask, COUNT(mask_pressure) AS n_mask,
                    SUM(epr_pressure) AS s_epr, COUNT(epr_pressure) AS n_epr,
                    SUM(snore_index) AS s_snore, COUNT(snore_index) AS n_snore,
-                   SUM(target_ventilation) AS s_tgt, COUNT(target_ventilation) AS n_tgt
+                   SUM(target_ventilation) AS s_tgt, COUNT(target_ventilation) AS n_tgt,
+                   SUM(therapy_pressure) AS s_therapy, COUNT(therapy_pressure) AS n_therapy
             FROM cpap_calculated_metrics GROUP BY session_id
         ) c ON c.session_id = sm.session_id
         LEFT JOIN (
@@ -3044,6 +3071,7 @@ std::vector<SessionMetrics> SQLiteDatabase::getMetricsForDateRange(
     // 19=pp95  20=avg_mask_pressure  21=avg_epr_pressure  22=avg_snore
     // 23=avg_target_ventilation  24=avg_pressure  25=max_pressure  26=min_pressure
     // 27=leak_p50  28=leak_p95_sess  29=therapy_mode  30=unclassified_apneas
+    // 31=index_kind  32=avg_therapy_pressure
 
     std::vector<SessionMetrics> nights;
     while (sqlite3_step(g.stmt) == SQLITE_ROW) {
@@ -3082,6 +3110,10 @@ std::vector<SessionMetrics> SQLiteDatabase::getMetricsForDateRange(
         m.leak_p95               = col_opt_double(g.stmt, 28);
         m.therapy_mode           = col_opt_int(g.stmt, 29);
         m.unclassified_apneas    = col_int(g.stmt, 30);   // issue #78
+        m.index_kind = (col_text(g.stmt, 31) == "ungraded")   // SDD-072 D1
+                           ? SessionMetrics::IndexKind::Ungraded
+                           : SessionMetrics::IndexKind::AHI;
+        m.avg_therapy_pressure   = col_opt_double(g.stmt, 32);
 
         nights.push_back(std::move(m));
     }

@@ -1,6 +1,9 @@
 #include "services/As11StoredNight.h"
 
+#include "clients/As11Stream.h"   // as11::isoToMs
+
 #include <algorithm>
+#include <ctime>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -204,6 +207,78 @@ std::string storedEventName(int type) {
     case 4: return "ObstructiveApneaEnd";
     default: return "";
     }
+}
+
+std::string storedFromDateTime(int64_t utc_ms) {
+    const std::time_t s = static_cast<std::time_t>(utc_ms / 1000);
+    std::tm tm{};
+#ifdef _WIN32
+    gmtime_s(&tm, &s);
+#else
+    gmtime_r(&s, &tm);
+#endif
+    char buf[40];
+    std::snprintf(buf, sizeof(buf), "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ", tm.tm_year + 1900, tm.tm_mon + 1,
+                  tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec, static_cast<int>(utc_ms % 1000));
+    return buf;
+}
+
+namespace {
+
+// The latest time a page holds: its last sample or its last event; 0 when it
+// holds none.
+int64_t pageReaches(const std::string& spool, const std::vector<uint8_t>& page) {
+    int64_t t = 0;
+    if (spool == kStoredEventsSpool) {
+        for (const auto& e : AirSense11PagesParser::parseEventsPage(page.data(), page.size()))
+            t = std::max(t, e.onset_ms);
+    } else {
+        for (const auto& c : AirSense11PagesParser::parseSignalPage(page.data(), page.size()).chunks)
+            t = std::max(t, c.end_ms);
+    }
+    return t;
+}
+
+}  // namespace
+
+StoredPullResult pullStoredNight(const std::string& root, const std::string& night,
+                                 const std::vector<StoredSpan>& mask_on, const StoredPagePull& pull) {
+    StoredPullResult r;
+    if (mask_on.empty() || !pull) {
+        r.why = "no mask-on time for the night";
+        return r;
+    }
+    int64_t first = mask_on.front().start_ms, last = mask_on.front().end_ms;
+    for (const auto& s : mask_on) {
+        first = std::min(first, s.start_ms);
+        last = std::max(last, s.end_ms);
+    }
+    for (const auto& spool : storedSpools()) {
+        std::string from = storedFromDateTime(first);
+        for (int n = 0;;) {
+            std::vector<uint8_t> page;
+            std::string next, why;
+            if (!pull(spool, from, &page, &next, &why)) {
+                r.why = spool + ": " + why;
+                return r;
+            }
+            if (!page.empty()) {
+                if (!keepStoredPage(root, night, spool, n, page)) {
+                    r.why = spool + ": page " + std::to_string(n) + " could not be kept";
+                    return r;
+                }
+                n++;
+                r.pages++;
+            }
+            // Past the night: by the cursor, or by what the page holds.
+            if (next.empty() || next == from) break;
+            const int64_t at = as11::isoToMs(next);
+            if ((at != 0 && at >= last) || pageReaches(spool, page) >= last) break;
+            from = next;
+        }
+    }
+    r.complete = true;
+    return r;
 }
 
 }  // namespace hms_cpap
