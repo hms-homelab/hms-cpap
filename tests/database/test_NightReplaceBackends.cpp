@@ -273,6 +273,123 @@ TEST_P(NightReplaceBackendTest, AFullNightWithOximetrySavesEveryRow) {
     EXPECT_EQ(rowsOf("cpap_vitals", start), 28800);
 }
 
+// ── replaceNight: one transaction ────────────────────────────────────────
+
+/// What a re-import writes for [s]: the folder's file rows and its checkpoint.
+IDatabase::NightSessionWrite write(const CPAPSession& s) {
+    IDatabase::NightSessionWrite w;
+    w.session = s;
+    w.start = s.session_start.value();
+    const std::string folder = strDayForSessionStart(w.start);
+    w.files = {{"brp", "DATALOG/" + folder + "/x_BRP.edf", kSourceCard}};
+    w.checkpoint_sizes = {{"x_BRP.edf", 4096}};
+    return w;
+}
+
+// The old night, two sessions, and the night after, stored as an import
+// stores them.
+class NightReplaceStoredTest : public NightReplaceBackendTest {
+protected:
+    const system_clock::time_point old_a_ = local(2099, 7, 10, 22);
+    const system_clock::time_point old_b_ = local(2099, 7, 11, 2);    // same night, after midnight
+    const system_clock::time_point new_ = local(2099, 7, 10, 22, 30);
+    const system_clock::time_point after_ = local(2099, 7, 11, 22);   // kAfter
+
+    void SetUp() override {
+        NightReplaceBackendTest::SetUp();
+        if (IsSkipped() || HasFatalFailure()) return;
+        for (auto at : {old_a_, old_b_, after_}) {
+            const auto w = write(night(at, 60, 1.0));
+            ASSERT_TRUE(db_->saveSession(w.session)) << engineName(GetParam());
+            ASSERT_TRUE(db_->replaceSessionFiles(device_, at, w.files));
+        }
+    }
+
+    bool stored(system_clock::time_point at) { return db_->sessionExists(device_, at); }
+
+    std::string endOf(system_clock::time_point at) {
+        const auto rows = db_->executeQuery(
+            "SELECT " + sql::tsText("session_end", db_->dbType()) + " AS e FROM cpap_sessions"
+            " WHERE device_id = " + p(1) + " AND session_start = " +
+                sql::castTimestamp(2, db_->dbType()),
+            {device_, wall::text(at)});
+        if (!rows.isArray() || rows.empty() || rows[0]["e"].isNull()) return "";
+        return rows[0]["e"].asString().substr(0, 19);
+    }
+};
+
+// A save that fails after the delete has run (and after a first session of
+// the new night was saved) leaves the old night whole: the delete and the
+// saves are one transaction.
+TEST_P(NightReplaceStoredTest, AFaultAfterTheDeleteKeepsTheOldNight) {
+    CPAPSession broken = night(new_ + hours(3), 30, 9.0);
+    broken.session_start.reset();   // saveSession cannot store a session without a start
+    auto w_broken = write(night(new_ + hours(3), 30, 9.0));
+    w_broken.session = broken;
+
+    const auto r = db_->replaceNight(device_, kNight, {write(night(new_, 300, 4.0)), w_broken});
+
+    EXPECT_FALSE(r.ok) << engineName(GetParam());
+    EXPECT_TRUE(stored(old_a_)) << engineName(GetParam()) << ": the old night was deleted";
+    EXPECT_TRUE(stored(old_b_)) << engineName(GetParam());
+    EXPECT_FALSE(stored(new_)) << engineName(GetParam()) << ": half the new night was committed";
+    EXPECT_EQ(breathsOf(old_a_), 900);
+    EXPECT_EQ(rowsOf("cpap_session_files", old_a_), 1);
+    EXPECT_TRUE(stored(after_));
+
+    // The connection is usable after the rollback: the next save commits.
+    EXPECT_TRUE(db_->saveSession(night(local(2099, 7, 12, 22), 10, 0.0))) << engineName(GetParam());
+    EXPECT_TRUE(stored(local(2099, 7, 12, 22)));
+}
+
+// The same fault through the steps alone, each call its own transaction as
+// the reparse used to run them: the old night is gone and only part of the
+// new one is there. What the engine's transaction exists to prevent.
+TEST_P(NightReplaceStoredTest, TheSameStepsWithoutTheTransactionLoseTheOldNight) {
+    auto w_broken = write(night(new_ + hours(3), 30, 9.0));
+    w_broken.session.session_start.reset();
+
+    const auto r = db_->IDatabase::replaceNight(device_, kNight,
+                                                {write(night(new_, 300, 4.0)), w_broken});
+
+    EXPECT_FALSE(r.ok);
+    EXPECT_FALSE(stored(old_a_)) << engineName(GetParam());
+    EXPECT_FALSE(stored(old_b_)) << engineName(GetParam());
+}
+
+// A good replace leaves the new night only, closed at the end its data
+// carries, with its file rows and checkpoint sizes; the night after is kept.
+TEST_P(NightReplaceStoredTest, AReplaceLeavesTheNewNightClosedWithItsFiles) {
+    const auto r = db_->replaceNight(device_, kNight, {write(night(new_, 300, 4.0))});
+
+    ASSERT_TRUE(r.ok) << engineName(GetParam());
+    EXPECT_EQ(r.deleted, 2);
+    EXPECT_EQ(r.saved, 1);
+    EXPECT_FALSE(stored(old_a_)) << engineName(GetParam());
+    EXPECT_FALSE(stored(old_b_)) << engineName(GetParam());
+    ASSERT_TRUE(stored(new_)) << engineName(GetParam());
+    EXPECT_EQ(breathsOf(new_), 4500);
+    EXPECT_EQ(endOf(new_), wall::text(new_ + hours(5))) << engineName(GetParam());
+    EXPECT_EQ(rowsOf("cpap_session_files", new_), 1);
+    EXPECT_EQ(db_->getCheckpointFileSizes(device_, new_).count("x_BRP.edf"), 1u);
+    EXPECT_TRUE(stored(after_)) << engineName(GetParam()) << ": the night after was touched";
+    EXPECT_EQ(breathsOf(after_), 900);
+}
+
+// Every write of a replace runs in the one transaction, and a plain save or
+// delete after it is its own transaction again.
+TEST_P(NightReplaceStoredTest, WritesAfterAReplaceCommitOnTheirOwn) {
+    ASSERT_TRUE(db_->replaceNight(device_, kNight, {write(night(new_, 60, 1.0))}).ok);
+    EXPECT_EQ(db_->deleteSessionsByDateFolder(device_, kAfter), 1) << engineName(GetParam());
+    EXPECT_FALSE(stored(after_));
+    ASSERT_TRUE(db_->saveSession(night(after_, 60, 1.0)));
+    EXPECT_TRUE(stored(after_));
+}
+
+INSTANTIATE_TEST_SUITE_P(Engines, NightReplaceStoredTest,
+                         ::testing::Values(Engine::SQLite, Engine::MySQL, Engine::Postgres),
+                         [](const auto& info) { return std::string(engineName(info.param)); });
+
 INSTANTIATE_TEST_SUITE_P(Engines, NightReplaceBackendTest,
                          ::testing::Values(Engine::SQLite, Engine::MySQL, Engine::Postgres),
                          [](const auto& info) { return std::string(engineName(info.param)); });

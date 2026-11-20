@@ -1,6 +1,7 @@
 #ifdef WITH_POSTGRESQL
 #include "utils/TimeCompat.h"
 #include "database/DatabaseService.h"
+#include "database/NightWrite.h"
 #include "database/SqlDialect.h"
 #include "utils/MachineClocks.h"
 #include "utils/Desaturation.h"
@@ -967,6 +968,9 @@ bool DatabaseService::ensureConnection() {
     if (isConnected()) {
         return true;
     }
+    // Never under replaceNight()'s open transaction: a new connection would
+    // destroy the one it lives on. The night fails and rolls back instead.
+    if (night_txn_) return false;
 
     std::cout << "⚠️  DB: Connection lost, reconnecting..." << std::endl;
     return connect();
@@ -1485,7 +1489,8 @@ bool DatabaseService::saveSession(const CPAPSession& session) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
 
     try {
-        pqxx::work txn(*conn_);
+        WriteTxn t(*this);   // the night's transaction, inside replaceNight()
+        pqxx::work& txn = *t;
 
         std::cout << "💾 DB: Saving session..." << std::endl;
 
@@ -1540,7 +1545,7 @@ bool DatabaseService::saveSession(const CPAPSession& session) {
             std::cout << "   Metrics saved (AHI: " << session.metrics->ahi << ")" << std::endl;
         }
 
-        txn.commit();
+        t.commit();
 
         std::cout << "✅ DB: Session saved successfully" << std::endl;
         return true;
@@ -1868,7 +1873,8 @@ bool DatabaseService::updateCheckpointFileSizes(
     }
 
     try {
-        pqxx::work txn(*conn_);
+        WriteTxn t(*this);   // the night's transaction, inside replaceNight()
+        pqxx::work& txn = *t;
 
         // Format session_start as PostgreSQL timestamp
         auto start_time_t = std::chrono::system_clock::to_time_t(session_start);
@@ -1897,7 +1903,7 @@ bool DatabaseService::updateCheckpointFileSizes(
         )";
 
         txn.exec_params(query, device_id, start_oss.str(), json_oss.str());
-        txn.commit();
+        t.commit();
 
         std::cout << "DB: Updated checkpoint_files (" << file_sizes.size() << " files)" << std::endl;
         return true;
@@ -1920,7 +1926,8 @@ bool DatabaseService::markSessionCompleted(
     }
 
     try {
-        pqxx::work txn(*conn_);
+        WriteTxn t(*this);   // the night's transaction, inside replaceNight()
+        pqxx::work& txn = *t;
 
         // Format session_start as PostgreSQL timestamp
         auto start_time_t = std::chrono::system_clock::to_time_t(session_start);
@@ -1944,7 +1951,7 @@ bool DatabaseService::markSessionCompleted(
         )";
 
         auto result = txn.exec_params(query, device_id, start_oss.str(), end_oss.str());
-        txn.commit();
+        t.commit();
 
         if (result.affected_rows() > 0) {
             std::cout << "✅ DB: Marked session " << start_oss.str() << " as COMPLETED" << std::endl;
@@ -1975,7 +1982,8 @@ bool DatabaseService::markSessionCompletedAt(
     }
 
     try {
-        pqxx::work txn(*conn_);
+        WriteTxn t(*this);   // the night's transaction, inside replaceNight()
+        pqxx::work& txn = *t;
 
         auto fmt = [](const std::chrono::system_clock::time_point& tp) {
             auto t = std::chrono::system_clock::to_time_t(tp);
@@ -1997,7 +2005,7 @@ bool DatabaseService::markSessionCompletedAt(
         )";
 
         auto result = txn.exec_params(query, device_id, start_s, end_s);
-        txn.commit();
+        t.commit();
 
         if (result.affected_rows() > 0) {
             std::cout << "✅ DB: Marked session " << start_s << " as COMPLETED at "
@@ -2025,7 +2033,8 @@ bool DatabaseService::reopenSession(
     }
 
     try {
-        pqxx::work txn(*conn_);
+        WriteTxn t(*this);   // the night's transaction, inside replaceNight()
+        pqxx::work& txn = *t;
 
         auto start_time_t = std::chrono::system_clock::to_time_t(session_start);
         std::tm* start_tm = cpapWall(&start_time_t);
@@ -2042,7 +2051,7 @@ bool DatabaseService::reopenSession(
         )";
 
         auto result = txn.exec_params(query, device_id, start_oss.str());
-        txn.commit();
+        t.commit();
 
         if (result.affected_rows() > 0) {
             std::cout << "DB: Reopened session " << start_oss.str()
@@ -2694,7 +2703,8 @@ int DatabaseService::deleteSessionsByDateFolder(const std::string& device_id,
     if (!ensureConnection()) return -1;
 
     try {
-        pqxx::work work(*conn_);
+        WriteTxn t(*this);   // the night's transaction, inside replaceNight()
+        pqxx::work& work = *t;
 
         // Match sessions whose brp_file_path contains the date folder
         std::string pattern = "%DATALOG/" + date_folder + "/%";
@@ -2713,13 +2723,45 @@ int DatabaseService::deleteSessionsByDateFolder(const std::string& device_id,
             device_id, pattern);
 
         int deleted = static_cast<int>(result.affected_rows());
-        work.commit();
+        t.commit();
         return deleted;
 
     } catch (const std::exception& e) {
         std::cerr << "DB: Failed to delete sessions for " << date_folder
                   << ": " << e.what() << std::endl;
         return -1;
+    }
+}
+
+// The delete and every save of the night in one pqxx::work: the writes it is
+// made of join it through WriteTxn. A failure, a throw or a process killed
+// before the commit leaves the old night; the server rolls an unfinished
+// transaction back when its connection goes.
+IDatabase::NightReplaceResult DatabaseService::replaceNight(
+    const std::string& device_id, const std::string& date_folder,
+    const std::vector<NightSessionWrite>& sessions) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (night_txn_ || !ensureConnection()) return {};
+
+    try {
+        pqxx::work work(*conn_);
+        struct Joined {
+            pqxx::work*& slot;
+            ~Joined() { slot = nullptr; }
+        } joined{night_txn_};
+        night_txn_ = &work;
+
+        NightReplaceResult r = writeNightSteps(*this, device_id, date_folder, sessions);
+        if (!r.ok) {
+            std::cerr << "DB: night " << date_folder << " not replaced, kept as it was" << std::endl;
+            return {};   // work's destructor rolls the night back
+        }
+        work.commit();
+        return r;
+    } catch (const std::exception& e) {
+        std::cerr << "DB: night " << date_folder << " not replaced, kept as it was: "
+                  << e.what() << std::endl;
+        return {};
     }
 }
 
@@ -2969,7 +3011,8 @@ bool DatabaseService::replaceSessionFiles(
     start_oss << std::put_time(start_tm, "%Y-%m-%d %H:%M:%S");
 
     try {
-        pqxx::work work(*conn_);
+        WriteTxn t(*this);   // the night's transaction, inside replaceNight()
+        pqxx::work& work = *t;
 
         // +/-5s, matching sessionExists: the stored start can differ from the
         // in-memory one by a rounding, and an exact match would record nothing.
@@ -2992,7 +3035,7 @@ bool DatabaseService::replaceSessionFiles(
                 "VALUES ($1, $2, $3, $4) ON CONFLICT (session_id, rel_path) DO NOTHING",
                 session_id, f.kind, f.rel_path, f.source);
         }
-        work.commit();
+        t.commit();
         return true;
 
     } catch (const std::exception& e) {

@@ -5,6 +5,7 @@
 #include <pqxx/pqxx>
 #include <libpq-fe.h>
 #include <memory>
+#include <optional>
 #include <string>
 #include <mutex>
 #include <vector>
@@ -113,6 +114,11 @@ public:
 
     int deleteSessionsByDateFolder(const std::string& device_id,
                                    const std::string& date_folder) override;
+
+    /// The delete and every save of the night in one transaction.
+    NightReplaceResult replaceNight(const std::string& device_id,
+                                    const std::string& date_folder,
+                                    const std::vector<NightSessionWrite>& sessions) override;
 
     // SDD-029
     RemoveNightResult removeNight(const std::string& device_id,
@@ -272,6 +278,25 @@ private:
     std::string connection_string_;
     std::unique_ptr<pqxx::connection> conn_;
     mutable std::recursive_mutex mutex_;
+
+    /// replaceNight()'s transaction while it is open, else null. The writes a
+    /// night is made of (WriteTxn) run in it instead of their own: pqxx allows
+    /// one transaction per connection. Guarded by mutex_.
+    pqxx::work* night_txn_ = nullptr;
+
+    /// The transaction one write runs in: the night's when replaceNight() has
+    /// one open, else its own, committed by commit().
+    class WriteTxn {
+    public:
+        explicit WriteTxn(DatabaseService& db) : outer_(db.night_txn_) {
+            if (!outer_) own_.emplace(*db.conn_);
+        }
+        pqxx::work& operator*() { return outer_ ? *outer_ : *own_; }
+        void commit() { if (own_) own_->commit(); }
+    private:
+        pqxx::work* outer_;
+        std::optional<pqxx::work> own_;
+    };
 
     PGconn* query_conn_ = nullptr;      // separate libpq connection for web reads
     mutable std::mutex query_mutex_;

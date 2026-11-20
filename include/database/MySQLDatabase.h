@@ -98,6 +98,11 @@ public:
     int deleteSessionsByDateFolder(const std::string& device_id,
                                    const std::string& date_folder) override;
 
+    /// The delete and every save of the night in one transaction.
+    NightReplaceResult replaceNight(const std::string& device_id,
+                                    const std::string& date_folder,
+                                    const std::vector<NightSessionWrite>& sessions) override;
+
     // SDD-029
     RemoveNightResult removeNight(const std::string& device_id,
                                   const std::string& night) override;
@@ -273,6 +278,10 @@ private:
     std::string database_;
     MYSQL* conn_ = nullptr;
     mutable std::recursive_mutex mutex_;
+    /// replaceNight() has the night's transaction open: saveSession joins it
+    /// instead of starting its own, which on MySQL would COMMIT the night's
+    /// delete on the spot. Guarded by mutex_.
+    bool night_txn_ = false;
     /// SDD-039 D1: why the last executeQuery() returned nothing, empty when it
     /// ran. Guarded by mutex_, read by executeQueryChecked().
     std::string last_query_error_;

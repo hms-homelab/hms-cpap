@@ -1,4 +1,5 @@
 #include "database/SQLiteDatabase.h"
+#include "database/NightWrite.h"
 #include "database/SqlDialect.h"
 #include "database/StrPercentile.h"
 #include "utils/MachineClocks.h"
@@ -857,7 +858,11 @@ bool SQLiteDatabase::saveSession(const CPAPSession& session) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!db_) { std::cerr << "SQLite: Not connected" << std::endl; return false; }
 
-    exec("BEGIN TRANSACTION");
+    // Inside replaceNight() the night's transaction is the one: no BEGIN, no
+    // COMMIT, and no ROLLBACK, which would end it and leave the rest of the
+    // night to autocommit. A failure is returned and the night rolls back.
+    const bool own_txn = !night_txn_;
+    if (own_txn) exec("BEGIN TRANSACTION");
 
     try {
         upsertDevice(session);
@@ -894,15 +899,44 @@ bool SQLiteDatabase::saveSession(const CPAPSession& session) {
             insertSessionMetrics(session_id, withDesaturations(session.metrics.value(), desat));
         }
 
-        exec("COMMIT");
+        if (own_txn) exec("COMMIT");
         std::cout << "SQLite: Session saved successfully" << std::endl;
         return true;
 
     } catch (const std::exception& e) {
-        exec("ROLLBACK");
+        if (own_txn) exec("ROLLBACK");
         std::cerr << "SQLite: Failed to save session: " << e.what() << std::endl;
         return false;
     }
+}
+
+// ---------------------------------------------------------------------------
+// replaceNight: the delete and every save of the night, one transaction
+// ---------------------------------------------------------------------------
+
+IDatabase::NightReplaceResult SQLiteDatabase::replaceNight(
+    const std::string& device_id, const std::string& date_folder,
+    const std::vector<NightSessionWrite>& sessions) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!db_ || night_txn_) return {};
+
+    // IMMEDIATE: the write lock is taken here, not halfway through the night.
+    if (!exec("BEGIN IMMEDIATE")) return {};
+    night_txn_ = true;
+    NightReplaceResult r;
+    try {
+        r = writeNightSteps(*this, device_id, date_folder, sessions);
+    } catch (const std::exception& e) {
+        std::cerr << "SQLite: replaceNight " << date_folder << ": " << e.what() << std::endl;
+        r = {};
+    }
+    night_txn_ = false;
+    if (!r.ok || !exec("COMMIT")) {
+        exec("ROLLBACK");
+        std::cerr << "SQLite: night " << date_folder << " not replaced, kept as it was" << std::endl;
+        return {};
+    }
+    return r;
 }
 
 // ---------------------------------------------------------------------------

@@ -70,6 +70,10 @@ public:
     int deleteSessionsByDateFolder(const std::string& device_id,
                                    const std::string& date_folder) override;
 
+    NightReplaceResult replaceNight(const std::string& device_id,
+                                    const std::string& date_folder,
+                                    const std::vector<NightSessionWrite>& sessions) override;
+
     // SDD-029
     RemoveNightResult removeNight(const std::string& device_id,
                                   const std::string& night) override;
