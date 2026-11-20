@@ -140,7 +140,7 @@ import type { SetupSource } from './setup-source';
         <!-- SDD-073 D9: the Sleep Bridge choice runs its own steps (D1 to D6)
              between the source step and the extras. -->
         @if (currentStep === 3 && bridgeSteps) {
-          <app-bridge-setup [listen]="sleepBridgePort"
+          <app-bridge-setup [listen]="sleepBridgePort" [macos]="serverOnMac"
                             (leave)="bridgeSteps = false"
                             (finished)="bridgeFinished($event)" />
         }
@@ -812,6 +812,8 @@ export class SetupComponent {
   /// would write a config that stops the service from starting, which since
   /// 4.6.3 is a refuse-to-boot condition rather than a silent SQLite fallback.
   serverBackends: string[] = [];
+  /** SDD-073 D7: HmsCpap runs on macOS (capabilities' platform is darwin-*). */
+  serverOnMac = false;
 
   // SDD-006 phase 3: the folder the Mule and Miner reconstructs files into.
   // REQUIRED for that source, because the bridge hands over raw files that have
@@ -856,6 +858,7 @@ export class SetupComponent {
               private t: TranslateService) {
     this.api.getCapabilities().subscribe({
       next: (caps: any) => {
+        this.serverOnMac = String(caps?.platform || '').startsWith('darwin');
         this.serverBackends = (caps?.backends || [])
           .filter((b: string) => b === 'postgresql' || b === 'mysql');
         if (this.serverBackends.length > 0 &&

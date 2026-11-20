@@ -91,6 +91,9 @@ import { SleepBridgeWatch } from '../../services/sleepbridge-watch';
             <button class="btn-secondary" [disabled]="!addressValid" (click)="confirmAddress()">
               {{ 'setup.bridge.connect.useAddress' | translate }}</button>
           }
+          @if (macos) {
+            <p class="info">{{ 'setup.bridge.connect.macFirewall' | translate }}</p>
+          }
         }
 
         @case ('wait') {
@@ -196,6 +199,8 @@ import { SleepBridgeWatch } from '../../services/sleepbridge-watch';
     .pics li { counter-increment: n; margin-bottom: 1rem; }
     .pics li span { display: block; color: #e0e0e0; text-align: center; }
     .pics li span::before { content: counter(n) ". "; color: #64b5f6; font-weight: 600; }
+    .info { background: #13263d; border: 1px solid #2f6aa8; color: #cfe3ff; border-radius: 8px;
+            padding: 0.7rem 0.9rem; line-height: 1.45; margin: 0.75rem 0 0; }
     .warn { background: #3a2a10; border: 1px solid #a06800; color: #ffcc80; border-radius: 8px;
             padding: 0.7rem 0.9rem; font-weight: 600; text-align: center; }
     .address-row { display: flex; align-items: center; justify-content: center; gap: 1.25rem;
@@ -238,6 +243,8 @@ import { SleepBridgeWatch } from '../../services/sleepbridge-watch';
 export class BridgeSetupComponent implements OnDestroy {
   /** The receiver's port (GET /api/sleepbridge). */
   @Input() set listen(p: number) { this.listenPort = p; this.port = portNote(p); }
+  /** HmsCpap runs on a Mac: its firewall may ask to let the bridge in (D7). */
+  @Input() macos = false;
   /** The sequence is over: the .cpapcard picked on D1, if any. */
   @Output() finished = new EventEmitter<File | null>();
   /** Back from the first step, to the source step. */

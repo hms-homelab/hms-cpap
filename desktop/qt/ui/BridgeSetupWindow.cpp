@@ -292,10 +292,11 @@ public:
         body_->addLayout(row);
 
 #ifdef Q_OS_MACOS
-        auto* fw = new QHBoxLayout;
-        fw->addWidget(picture("d7-macos-firewall-allow.png", 160, this));
-        fw->addWidget(words(w->t(Txt::ConnectMacFirewall), this), 1);
-        body_->addLayout(fw);
+        // An info notice, no picture (SDD-073 D7).
+        auto* fw = words(w->t(Txt::ConnectMacFirewall), this);
+        fw->setStyleSheet("background: #13263d; border: 1px solid #2f6aa8; color: #cfe3ff;"
+                          " border-radius: 6px; padding: 8px 10px;");
+        body_->addWidget(fw);
 #endif
         body_->addStretch(1);
 
