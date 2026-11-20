@@ -24,7 +24,7 @@ def args(**over):
     a = dict(teacher_provider="anthropic", teacher_mode="live", model="claude-haiku-5-5",
              max_tokens=400, rpm=6000, attempts=3, timeout=60, batch_size=50_000,
              price_in=None, price_out=None, price_cache_read=None,
-             price_cache_write_5m=None, price_cache_write_1h=None,
+             price_cache_write_5m=None, price_cache_write_1h=None, max_cost_usd=None,
              thinking_level="minimal", temperature=0.7)
     a.update(over)
     return argparse.Namespace(**a)
@@ -66,6 +66,9 @@ class FakeBatches:
     def create(self, requests):
         self.created.append(requests)
         return NS(id=f"msgbatch_{len(self.created)}", processing_status="in_progress")
+
+    def cancel(self, bid):
+        self.cancelled = getattr(self, "cancelled", []) + [bid]
 
     def retrieve(self, bid):
         return NS(id=bid, processing_status=self.status, created_at="t0", ended_at="t1")
@@ -165,6 +168,7 @@ class Batch(unittest.TestCase):
                     fh.write(json.dumps({"id": f"n{i}", "facts": FACTS}) + "\n")
             a = args(teacher_mode="batch", batch_size=2)
             fake = NS(messages=FakeMessages([]))
+            fake.with_options = lambda **kw: fake
             ledger = bc.Ledger(out / "batches.jsonl")
             teacher = bc.AnthropicTeacher(a, fake)
             self.assertEqual(bc.anthropic_batch_submit(fake, ledger, out, a, teacher), 3)
@@ -189,6 +193,47 @@ class Batch(unittest.TestCase):
             self.assertEqual(recs["n0"]["error"], "expired")
             self.assertEqual(recs["n1"]["finish"], "refusal")
             self.assertTrue(all(j.get("collected") for j in ledger.jobs.values()))
+
+    def test_byte_limit_splits_batches(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d)
+            with open(out / "facts.jsonl", "w") as fh:
+                for i in range(5):
+                    fh.write(json.dumps({"id": f"n{i}", "facts": FACTS}) + "\n")
+            a = args(teacher_mode="batch")
+            fake = NS(messages=FakeMessages([]))
+            fake.with_options = lambda **kw: fake
+            one = len(json.dumps({"custom_id": "n0", "params": bc.anthropic_params(
+                a.model, FACTS, 400, "1h")}))
+            old = bc.ANTHROPIC_BATCH_MAX_BYTES
+            bc.ANTHROPIC_BATCH_MAX_BYTES = 2 * one + 10
+            try:
+                bc.anthropic_batch_submit(fake, bc.Ledger(out / "batches.jsonl"), out, a,
+                                          bc.AnthropicTeacher(a, fake))
+            finally:
+                bc.ANTHROPIC_BATCH_MAX_BYTES = old
+            self.assertEqual([len(c) for c in fake.messages.batches.created], [2, 2, 1])
+
+    def test_cost_guard_cancels_and_stops(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d)
+            with open(out / "facts.jsonl", "w") as fh:
+                for i in range(1000):
+                    fh.write(json.dumps({"id": f"n{i}", "facts": FACTS}) + "\n")
+            usage = {"input_tokens": 600, "cache_read_input_tokens": 1700, "output_tokens": 140}
+            with open(out / "teacher.jsonl", "w") as fh:
+                fh.write(json.dumps({"id": "n0", "text": "t", "usage": usage}) + "\n")
+            ledger = bc.Ledger(out / "batches.jsonl")
+            ledger.note("msgbatch_9", state="in_progress", ids_file="x", count=999)
+            fake = NS(messages=FakeMessages([]))
+            a = args(teacher_mode="batch")
+            spent, projected, n = bc.spend(out, a)
+            self.assertAlmostEqual(projected, spent * 1000)
+            bc.check_spend(fake, ledger, out, args(teacher_mode="batch", max_cost_usd=1.0))
+            self.assertFalse(hasattr(fake.messages.batches, "cancelled"))
+            with self.assertRaises(SystemExit):
+                bc.check_spend(fake, ledger, out, args(teacher_mode="batch", max_cost_usd=0.01))
+            self.assertEqual(fake.messages.batches.cancelled, ["msgbatch_9"])
 
 
 UNGRADED = ("Night: 2024-06-09\nUsage: 8.35 hours (104.38% of 8h target)\n"

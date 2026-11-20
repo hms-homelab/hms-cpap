@@ -328,6 +328,7 @@ def answer_of(nid, data, model):
 
 ANTHROPIC_MIN_CACHE_TOKENS = 512   # Haiku 5.5's shortest cacheable prefix
 ANTHROPIC_BATCH_MAX = 100_000      # requests per Message Batch
+ANTHROPIC_BATCH_MAX_BYTES = 200_000_000   # under the 256 MB a Message Batch may hold
 ANTHROPIC_OK = ("end_turn", "stop_sequence")
 
 
@@ -710,21 +711,60 @@ def anthropic_batch_submit(client, ledger, out, args, teacher):
             and tries[f["id"]] < args.attempts]
     if not todo:
         return 0
+    # A Message Batch holds at most 100,000 requests and 256 MB; each request
+    # carries the whole instruction (about 6 KB), so the byte limit comes first.
     size = min(args.batch_size, ANTHROPIC_BATCH_MAX)
-    for start in range(0, len(todo), size):
-        chunk = todo[start:start + size]
-        tag = f"{int(time.time())}-{start // size}"
+    chunks, chunk, nbytes = [], [], 0
+    for f in todo:
+        req = Request(custom_id=f["id"],
+                      params=MessageCreateParamsNonStreaming(**teacher.params(f["facts"], ttl="1h")))
+        n = len(json.dumps(req))
+        if chunk and (len(chunk) >= size or nbytes + n > ANTHROPIC_BATCH_MAX_BYTES):
+            chunks.append(chunk)
+            chunk, nbytes = [], 0
+        chunk.append(req)
+        nbytes += n
+    if chunk:
+        chunks.append(chunk)
+    for i, chunk in enumerate(chunks):
+        tag = f"{int(time.time())}-{i}"
         ids_path = out / f"batch-{tag}.ids.json"
-        ids_path.write_text(json.dumps([f["id"] for f in chunk]))
-        batch = client.messages.batches.create(requests=[
-            Request(custom_id=f["id"],
-                    params=MessageCreateParamsNonStreaming(**teacher.params(f["facts"], ttl="1h")))
-            for f in chunk])
+        ids_path.write_text(json.dumps([r["custom_id"] for r in chunk]))
+        batch = client.with_options(timeout=900).messages.batches.create(requests=chunk)
         # Recorded at once: creating a batch is not idempotent.
         ledger.note(batch.id, state=batch.processing_status, model=args.model,
                     ids_file=ids_path.name, count=len(chunk))
         log(f"batch {batch.id}: submitted {len(chunk)} nights")
     return len(todo)
+
+
+def spend(out, args):
+    """(USD spent on the answers collected so far, the projected total for every
+    night at that rate, answers counted)."""
+    recs = [r for r in read_jsonl(out / "teacher.jsonl") if r.get("usage")]
+    if not recs:
+        return 0.0, 0.0, 0
+    prices = price_table(args)
+    spent = sum(mix_cost(token_mix(r["usage"]), prices) for r in recs)
+    with open(out / "facts.jsonl") as fh:
+        nights = sum(1 for _ in fh)
+    return spent, spent / len(recs) * nights, len(recs)
+
+
+def check_spend(client, ledger, out, args):
+    """Logs the spend after a collection; past --max-cost-usd, cancels the
+    batches still running and stops the run."""
+    spent, projected, n = spend(out, args)
+    if not n:
+        return
+    log(f"cost: ${spent:.2f} for {n} answers, projected ${projected:.2f} for all nights")
+    if args.max_cost_usd is not None and projected > args.max_cost_usd:
+        for bid, j in ledger.jobs.items():
+            if not j.get("collected") and j.get("state") != ANTHROPIC_DONE:
+                client.messages.batches.cancel(bid)
+                ledger.note(bid, state="canceling")
+        raise SystemExit(f"cost: projected ${projected:.2f} is over --max-cost-usd "
+                         f"{args.max_cost_usd:.2f}; running batches cancelled, run stopped")
 
 
 def stage_teacher_batch_anthropic(args, out):
@@ -738,12 +778,14 @@ def stage_teacher_batch_anthropic(args, out):
         n = instruction_tokens(client, args.model)
         log(f"teacher: the cached instruction is {n} tokens")
         anthropic_batch_collect(client, ledger, out, args.model)
+        check_spend(client, ledger, out, args)
         submitted = anthropic_batch_submit(client, ledger, out, args, teacher)
         active = running()
         while args.wait and active:
             log(f"batch: {active} batch(es) running; next check in {args.poll_seconds:.0f} s")
             time.sleep(args.poll_seconds)
             anthropic_batch_collect(client, ledger, out, args.model)
+            check_spend(client, ledger, out, args)
             if not running():
                 # Nights whose request errored or expired go again.
                 submitted += anthropic_batch_submit(client, ledger, out, args, teacher)
@@ -1008,6 +1050,9 @@ def main():
                     help="batch: keep checking until every job is collected")
     ap.add_argument("--poll-seconds", type=float, default=600,
                     help="batch: seconds between job checks while --wait runs")
+    ap.add_argument("--max-cost-usd", type=float, default=None,
+                    help="anthropic batch: once the spend projected for every night passes "
+                         "this, cancel the running batches and stop")
     ap.add_argument("--price-in", type=float, default=None,
                     help="USD per 1M input tokens (default anthropic 0.10 live, 0.05 batch; "
                          "gemini 0.30 live, 0.15 batch)")
