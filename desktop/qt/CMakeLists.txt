@@ -187,6 +187,11 @@ qt_add_resources(${SUPERVISOR_TARGET} "icons"
 )
 
 if(APPLE)
+    # The Sleep Bridge setup hears a card's volume finish mounting from
+    # DiskArbitration (core/qt/CardDrive.cpp).
+    target_link_libraries(${SUPERVISOR_TARGET} PRIVATE
+        "-framework DiskArbitration" "-framework CoreFoundation")
+
     # The icon has to be COPIED INTO the bundle, not merely named in the plist.
     # Info.plist declares CFBundleIconFile, but a bundle with no Resources
     # directory just shows the generic application icon, which is what shipped

@@ -288,6 +288,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The AI agent's MQTT connection has no built-in user name.** With `MQTT_USER` unset it connects anonymously, as the collector does; a set `MQTT_USER`/`MQTT_PASSWORD` is used as before.
 
 ### Fixed
+- **Sleep Bridge setup notices a card put in after its first step opened
+  (macOS).** The step heard /Volumes change when the card's folder was made,
+  before the card was mounted on it, looked too early and was never told
+  again, so "Found your machine's card" and Read card never appeared until
+  the step was opened again. It now also hears macOS say the card finished
+  mounting (and was removed).
+- **The Windows tray icon is no longer a blank square (#97).** Each tray
+  state is now an .ico with 16, 20, 24, 32 and 48 px images built into the
+  program and loaded by Windows itself at the size the notification area
+  asks for. macOS keeps its menu bar icons.
 - **The dashboard shows LIVE SESSION on first load while a night is open
   (#96).** The page read the live state once, which could be before the
   night was live (the service just started, the bridge's first batch not
