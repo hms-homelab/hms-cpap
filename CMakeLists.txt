@@ -264,8 +264,9 @@ if(EXISTS ${CPAPDASH_DS2_BLE_LOCAL_DIR}/CMakeLists.txt)
 else()
     FetchContent_Declare(cpapdash_ds2_ble
         GIT_REPOSITORY https://github.com/hms-homelab/cpapdash-ds2-ble.git
-        # v0.1.1: the read file (.ds2r) with its SEALED item (SDD-065).
-        GIT_TAG        v0.1.1
+        # v0.1.2: a bookmark is asked after an empty stream open, so the
+        # events stream is served (#99). v0.1.1: the .ds2r SEALED item.
+        GIT_TAG        v0.1.2
     )
 endif()
 set(CPAPDASH_DS2_BLE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
