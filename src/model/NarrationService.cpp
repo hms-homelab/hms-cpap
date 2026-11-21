@@ -89,20 +89,17 @@ Narration narrate(const NightFacts& night, ILocalModel& model) {
     const auto block = factBlock(night);
 
     std::string why;
-    const double temps[] = {kFirstTemperature, kRetryTemperature};
-    for (int attempt = 0; attempt < 2; ++attempt) {
-        GenerateParams p;
-        p.temperature = temps[attempt];
-        const auto text = model.generate(block, p);
-        if (!text || text->empty()) {
-            why = "the model gave no text";
-            continue;
-        }
+    GenerateParams p;
+    p.temperature = kTemperature;
+    const auto text = model.generate(block, p);
+    if (!text || text->empty()) {
+        why = "the model gave no text";
+    } else {
         const auto bad = violations(*text, block);
         if (bad.empty()) {
             r.written = true;
             r.text = *text;
-            r.how = attempt == 0 ? "model" : "model_retry";
+            r.how = "model";
             return r;
         }
         why = "the model stated figures not in the facts:";
@@ -112,8 +109,7 @@ Narration narrate(const NightFacts& night, ILocalModel& model) {
     r.text = templateSummary(night);
     r.how = "template";
     r.why = why;
-    std::cout << "Local model: " << night.sleep_day << " written from the template, twice " << why
-              << std::endl;
+    std::cout << "Local model: " << night.sleep_day << " written from the template, " << why << std::endl;
     return r;
 }
 

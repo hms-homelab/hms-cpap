@@ -215,7 +215,7 @@ TEST(NarratorModel, ASampledSummaryIsTheSameEachTimeForOneNight) {
     GgufModel model(path, kNarratorModelSha256);
     const auto night = fixtureNights().front();
     GenerateParams p;
-    p.temperature = kFirstTemperature;
+    p.temperature = 0.7;   // GgufModel still samples when asked; narrate() asks for greedy
     const auto a = model.generate(night.facts, p);
     const auto b = model.generate(night.facts, p);
     ASSERT_TRUE(a.has_value());

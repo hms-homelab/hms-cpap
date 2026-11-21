@@ -12,10 +12,11 @@
 //   2. the text is checked: a number the block does not have (the SDD-072 D3
 //      grounding rule, which allows a figure said with fewer places) or a date
 //      other than the night's own rejects it;
-//   3. a rejected text is generated once more at a lower temperature, and a
-//      second rejection gives the deterministic template, so the user gets a
-//      plain correct summary rather than a fluent wrong one, and the log says
-//      why.
+//   3. the text is generated greedily (temperature 0), the decode every
+//      measurement of narrator-v1 used (2026-11-21, Albin: greedy). A greedy
+//      retry would write the same text, so there is none: a rejected text
+//      gives the deterministic template, so the user gets a plain correct
+//      summary rather than a fluent wrong one, and the log says why.
 //
 #include "database/IDatabase.h"
 #include "model/LocalModel.h"
@@ -46,7 +47,7 @@ std::string templateSummary(const NightFacts& night);
 struct Narration {
     bool written = false;     ///< false: nothing to store (no night, or the model did not run)
     std::string text;
-    std::string how;          ///< "model", "model_retry" or "template"
+    std::string how;          ///< "model" or "template"
     std::string why;          ///< the reason for a template, or for nothing written
     NightFacts night;
 };
@@ -60,9 +61,8 @@ struct Narration {
 NightFacts modelNight(SessionMetrics m, const STRDailyRecord* str,
                       const std::optional<NightOximetryFacts>& oximetry);
 
-/// The temperatures of the first try and the one retry.
-constexpr double kFirstTemperature = 0.7;
-constexpr double kRetryTemperature = 0.2;
+/// Greedy decode: the one try's temperature.
+constexpr double kTemperature = 0.0;
 
 /// One night's summary from [model]. Reads nothing but [night].
 Narration narrate(const NightFacts& night, ILocalModel& model);

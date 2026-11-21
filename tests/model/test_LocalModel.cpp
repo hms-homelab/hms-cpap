@@ -159,35 +159,22 @@ TEST(LocalModelNarration, AGroundedFirstAnswerIsKept) {
     EXPECT_EQ(r.text, "You used it for 6.25 hours and your AHI was 2.50.");
     ASSERT_EQ(m.prompts.size(), 1u);
     EXPECT_EQ(m.prompts[0], factBlock(aNight())) << "the model is given the fact block, nothing else";
-    EXPECT_DOUBLE_EQ(m.temperatures[0], kFirstTemperature);
+    EXPECT_DOUBLE_EQ(m.temperatures[0], 0.0) << "greedy, the decode narrator-v1 was measured with";
 }
 
-TEST(LocalModelNarration, ARejectedAnswerIsTriedOnceMoreAtALowerTemperature) {
+TEST(LocalModelNarration, ARejectedAnswerGivesTheTemplateAtOnceAndSaysWhy) {
     ScriptedModel m;
-    m.replies.push_back("Your AHI was 9.9.");
-    m.replies.push_back("Your AHI was 2.5.");
-    const auto r = narrate(aNight(), m);
-    ASSERT_TRUE(r.written);
-    EXPECT_EQ(r.how, "model_retry");
-    EXPECT_EQ(r.text, "Your AHI was 2.5.");
-    ASSERT_EQ(m.temperatures.size(), 2u);
-    EXPECT_LT(m.temperatures[1], m.temperatures[0]);
-    EXPECT_DOUBLE_EQ(m.temperatures[1], kRetryTemperature);
-}
-
-TEST(LocalModelNarration, TwoRejectionsGiveTheTemplateAndSayWhy) {
-    ScriptedModel m;
-    m.replies.push_back("Your AHI was 9.9.");
     m.replies.push_back("On 2099-07-03 you slept well.");
+    m.replies.push_back("Your AHI was 2.5.");   // never asked for: no retry
     const auto r = narrate(aNight(), m);
     ASSERT_TRUE(r.written);
     EXPECT_EQ(r.how, "template");
     EXPECT_EQ(r.text, templateSummary(aNight()));
     EXPECT_NE(r.why.find("2099-07-03"), std::string::npos) << r.why;
-    EXPECT_EQ(m.prompts.size(), 2u) << "one retry, not more";
+    EXPECT_EQ(m.prompts.size(), 1u) << "a greedy retry would repeat the same text";
 }
 
-TEST(LocalModelNarration, NoTextTwiceAlsoGivesTheTemplate) {
+TEST(LocalModelNarration, NoTextAlsoGivesTheTemplate) {
     ScriptedModel m;   // no replies: generate() gives nothing
     const auto r = narrate(aNight(), m);
     ASSERT_TRUE(r.written);

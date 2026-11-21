@@ -316,6 +316,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with one permission prompt, only when the rule is there; it also removes
   hms-cpap.log (and its rotations) and the upload scratch folder. The data
   folder (`%USERPROFILE%\.hms-cpap`) is still never touched.
+- **The local sleep model writes greedily, with no second try.** Every
+  measurement of narrator-v1 (all held-out test nights through the facts
+  check, the Pi and desktop parity) used greedy decoding; sampling at 0.7 and
+  then 0.2 never was. A summary is now written greedily, and one the facts
+  check rejects is replaced by the plain template at once, since a greedy
+  retry would write the same text.
+- **The Sleep Bridge setup reads the card only when you press "Read card"
+  (#89).** Reading the card's layout needs the computer's permission, and
+  the read started on its own the moment a card appeared, so on Windows the
+  permission prompt popped up right after setup with nothing on screen
+  asking for it. The step now finds the card, says why permission is needed,
+  and asks only when Read card is pressed.
 - **A stop during a re-parse no longer loses the night.** With the web UI,
   a SIGTERM (docker stop, a service restart) ends the server through Drogon's
   own handler, and the backfill worker was left running until a static
