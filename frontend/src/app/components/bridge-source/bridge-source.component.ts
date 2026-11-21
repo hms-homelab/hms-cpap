@@ -15,7 +15,7 @@ import { formatLabel } from './bridge-source-model';
   standalone: true,
   imports: [TranslatePipe],
   template: `
-    <div class="bs" [class.listed]="head">
+    <div class="bs" [class.listed]="head" [class.rows]="rows">
       @if (head) {
         <div class="head">
           <span class="mono name">{{ sender }}</span>
@@ -25,21 +25,42 @@ import { formatLabel } from './bridge-source-model';
       }
       <div class="line">
         <span class="k">{{ 'bridgeSource.folder' | translate }}</span>
-        <span class="v mono">{{ cardRoot || ('bridgeSource.noFolder' | translate) }}</span>
-        @if (cardRoot) {
-          <button type="button" class="mini btn-secondary" (click)="copy(cardRoot, 'folder')">
-            {{ (copied === 'folder' ? 'bridgeSource.copied' : 'bridgeSource.copy') | translate }}</button>
-        }
+        <span class="vv">
+          <span class="v mono">{{ cardRoot || ('bridgeSource.noFolder' | translate) }}</span>
+          @if (cardRoot) {
+            <button type="button" class="mini btn-secondary" (click)="copy(cardRoot, 'folder')">
+              {{ (copied === 'folder' ? 'bridgeSource.copied' : 'bridgeSource.copy') | translate }}</button>
+          }
+        </span>
       </div>
       <div class="line">
         <span class="k">{{ 'bridgeSource.format' | translate }}</span>
-        <span class="v">{{ label ?? ('bridgeSource.formatUnknown' | translate) }}</span>
-        @if (cardFormat) {
-          <button type="button" class="mini btn-secondary" (click)="copy(cardFormat, 'format')">
-            {{ (copied === 'format' ? 'bridgeSource.copied' : 'bridgeSource.copy') | translate }}</button>
-        }
+        <span class="vv">
+          <span class="v">{{ label ?? ('bridgeSource.formatUnknown' | translate) }}</span>
+          @if (cardFormat) {
+            <button type="button" class="mini btn-secondary" (click)="copy(cardFormat, 'format')">
+              {{ (copied === 'format' ? 'bridgeSource.copied' : 'bridgeSource.copy') | translate }}</button>
+          }
+        </span>
       </div>
-      @if (inUse) {
+      @if (rows) {
+        <!-- The source state as the value of its own row, under the others. -->
+        <div class="line"><span class="k"></span><span class="vv state">
+          @if (inUse) {
+            <span class="inuse">&#10003; {{ 'bridgeSource.inUse' | translate }}</span>
+          } @else if (state === 'restarting') {
+            <span class="note">{{ 'bridgeSource.restarting' | translate:{ format: usedFormat } }}</span>
+          } @else if (state === 'saved') {
+            <span class="note">{{ 'bridgeSource.saved' | translate:{ format: usedFormat } }}</span>
+          } @else {
+            <button type="button" class="use btn-primary" [disabled]="!cardRoot || state === 'busy'" (click)="use()">
+              {{ 'bridgeSource.use' | translate }}</button>
+            @if (state === 'failed') {
+              <span class="err">{{ 'bridgeSource.failed' | translate:{ error: error } }}</span>
+            }
+          }
+        </span></div>
+      } @else if (inUse) {
         <div class="inuse">&#10003; {{ 'bridgeSource.inUse' | translate }}</div>
       } @else if (state === 'restarting') {
         <div class="note">{{ 'bridgeSource.restarting' | translate:{ format: usedFormat } }}</div>
@@ -64,6 +85,19 @@ import { formatLabel } from './bridge-source-model';
     .line { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
     .k { color: #9e9e9e; font-size: 0.82rem; min-width: 6.5rem; }
     .v { color: #e0e0e0; font-size: 0.88rem; word-break: break-all; }
+    .vv { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; min-width: 0; }
+    /* Item 10: the Devices card's rows, the same columns as its other facts. */
+    .bs.rows { margin: 0; gap: 0; }
+    .bs.rows .line { display: grid; grid-template-columns: var(--fact-k, minmax(7.5rem, 34%)) 1fr; gap: 0.6rem; align-items: baseline;
+      padding: 0.5rem 0; border-top: 1px solid #2a2d45; font-size: 0.85rem; }
+    .bs.rows .line:first-child { border-top: none; padding-top: 0; }
+    .bs.rows .k { min-width: 0; font-size: 0.85rem; color: #8a90a6; }
+    /* The value wraps in its own column; Copy stays at the end of its first line. */
+    .bs.rows .vv { display: grid; grid-template-columns: minmax(0, max-content) auto; justify-content: start; align-items: start; }
+    .bs.rows .vv.state { display: flex; }
+    .bs.rows .v { font-size: 0.85rem; }
+    .bs.rows .use { margin-top: 0; }
+    @media (max-width: 560px) { .bs.rows .line { grid-template-columns: 1fr; gap: 0.05rem; } }
     .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.82rem; }
     /* Colours: styles.scss (.btn-secondary, .btn-primary); sizes here. */
     .mini { padding: 0.1rem 0.5rem; font-size: 0.75rem; font-weight: 400; }
@@ -84,6 +118,8 @@ export class BridgeSourceComponent {
   /** Settings lists bridges: the serial and whether it is online, above the lines. */
   @Input() head = false;
   @Input() online = false;
+  /** Item 10: the Devices card's label/value rows, Copy right after the value. */
+  @Input() rows = false;
   /** The source was set: the format it was set with. */
   @Output() used = new EventEmitter<string>();
 

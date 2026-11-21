@@ -510,12 +510,12 @@ export function clockDifference(seconds: number): { key: string; params: Record<
  *
  * Issue #95: `offer` is the server's word: true only when the machine's own
  * card stamps said it on two separate nights and it is not the setting
- * already. Anything else is shown as information, with `hint` saying why
- * there is no button, and never a one-click fix. `preview` is when the last
- * night would start with it, said beside the button.
+ * already. The card shows the suggestion (and its warning) only then, never
+ * a one-click fix otherwise (item 10). `preview` is when the last night
+ * would start with it, said beside the button.
  */
 export function learnedOffer(clock: ClockView | null | undefined): {
-  text: string; at: number; use: string; offer: boolean; hint: string | null;
+  text: string; at: number; use: string; offer: boolean;
   preview: { now: string; would_be: string } | null;
 } | null {
   const l = clock?.learned;
@@ -523,12 +523,8 @@ export function learnedOffer(clock: ClockView | null | undefined): {
   const use = l.use || offsetSetting(l.offset);
   const already = (clock?.setting ?? '') === use;
   const offer = l.offer === true && !already;
-  let hint: string | null = null;
-  if (!offer && !already) {
-    hint = l.from === 'card_stamps' ? 'devices.clock.learnedOneNight' : 'devices.clock.learnedInfoOnly';
-  }
   const preview = offer && l.preview?.now && l.preview?.would_be ? { now: l.preview.now, would_be: l.preview.would_be } : null;
-  return { text: l.text || use, at: Number(l.at) || 0, use, offer, hint, preview };
+  return { text: l.text || use, at: Number(l.at) || 0, use, offer, preview };
 }
 
 /** A "Re-read my nights" in progress on one card. */

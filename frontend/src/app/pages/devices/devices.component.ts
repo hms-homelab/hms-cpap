@@ -1142,6 +1142,7 @@ export class DevicesComponent implements OnInit, OnDestroy {
         for (const o of this.devices) {
           if (o.clock?.device_id !== c.device_id) continue;
           delete this.clockEdits[o.key];
+          this.clockOpen[o.key] = false;
           if (r?.clock) o.clock = r.clock;
         }
         this.clockNotes[d.key] = { text: this.t.instant('devices.clock.saved'), err: false };
@@ -1258,7 +1259,26 @@ export class DevicesComponent implements OnInit, OnDestroy {
 
   /** The kind has something under More. */
   hasMore(d: DeviceEntry): boolean {
+    // Item 10: the ring's adapter check and the AirSense 11's Reset Bluetooth
+    // (when the adapter is not stuck) are rarely used, so they live here too.
+    if (d.kind === 'o2ring') return !d.detail?.through_bridge;
+    if (d.kind === 'as11_ble') return !d.detail?.not_compiled && !d.detail?.bluetooth_stuck;
     return d.kind === 'mule' || d.kind === 'sleepbridge';
+  }
+
+  // ── Item 10: the Machine clock as one line, its picker opened on Change ──
+  clockOpen: Record<string, boolean> = {};
+
+  toggleClock(d: DeviceEntry): void {
+    this.clockOpen[d.key] = !this.clockOpen[d.key];
+  }
+
+  /** "Same as this computer (UTC-05:00 now)", "UTC+10:00" or a zone with its offset now. */
+  clockSummary(c: ClockView): string {
+    // The zone's name is in the picker; the line keeps to the offset.
+    if (c.kind === 'host') return this.t.instant('devices.clock.hostNoZone', { offset: c.host_offset_text });
+    if (c.kind === 'fixed') return 'UTC' + c.setting;
+    return `${c.setting} (UTC${c.offset_text})`;
   }
 
   /** The machine as the device names it; nothing assumed beyond that. */
