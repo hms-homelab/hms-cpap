@@ -58,7 +58,7 @@
       },
       "online": {
         "title": "Tus noches en línea (opcional)",
-        "body": "¿Quieres ver también tus noches en CpapDash? Abre CpapDash, ve a Settings > hms-cpap, copia el token y pégalo aquí.",
+        "body": "¿Quieres ver también tus noches en CpapDash? Abre CpapDash, ve a Ajustes > Compartir, copia el token y pégalo aquí.",
         "open": "Generar un token en CpapDash.com",
         "token": "Token",
         "send": "Enviar mis noches a CpapDash",

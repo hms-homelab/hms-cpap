@@ -147,10 +147,11 @@ import { SleepBridgeWatch } from '../../services/sleepbridge-watch';
           <h1>{{ 'setup.bridge.online.title' | translate }}</h1>
           <p class="subtitle">{{ 'setup.bridge.online.body' | translate }}</p>
           <!-- A link, not a button (SDD-073 D6), with the external-link
-               mark after the words: it opens CpapDash (Settings > hms-cpap),
-               the same page as the desktop app's link. -->
+               mark after the words: it opens CpapDash's Settings on the
+               Sharing tab, where the hms-cpap token is (#90), the same page
+               as the desktop app's link. -->
           <p class="token-link">
-            <a href="https://cpapdash.com/settings" target="_blank" rel="noopener">
+            <a href="https://www.cpapdash.com/settings?tab=sharing" target="_blank" rel="noopener">
               {{ 'setup.bridge.online.open' | translate }}<svg class="ext" viewBox="0 0 24 24" width="14" height="14"
                 aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
                 stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>

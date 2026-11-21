@@ -58,7 +58,7 @@
       },
       "online": {
         "title": "Vos nuits en ligne (facultatif)",
-        "body": "Voir aussi vos nuits sur CpapDash ? Ouvrez CpapDash, allez dans Settings > hms-cpap, copiez le jeton et collez-le ici.",
+        "body": "Voir aussi vos nuits sur CpapDash ? Ouvrez CpapDash, allez dans Paramètres > Partage, copiez le jeton et collez-le ici.",
         "open": "Générer un jeton sur CpapDash.com",
         "token": "Jeton",
         "send": "Envoyer mes nuits à CpapDash",
