@@ -25,6 +25,12 @@
 // (a card reader, a copy that preserves mtime); when they do not, no stamp
 // moves in step with the machine and the host zone stays.
 //
+// Issue #95: a Sleep Bridge folder never teaches it. Its files are written by
+// hms-cpap, stamped with THIS computer's wall clock, so its stamps move in
+// step with the stream: read as the machine's UTC they split an Eastern
+// machine into drift -5 h and zone +00:00 (the sum right, the zone wrong).
+// IDataSource::stampsAreTheMachines() says which sources those are.
+//
 // Stored in cpap_machine_clock, one row per device, created at runtime like
 // cpap_night_quiet.
 //
@@ -47,9 +53,20 @@ struct MachineClock {
     long long drift_s{0};
     long long zone_s{0};
     bool      zone_known{false};
+    // Issue #95: where the learning came from (kFromCardStamps, kFromBrpGrowth,
+    // or "" for a row from before 7.0.0), the night folder it was last learned
+    // in, and on how many separate nights the same offset was learned.
+    std::string from;
+    std::string night;
+    int         nights{0};
 };
 
 namespace machine_clock {
+
+/// The machine's own FAT stamps on a card listing (SDD-054 D3).
+inline const char* const kFromCardStamps = "card_stamps";
+/// A BRP seen growing on a card with no stamps (SDD-069 P5).
+inline const char* const kFromBrpGrowth = "brp_growth";
 
 constexpr long long kStep = 15 * 60;
 constexpr long long kZoneTolerance = 120;
@@ -108,6 +125,27 @@ inline long long machineOffset(const MachineClock& c, long long now) {
 inline long long machineOffset(const MachineClock& c, const MachineZone& setting, long long now) {
     if (setting.isHost()) return machineOffset(c, now);
     return c.drift_s + setting.offsetAt(now);
+}
+
+/// Issue #95: the full offset a learning says, machine_now - UTC.
+inline long long learnedOffset(const MachineClock& c) { return c.drift_s + c.zone_s; }
+
+/// Issue #95: [learned] as learned from [from] in night folder [night], with
+/// the count of separate nights the same full offset was learned on carried
+/// over from [prev]. A different offset, or a different source, starts at one.
+inline MachineClock noteLearning(const MachineClock& prev, MachineClock learned, const std::string& from,
+                                 const std::string& night) {
+    learned.from  = from;
+    learned.night = night;
+    const bool same = prev.zone_known && learned.zone_known && prev.from == from &&
+                      learnedOffset(prev) == learnedOffset(learned);
+    if (!same) {
+        learned.nights = 1;
+    } else {
+        const int had = prev.nights > 0 ? prev.nights : 1;
+        learned.nights = (prev.night == night || night.empty()) ? had : had + 1;
+    }
+    return learned;
 }
 
 /// The stamps of one listing, by file name, for the next listing to compare.
@@ -174,13 +212,28 @@ inline void ensureTable(IDatabase& db) {
         " zone_s BIGINT NOT NULL DEFAULT 0,"
         " zone_known INTEGER NOT NULL DEFAULT 0,"
         " updated_at BIGINT NOT NULL DEFAULT 0,"
-        " clock_setting VARCHAR(64) NOT NULL DEFAULT '')",
+        " clock_setting VARCHAR(64) NOT NULL DEFAULT '',"
+        " learned_from VARCHAR(16) NOT NULL DEFAULT '',"
+        " learned_night VARCHAR(8) NOT NULL DEFAULT '',"
+        " learned_nights INTEGER NOT NULL DEFAULT 0)",
         {});
     // A table from before SDD-074 gains the column, empty for every row.
     if (!db.executeQueryChecked("SELECT clock_setting FROM cpap_machine_clock WHERE 1 = 0", {}).ok)
         db.executeQuery(
             "ALTER TABLE cpap_machine_clock ADD COLUMN clock_setting VARCHAR(64) NOT NULL DEFAULT ''", {});
+    // Issue #95: a table from before 7.0.0 gains where each learning came
+    // from, "" (not known) for every existing row, and its nights.
+    if (!db.executeQueryChecked("SELECT learned_from FROM cpap_machine_clock WHERE 1 = 0", {}).ok) {
+        db.executeQuery(
+            "ALTER TABLE cpap_machine_clock ADD COLUMN learned_from VARCHAR(16) NOT NULL DEFAULT ''", {});
+        db.executeQuery(
+            "ALTER TABLE cpap_machine_clock ADD COLUMN learned_night VARCHAR(8) NOT NULL DEFAULT ''", {});
+        db.executeQuery(
+            "ALTER TABLE cpap_machine_clock ADD COLUMN learned_nights INTEGER NOT NULL DEFAULT 0", {});
+    }
 }
+
+inline std::string asText(const Json::Value& v) { return v.isNull() ? std::string() : v.asString(); }
 
 inline long long asLong(const Json::Value& v) {
     if (v.isNull()) return 0;
@@ -194,13 +247,17 @@ inline MachineClock loadMachineClock(IDatabase& db, const std::string& device_id
     machine_clock::ensureTable(db);
     MachineClock c;
     const auto rows = db.executeQuery(
-        "SELECT drift_s, zone_s, zone_known FROM cpap_machine_clock WHERE device_id = " +
+        "SELECT drift_s, zone_s, zone_known, learned_from, learned_night, learned_nights "
+        "FROM cpap_machine_clock WHERE device_id = " +
             sql::param(1, db.dbType()),
         {device_id});
     if (rows.isArray() && !rows.empty()) {
         c.drift_s    = machine_clock::asLong(rows[0]["drift_s"]);
         c.zone_s     = machine_clock::asLong(rows[0]["zone_s"]);
         c.zone_known = machine_clock::asLong(rows[0]["zone_known"]) != 0;
+        c.from       = machine_clock::asText(rows[0]["learned_from"]);
+        c.night      = machine_clock::asText(rows[0]["learned_night"]);
+        c.nights     = static_cast<int>(machine_clock::asLong(rows[0]["learned_nights"]));
     }
     return c;
 }
@@ -210,18 +267,41 @@ inline bool saveMachineClock(IDatabase& db, const std::string& device_id,
     machine_clock::ensureTable(db);
     const DbType dt = db.dbType();
     const std::string ins =
-        "INSERT INTO cpap_machine_clock (device_id, drift_s, zone_s, zone_known, updated_at) "
+        "INSERT INTO cpap_machine_clock (device_id, drift_s, zone_s, zone_known, updated_at, "
+        "learned_from, learned_night, learned_nights) "
         "VALUES (" + sql::param(1, dt) + ", " + sql::param(2, dt) + ", " + sql::param(3, dt) +
-        ", " + sql::param(4, dt) + ", " + sql::param(5, dt) + ") ";
+        ", " + sql::param(4, dt) + ", " + sql::param(5, dt) + ", " + sql::param(6, dt) + ", " +
+        sql::param(7, dt) + ", " + sql::param(8, dt) + ") ";
     const std::string upsert = dt == DbType::MYSQL
         ? "ON DUPLICATE KEY UPDATE drift_s = VALUES(drift_s), zone_s = VALUES(zone_s), "
-          "zone_known = VALUES(zone_known), updated_at = VALUES(updated_at)"
+          "zone_known = VALUES(zone_known), updated_at = VALUES(updated_at), "
+          "learned_from = VALUES(learned_from), learned_night = VALUES(learned_night), "
+          "learned_nights = VALUES(learned_nights)"
         : "ON CONFLICT (device_id) DO UPDATE SET drift_s = excluded.drift_s, "
           "zone_s = excluded.zone_s, zone_known = excluded.zone_known, "
-          "updated_at = excluded.updated_at";
+          "updated_at = excluded.updated_at, learned_from = excluded.learned_from, "
+          "learned_night = excluded.learned_night, learned_nights = excluded.learned_nights";
     return db.executeQueryChecked(ins + upsert,
                                   {device_id, std::to_string(c.drift_s), std::to_string(c.zone_s),
-                                   c.zone_known ? "1" : "0", std::to_string(now)})
+                                   c.zone_known ? "1" : "0", std::to_string(now), c.from, c.night,
+                                   std::to_string(c.nights)})
+        .ok;
+}
+
+/// Issue #95: forget what was learned for [device_id] (drift, zone, where and
+/// when), keeping the owner's clock setting. True when a learning was there.
+inline bool forgetMachineClockLearning(IDatabase& db, const std::string& device_id) {
+    machine_clock::ensureTable(db);
+    const std::string p = sql::param(1, db.dbType());
+    const auto rows = db.executeQuery(
+        "SELECT zone_known, drift_s FROM cpap_machine_clock WHERE device_id = " + p, {device_id});
+    if (!rows.isArray() || rows.empty()) return false;
+    if (machine_clock::asLong(rows[0]["zone_known"]) == 0 && machine_clock::asLong(rows[0]["drift_s"]) == 0)
+        return false;
+    return db.executeQueryChecked(
+                 "UPDATE cpap_machine_clock SET drift_s = 0, zone_s = 0, zone_known = 0, updated_at = 0, "
+                 "learned_from = '', learned_night = '', learned_nights = 0 WHERE device_id = " + p,
+                 {device_id})
         .ok;
 }
 

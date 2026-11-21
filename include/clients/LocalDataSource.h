@@ -44,6 +44,14 @@ public:
 
     std::string sourceName() const override { return "the local folder"; }
 
+    /// Issue #95: false for a Sleep Bridge's folder (<data>/sleepbridge/<bridge>/,
+    /// known by the batches/ the bridge banks beside the card files): hms-cpap
+    /// wrote those files, so their stamps are this computer's write times.
+    bool stampsAreTheMachines() const override { return !isBridgeFolder(card_root_); }
+
+    /// A Sleep Bridge's card folder: its batches/ directory is there.
+    static bool isBridgeFolder(const std::string& card_root);
+
     std::vector<std::string> listDateFolders() override;
     std::vector<EzShareFileEntry> listFiles(const std::string& date_folder) override;
     std::vector<EzShareFileEntry> listDir(const std::string& card_path) override;

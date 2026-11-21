@@ -318,6 +318,9 @@
                              : ('devices.clock.learnedNoDate' | translate:{ offset: l.text }) }}</span>
               <button type="button" class="btn btn-primary" *ngIf="l.offer" (click)="saveClock(d, l.use)" [disabled]="clockBusy[d.key]">
                 {{ 'devices.clock.useThis' | translate }}</button>
+              <!-- Issue #95: what "Use this" would do, inline; why there is no button otherwise. -->
+              <div class="hint block" *ngIf="l.preview as p">{{ 'devices.clock.preview' | translate:{ would: p.would_be, now: p.now } }}</div>
+              <div class="hint block" *ngIf="l.hint">{{ l.hint | translate }}</div>
             </div>
             <div class="clock-warn" *ngIf="c.warn" role="status">
               <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>

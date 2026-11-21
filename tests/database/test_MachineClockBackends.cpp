@@ -228,6 +228,93 @@ TEST_P(MachineClockBackendTest, ClockSettingIsAddedToATableFromBeforeEmptyForEve
     EXPECT_TRUE(loadClockSettings(*db_).count(device_) == 0) << "empty for the existing row";
     const auto row = one("SELECT clock_setting FROM cpap_machine_clock WHERE device_id = " + p1());
     EXPECT_EQ(row["clock_setting"].asString(), "") << engineName(GetParam());
+    // Issue #95: and where it was learned, on every engine.
+    const auto from = one("SELECT learned_from, learned_night, learned_nights FROM cpap_machine_clock "
+                          "WHERE device_id = " + p1());
+    EXPECT_EQ(from["learned_from"].asString(), "") << engineName(GetParam());
+    EXPECT_EQ(machine_clock::asLong(from["learned_nights"]), 0) << engineName(GetParam());
+}
+
+// ── issue #95: the learning's source, and what the Devices page offers ───
+
+TEST_P(MachineClockBackendTest, WhereALearningCameFromIsStoredAndReadBack) {
+    MachineClock c;
+    c.drift_s = 900;
+    c.zone_s = -18900;
+    c.zone_known = true;
+    c.from = machine_clock::kFromCardStamps;
+    c.night = "20261119";
+    c.nights = 2;
+    ASSERT_TRUE(saveMachineClock(*db_, device_, c, 4242)) << engineName(GetParam());
+    const auto back = loadMachineClock(*db_, device_);
+    EXPECT_EQ(back.from, "card_stamps");
+    EXPECT_EQ(back.night, "20261119");
+    EXPECT_EQ(back.nights, 2);
+    EXPECT_EQ(learnedOffset(back), -18000);
+}
+
+TEST_P(MachineClockBackendTest, ForgettingALearningKeepsTheSetting) {
+    MachineClock c;
+    c.drift_s = -18000;
+    c.zone_known = true;
+    ASSERT_TRUE(saveMachineClock(*db_, device_, c, 4242));
+    std::string why;
+    ASSERT_TRUE(machine_clocks::save(*db_, device_, "America/New_York", &why)) << why;
+    EXPECT_TRUE(forgetMachineClockLearning(*db_, device_)) << engineName(GetParam());
+    const auto back = loadMachineClock(*db_, device_);
+    EXPECT_FALSE(back.zone_known);
+    EXPECT_EQ(back.drift_s, 0);
+    EXPECT_EQ(machineClockLearnedAt(*db_, device_), 0);
+    EXPECT_EQ(loadClockSettings(*db_)[device_], "America/New_York");
+    EXPECT_FALSE(forgetMachineClockLearning(*db_, device_)) << "nothing left to forget";
+}
+
+TEST_P(MachineClockBackendTest, TheBridgeSplitShowsTheWholeOffsetNoWarningAndNoButton) {
+    // What a Sleep Bridge folder taught before the fix: drift -5 h, zone
+    // +00:00, source unknown. On an Eastern host it is the host's offset.
+    HostZone tz("EST5EDT");
+    MachineClock c;
+    c.drift_s = -18000;
+    c.zone_s = 0;
+    c.zone_known = true;
+    ASSERT_TRUE(saveMachineClock(*db_, device_, c, 4242));
+    const auto v = clockapi::view(*db_, device_, L(2026, 11, 20, 12) + 5 * 3600, true);
+    EXPECT_EQ(v["learned"]["text"].asString(), "-05:00") << "the whole offset, never +00:00";
+    EXPECT_EQ(v["difference_s"].asInt64(), 0);
+    EXPECT_FALSE(v["warn"].asBool());
+    EXPECT_FALSE(v["learned"]["offer"].asBool());
+    EXPECT_TRUE(v["learned"]["preview"].isNull());
+}
+
+TEST_P(MachineClockBackendTest, UseThisIsOfferedOnlyForTheMachinesStampsOnTwoNightsWithAPreview) {
+    HostZone tz("EST5EDT");
+    // A night that started 22:10 on the machine's clock, read with the host's.
+    ASSERT_TRUE(db_->saveSession(session(L(2026, 11, 19, 22, 10), 3600)));
+    MachineClock c;
+    c.zone_s = 36000;
+    c.zone_known = true;
+    c.from = machine_clock::kFromCardStamps;
+    c.night = "20261118";
+    c.nights = 1;
+    ASSERT_TRUE(saveMachineClock(*db_, device_, c, 4242));
+    const long long now = L(2026, 11, 20, 12) + 5 * 3600;
+    auto v = clockapi::view(*db_, device_, now, true);
+    EXPECT_TRUE(v["warn"].asBool()) << "+10:00 against the host's -05:00";
+    EXPECT_FALSE(v["learned"]["offer"].asBool()) << "one night is not enough";
+
+    c.nights = 2;
+    ASSERT_TRUE(saveMachineClock(*db_, device_, c, 4243));
+    v = clockapi::view(*db_, device_, now, true);
+    ASSERT_TRUE(v["learned"]["offer"].asBool()) << engineName(GetParam());
+    EXPECT_EQ(v["learned"]["use"].asString(), "+10:00");
+    // 22:10 at -05:00 is 22:10 here; at +10:00 it is 07:10 the morning before.
+    EXPECT_EQ(v["learned"]["preview"]["now"].asString(), "22:10") << engineName(GetParam());
+    EXPECT_EQ(v["learned"]["preview"]["would_be"].asString(), "07:10") << engineName(GetParam());
+
+    // The same offset learned while recording (a BRP) is never offered.
+    c.from = machine_clock::kFromBrpGrowth;
+    ASSERT_TRUE(saveMachineClock(*db_, device_, c, 4244));
+    EXPECT_FALSE(clockapi::view(*db_, device_, now, true)["learned"]["offer"].asBool());
 }
 
 TEST_P(MachineClockBackendTest, ASettingIsStoredReadBackAndKeepsWhatWasLearned) {

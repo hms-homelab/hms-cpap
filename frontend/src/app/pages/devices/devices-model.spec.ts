@@ -344,11 +344,32 @@ test('the difference is said in minutes under an hour, else in hours', () => {
 test('the learned clock is a suggestion: Use this saves it as a fixed offset, gone once it is the setting', () => {
   assert.equal(learnedOffer(clock()), null);
   assert.equal(learnedOffer(undefined), null);
-  const l = learnedOffer(clock({ learned: { offset: 36000, text: '+10:00', at: 1763500000 } }));
-  assert.deepEqual(l, { text: '+10:00', at: 1763500000, use: '+10:00', offer: true });
-  assert.equal(learnedOffer(clock({ setting: '+10:00', kind: 'fixed', learned: { offset: 36000, text: '+10:00', at: 0 } }))?.offer, false);
-  assert.equal(learnedOffer(clock({ setting: 'Australia/Brisbane', kind: 'zone', learned: { offset: 36000, text: '+10:00', at: 0 } }))?.offer,
+  const preview = { night_start: '2026-11-19 22:10:00', now: '07:10', would_be: '22:10' };
+  const l = learnedOffer(clock({ learned: { offset: 36000, text: '+10:00', at: 1763500000, from: 'card_stamps', nights: 2,
+                                            use: '+10:00', offer: true, preview } }));
+  assert.deepEqual(l, { text: '+10:00', at: 1763500000, use: '+10:00', offer: true, hint: null,
+                        preview: { now: '07:10', would_be: '22:10' } });
+  assert.equal(learnedOffer(clock({ setting: '+10:00', kind: 'fixed',
+                                    learned: { offset: 36000, text: '+10:00', at: 0, from: 'card_stamps', nights: 2, offer: true } }))?.offer, false);
+  assert.equal(learnedOffer(clock({ setting: 'Australia/Brisbane', kind: 'zone',
+                                    learned: { offset: 36000, text: '+10:00', at: 0, from: 'card_stamps', nights: 2, offer: true } }))?.offer,
                true, 'a zone is not the fixed offset, so it is still offered');
+});
+
+test('issue #95: a learned clock the server does not offer is information only, never a button', () => {
+  // A Sleep Bridge night: -05:00 learned while recording, not from the card's stamps.
+  const brp = learnedOffer(clock({ learned: { offset: -18000, text: '-05:00', at: 1, from: 'brp_growth', nights: 3, offer: false } }));
+  assert.equal(brp?.offer, false);
+  assert.equal(brp?.hint, 'devices.clock.learnedInfoOnly');
+  const legacy = learnedOffer(clock({ learned: { offset: 0, text: '+00:00', at: 1, from: '', nights: 0, offer: false } }));
+  assert.equal(legacy?.offer, false);
+  assert.equal(legacy?.hint, 'devices.clock.learnedInfoOnly');
+  assert.equal(legacy?.preview, null);
+  const one = learnedOffer(clock({ learned: { offset: 36000, text: '+10:00', at: 1, from: 'card_stamps', nights: 1, offer: false } }));
+  assert.equal(one?.offer, false);
+  assert.equal(one?.hint, 'devices.clock.learnedOneNight');
+  // An answer from before 7.0.0 (no offer field) is never offered.
+  assert.equal(learnedOffer(clock({ learned: { offset: 36000, text: '+10:00', at: 1 } }))?.offer, false);
 });
 
 test('a re-read says the backup, then the worker\'s progress, then done, from its own status', () => {

@@ -107,6 +107,14 @@ bool copyOut(const fs::path& from, const std::string& to) {
 LocalDataSource::LocalDataSource(std::string card_root)
     : card_root_(std::move(card_root)) {}
 
+bool LocalDataSource::isBridgeFolder(const std::string& card_root) {
+    if (card_root.empty()) return false;
+    std::error_code ec;
+    // BatchStore keeps a bridge's batches in <root>/<bridge>/batches/; a card
+    // never has that folder.
+    return fs::is_directory(fs::path(card_root) / "batches", ec);
+}
+
 std::string LocalDataSource::datalogDir() const {
     return datalogDirFor(card_root_);
 }

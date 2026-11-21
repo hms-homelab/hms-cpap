@@ -1806,6 +1806,9 @@ public:
     // under, the stamps it gives, and a machine clock its probes saw.
     bool stamps = true;
     bool givesFileStamps() const override { return stamps; }
+    // Issue #95: false plays a Sleep Bridge's folder, stamped by the host.
+    bool machine_stamps = true;
+    bool stampsAreTheMachines() const override { return machine_stamps; }
     IDataSource::BurstScope scope;
     std::vector<IDataSource::BurstScope> refresh_scopes;
     std::map<std::string, std::vector<IDataSource::BurstScope>> list_scopes;
@@ -5246,6 +5249,45 @@ TEST_F(BurstOrchestrationTest, Sdd069_TheBrpTheCardIsWritingTeachesTheMachineClo
     now += 65;
     svc->runBurstCycleForTest();
     EXPECT_EQ(src_raw->folder_lists["20261015"], 1) << "tonight is the machine's day now";
+}
+
+// Issue #95: the same moving stamps teach the clock on a card and nothing on
+// a Sleep Bridge's folder, whose files this computer wrote.
+TEST_F(BurstOrchestrationTest, Issue95_ABridgeFolderNeverTeachesTheMachineClock) {
+    for (const bool card : {true, false}) {
+        SCOPED_TRACE(card ? "a card" : "a Sleep Bridge folder");
+        long long now = kSdd069T0;   // 2026-10-15 03:00:00 UTC
+        auto svc = makeService([card](FakeDataSource& ds) {
+            ds.machine_stamps = card;
+            ds.date_folders = {"20261014"};
+            // The CSL named 21:50, stamped 02:50 UTC: says UTC-05:00.
+            ds.folder_files["20261014"] = {
+                mkStampedEntry("20261014_215000_CSL.edf", 1, 2026, 10, 15, 2, 50, 0),
+                mkStampedEntry("20261014_215000_BRP.edf", 100, 2026, 10, 15, 2, 55, 0)};
+        });
+        onMachineClock(*svc, now, -4 * 3600);
+        EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+        svc->runBurstCycleForTest();
+
+        now += 65;
+        auto& brp = src_raw->folder_files["20261014"][1];
+        brp.size_kb = 120;
+        brp.hour = 3;   // the BRP's stamp moved to 03:00: written this burst
+        brp.minute = 0;
+        svc->runBurstCycleForTest();
+
+        const auto& c = svc->machineClockForTest();
+        if (card) {
+            EXPECT_EQ(c.zone_s, -5 * 3600);
+            EXPECT_EQ(c.from, "card_stamps");
+            EXPECT_EQ(c.night, "20261014");
+            EXPECT_EQ(c.nights, 1);
+        } else {
+            EXPECT_EQ(c.zone_s, -4 * 3600) << "unchanged: nothing learned";
+            EXPECT_EQ(c.drift_s, 0);
+            EXPECT_EQ(c.from, "");
+        }
+    }
 }
 
 // P8: on a card that gives exact sizes and no stamps, a BRP the card never

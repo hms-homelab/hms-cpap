@@ -288,6 +288,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The AI agent's MQTT connection has no built-in user name.** With `MQTT_USER` unset it connects anonymously, as the collector does; a set `MQTT_USER`/`MQTT_PASSWORD` is used as before.
 
 ### Fixed
+- **A Sleep Bridge machine is no longer said to be on UTC+00:00 (#95).** The
+  machine's clock was learned from the file times of the bridge's folder,
+  which hms-cpap writes itself with this computer's clock, so an Eastern
+  machine read as drift -5 h and zone +00:00, and "Use this" would have moved
+  every night by 5 hours. A bridge's folder no longer teaches the clock, and
+  a clock learned from one before is dropped at startup (the Machine clock
+  setting stays). The Devices page shows and compares the whole learned
+  offset, says where it was learned, and offers "Use this" only when the
+  machine's own card file times said the same offset on two separate nights,
+  with the change it makes beside the button ("last night would start at
+  07:10 instead of 22:10"); anything else is shown as information only.
 - **An AirSense 11 is no longer titled "ResMed AirSense 10" (#94).** The
   dashboard's title and the report cover used the configured device name, and
   the config.json the desktop setup wizard writes has none, which has always

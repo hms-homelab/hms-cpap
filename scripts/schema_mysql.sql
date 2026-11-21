@@ -445,7 +445,11 @@ CREATE TABLE IF NOT EXISTS cpap_machine_clock (
     drift_s     BIGINT NOT NULL DEFAULT 0,
     zone_s      BIGINT NOT NULL DEFAULT 0,
     zone_known  INTEGER NOT NULL DEFAULT 0,
-    updated_at  BIGINT NOT NULL DEFAULT 0
+    updated_at  BIGINT NOT NULL DEFAULT 0,
+    clock_setting  VARCHAR(64) NOT NULL DEFAULT '',   -- SDD-074 D1
+    learned_from   VARCHAR(16) NOT NULL DEFAULT '',   -- issue #95: card_stamps | brp_growth
+    learned_night  VARCHAR(8)  NOT NULL DEFAULT '',
+    learned_nights INTEGER NOT NULL DEFAULT 0
 );
 
 -- SDD-054 D9: each folder's listing as the card gave it, with each file's done

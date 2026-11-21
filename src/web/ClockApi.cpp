@@ -51,17 +51,56 @@ Json::Value view(IDatabase& db, const std::string& device_id, long long now, boo
     if (learnable) {
         const MachineClock c = loadMachineClock(db, device_id);
         if (c.zone_known) {
+            // Issue #95: the whole offset, drift and zone together. The
+            // readers take the setting as the machine's whole offset, so the
+            // zone part alone is not what a setting would be compared with
+            // (drift -5 h, zone +00:00 is an Eastern machine, not a UTC one).
+            const long long full = learnedOffset(c);
             Json::Value l(Json::objectValue);
-            l["offset"] = static_cast<Json::Int64>(c.zone_s);
-            l["text"]   = MachineZone::offsetText(c.zone_s);
+            l["offset"] = static_cast<Json::Int64>(full);
+            l["text"]   = MachineZone::offsetText(full);
             l["at"]     = static_cast<Json::Int64>(machineClockLearnedAt(db, device_id));
+            l["from"]   = c.from;
+            l["nights"] = c.nights;
+            const std::string use = MachineZone::fixed(static_cast<int>(full)).setting();
+            l["use"] = use;
+            // Offered only when the machine's own stamps said it, on two
+            // separate nights, and it is not the setting already.
+            const bool offer = c.from == machine_clock::kFromCardStamps && c.nights >= kNightsToOffer &&
+                               zone.setting() != use;
+            l["offer"]   = offer;
+            l["preview"] = offer ? preview(db, device_id, zone, full) : Json::Value(Json::nullValue);
             v["learned"] = l;
-            const long long diff = std::llabs(c.zone_s - zone.offsetAt(now));
+            const long long diff = std::llabs(full - zone.offsetAt(now));
             v["difference_s"] = static_cast<Json::Int64>(diff);
             v["warn"]         = diff >= kWarnDifference;
         }
     }
     return v;
+}
+
+Json::Value preview(IDatabase& db, const std::string& device_id, const MachineZone& zone, long long offset_s) {
+    const auto rows = db.executeQuery(
+        "SELECT session_start FROM cpap_sessions WHERE device_id = " + sql::param(1, db.dbType()) +
+            " ORDER BY session_start DESC LIMIT 1",
+        {device_id});
+    if (!rows.isArray() || rows.empty() || rows[0]["session_start"].isNull()) return Json::Value(Json::nullValue);
+    const auto label = wall::parseText(rows[0]["session_start"].asString());
+    if (!label) return Json::Value(Json::nullValue);
+    // When the night started, on this computer's clock: read with the clock
+    // in use, then with the offered one.
+    const MachineZone host = MachineZone::host();
+    auto hhmm = [&](long long instant) {
+        const std::tm t = wall::fieldsOf(host.toWall(instant));
+        char buf[8];
+        std::snprintf(buf, sizeof(buf), "%02d:%02d", t.tm_hour, t.tm_min);
+        return std::string(buf);
+    };
+    Json::Value p(Json::objectValue);
+    p["night_start"] = wall::text(*label);
+    p["now"]         = hhmm(zone.toInstant(*label));
+    p["would_be"]    = hhmm(MachineZone::fixed(static_cast<int>(offset_s)).toInstant(*label));
+    return p;
 }
 
 Result set(IDatabase& db, const std::string& device_id, const std::string& setting, long long now,

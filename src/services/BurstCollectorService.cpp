@@ -2865,6 +2865,18 @@ bool BurstCollectorService::executeBurstCycle() {
         if (!machine_clock_loaded_ && db_service_) {
             machine_clock_ = loadMachineClock(*db_service_, device_id_);
             machine_clock_loaded_ = true;
+            // Issue #95: a learning from before 7.0.0 on a Sleep Bridge's
+            // folder came from stamps this computer wrote, never the
+            // machine's: it is dropped, the setting kept.
+            if (!data_source_->stampsAreTheMachines() && machine_clock_.zone_known &&
+                machine_clock_.from != machine_clock::kFromBrpGrowth &&
+                forgetMachineClockLearning(*db_service_, device_id_)) {
+                std::cout << "CPAP: dropped the machine's clock learned from " << cpap_source_
+                          << " (drift " << machine_clock_.drift_s << " s, zone " << machine_clock_.zone_s
+                          << " s): its files are written by this computer, so their stamps are not "
+                             "the machine's" << std::endl;
+                machine_clock_ = MachineClock{};
+            }
         }
         if (!stored_listings_loaded_ && db_service_) {
             // D9: a folder with a stored listing has been looked at. Its
@@ -3165,19 +3177,28 @@ bool BurstCollectorService::executeBurstCycle() {
             if (p.reason == ListReason::Checkpoint) checkpoint_listed = true;
             const auto& files = listed_now->second;
 
-            // D3: a fresh listing (a stamp moved) teaches the machine's clock.
+            // D3: a fresh listing (a stamp moved) teaches the machine's clock,
+            // when the stamps are the machine's (issue #95: never a Sleep
+            // Bridge's folder, whose files this computer wrote).
             const auto prev_stamps = folder_stamps_.find(p.folder);
-            if (prev_stamps != folder_stamps_.end()) {
+            if (prev_stamps != folder_stamps_.end() && data_source_->stampsAreTheMachines()) {
                 if (auto learned = learnMachineClock(machine_clock_, prev_stamps->second, files, now_s)) {
-                    if (learned->drift_s != machine_clock_.drift_s ||
-                        learned->zone_s != machine_clock_.zone_s ||
-                        learned->zone_known != machine_clock_.zone_known) {
-                        std::cout << "CPAP: the machine's clock: drift " << learned->drift_s
-                                  << " s, zone " << (learned->zone_known
-                                                         ? std::to_string(learned->zone_s) + " s"
+                    const MachineClock noted =
+                        noteLearning(machine_clock_, *learned, machine_clock::kFromCardStamps, p.folder);
+                    const bool changed = noted.drift_s != machine_clock_.drift_s ||
+                                         noted.zone_s != machine_clock_.zone_s ||
+                                         noted.zone_known != machine_clock_.zone_known;
+                    if (changed)
+                        std::cout << "CPAP: the machine's clock: drift " << noted.drift_s
+                                  << " s, zone " << (noted.zone_known
+                                                         ? std::to_string(noted.zone_s) + " s"
                                                          : std::string("not known yet"))
                                   << " (learned from " << p.folder << ")" << std::endl;
-                        machine_clock_ = *learned;
+                    // Also stored when the same clock is learned on another
+                    // night: two nights agreeing is what offers "Use this".
+                    if (changed || noted.from != machine_clock_.from || noted.night != machine_clock_.night ||
+                        noted.nights != machine_clock_.nights) {
+                        machine_clock_ = noted;
                         if (db_service_) saveMachineClock(*db_service_, device_id_, machine_clock_, now_s);
                     }
                 }
@@ -3212,7 +3233,10 @@ bool BurstCollectorService::executeBurstCycle() {
         if (data_source_->takeMachineOffset(seen_offset) &&
             (!machine_clock_.zone_known ||
              machine_clock_.drift_s + machine_clock_.zone_s != seen_offset)) {
-            machine_clock_ = MachineClock{0, seen_offset, true};
+            MachineClock seen;
+            seen.zone_s = seen_offset;
+            seen.zone_known = true;
+            machine_clock_ = noteLearning(machine_clock_, seen, machine_clock::kFromBrpGrowth, tonight);
             std::cout << "CPAP: the machine's clock is " << seen_offset
                       << " s from UTC (learned from the BRP it is writing)" << std::endl;
             if (db_service_) saveMachineClock(*db_service_, device_id_, machine_clock_, now_s);

@@ -32,7 +32,16 @@ export interface ClockView {
   host_zone: string;
   host_offset_now: number;
   host_offset_text: string;
-  learned: { offset: number; text: string; at: number } | null;
+  /**
+   * Issue #95: offset is the whole learned offset (drift + zone). from says
+   * where it was learned: the machine's own card stamps, a BRP seen growing,
+   * or "" (from before 7.0.0). offer and preview come from the server.
+   */
+  learned: {
+    offset: number; text: string; at: number;
+    from?: string; nights?: number; use?: string; offer?: boolean;
+    preview?: { night_start: string; now: string; would_be: string } | null;
+  } | null;
   difference_s: number;
   warn: boolean;
 }
@@ -497,14 +506,29 @@ export function clockDifference(seconds: number): { key: string; params: Record<
 /**
  * What the card says about the clock learned from the machine's files
  * (decision 1: a suggestion only). Null when nothing was learned. `use` is
- * the fixed offset "Use this" saves; `offer` is false once that is the
- * setting already.
+ * the fixed offset "Use this" saves.
+ *
+ * Issue #95: `offer` is the server's word: true only when the machine's own
+ * card stamps said it on two separate nights and it is not the setting
+ * already. Anything else is shown as information, with `hint` saying why
+ * there is no button, and never a one-click fix. `preview` is when the last
+ * night would start with it, said beside the button.
  */
-export function learnedOffer(clock: ClockView | null | undefined): { text: string; at: number; use: string; offer: boolean } | null {
+export function learnedOffer(clock: ClockView | null | undefined): {
+  text: string; at: number; use: string; offer: boolean; hint: string | null;
+  preview: { now: string; would_be: string } | null;
+} | null {
   const l = clock?.learned;
   if (!l) return null;
-  const use = offsetSetting(l.offset);
-  return { text: l.text || use, at: Number(l.at) || 0, use, offer: (clock?.setting ?? '') !== use };
+  const use = l.use || offsetSetting(l.offset);
+  const already = (clock?.setting ?? '') === use;
+  const offer = l.offer === true && !already;
+  let hint: string | null = null;
+  if (!offer && !already) {
+    hint = l.from === 'card_stamps' ? 'devices.clock.learnedOneNight' : 'devices.clock.learnedInfoOnly';
+  }
+  const preview = offer && l.preview?.now && l.preview?.would_be ? { now: l.preview.now, would_be: l.preview.would_be } : null;
+  return { text: l.text || use, at: Number(l.at) || 0, use, offer, hint, preview };
 }
 
 /** A "Re-read my nights" in progress on one card. */
