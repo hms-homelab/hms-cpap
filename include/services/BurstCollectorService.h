@@ -148,8 +148,9 @@ public:
 
     /// SDD-078 D2: told the DATALOG folder (YYYYMMDD) of each night
     /// announceQuietNights closes, on the burst's thread; it must only take
-    /// the event and return. SDD-013: more than one listens (Garmin, the
-    /// local sleep model), each told in the order added.
+    /// the event and return. More than one may listen, each told in the
+    /// order added. (The local sleep model hears every landed night through
+    /// services/NightLanded.h instead, SDD-013 D-701-3.)
     void addNightClosedListener(std::function<void(const std::string&)> f) {
         std::lock_guard<std::mutex> lk(night_closed_mu_);
         if (f) night_closed_.push_back(std::move(f));

@@ -13,7 +13,9 @@
 #include "services/BurstCollectorService.h"
 #include "services/CardFileFeed.h"
 #include "services/DataPublisherService.h"
+#include "services/NightLanded.h"
 #include "services/SessionDiscoveryService.h"
+#include "services/SyncFolderState.h"
 #include "services/PrismaIngestion.h"
 #include "clients/IDataSource.h"
 #include "clients/EzShareClient.h"
@@ -2944,7 +2946,15 @@ TEST_F(BurstOrchestrationTest, ForceCompleteSession_OpenSession_MarksAndForces) 
     // Publisher present -> metrics fetched (nullopt -> no historical publish, OK).
     EXPECT_CALL(*db_raw, getNightlyMetrics(_, _)).WillOnce(Return(std::nullopt));
 
+    // SDD-013 D-701-3: a night closed by hand landed.
+    std::vector<std::string> landed;
+    night_landed::clear();
+    night_landed::listen([&landed](const std::string& f, const std::optional<STRDailyRecord>&) {
+        landed.push_back(f);
+    });
     EXPECT_TRUE(svc->forceCompleteSession("2020-01-01"));
+    night_landed::clear();
+    EXPECT_EQ(landed, std::vector<std::string>{strDayForSessionStart(ts)});
 }
 
 // Scenario 5b: forceCompleteSession falls back to any session (open_only=false)

@@ -129,9 +129,14 @@ cmake -S "$SRC" -B "$WORK/build" \
     -DCMAKE_TOOLCHAIN_FILE="$SRC/cmake/arm-toolchain.cmake" \
     -DRASPBIAN_SYSROOT="$SYSROOT" \
     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF -DBUILD_WITH_WEB=ON -DBUILD_WITH_MYSQL=ON \
-    -DBUILD_WITH_BLE=ON -DBUILD_WITH_SLEEPBRIDGE=ON
+    -DBUILD_WITH_BLE=ON -DBUILD_WITH_SLEEPBRIDGE=ON -DBUNDLE_NARRATOR_MODEL=ON
 cmake --build "$WORK/build" --target hms_cpap -j"$(nproc)"
 install -m 755 "$WORK/build/hms_cpap" "$OUT/hms_cpap"
+# SDD-013 D-701-1: the narrator model, fetched by its pinned SHA-256 at
+# configure time; install.sh puts it in /usr/local/share/hms-cpap/models.
+[ -f "$WORK/build/models/narrator-v1/model.gguf" ] || die "the narrator model was not bundled"
+rm -rf "$OUT/models"
+cp -R "$WORK/build/models" "$OUT/models"
 arm-linux-gnueabihf-strip "$OUT/hms_cpap"
 file "$OUT/hms_cpap" | grep -q 'ELF 32-bit LSB.*ARM, EABI5' || die "not a 32-bit ARM executable"
 

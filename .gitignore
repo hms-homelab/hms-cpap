@@ -25,6 +25,12 @@ Makefile
 !cmake/SleepBridge.cmake
 !cmake/sleepbridge-pins.cmake
 !cmake/StrLayouts.cmake
+!cmake/LocalModel.cmake
+!cmake/NarratorModel.cmake
+!cmake/narrator-pin.cmake
+# SDD-013: the narrator model is a release asset, fetched by its hash at
+# build time (cmake/NarratorModel.cmake), never committed.
+*.gguf
 
 # IDE
 .vscode/

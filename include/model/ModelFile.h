@@ -1,9 +1,11 @@
 #pragma once
 //
-// SDD-013: the local sleep model's file. Decided: downloaded on first enable
-// from a pinned URL with a hash check, plus "load model from file" for an
-// install with no network. Both end the same way: the file is hashed, and only
-// a file whose SHA-256 is the pinned one is put in place.
+// SDD-013: the local sleep model's file. Since 7.0.1 (D-701-1) every package
+// carries it, found beside the executable (bundledModelDirs) and read in
+// place. Without a bundle: downloaded on enable from a pinned URL with a hash
+// check, plus "load model from file" for an install with no network. All end
+// the same way: the file is hashed, and only a file whose SHA-256 is the
+// pinned one is used.
 //
 // The file lands in the model directory under its version, the convention
 // shhs-rf-v1 uses: <model_dir>/<version>/model.gguf.
@@ -14,6 +16,7 @@
 //
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace hms_cpap::model {
 
@@ -47,6 +50,20 @@ std::string modelPath(const std::string& dir, const Pin& pin);
 
 /// True when the model file is in place and hashes to the pin.
 bool installedAndVerified(const std::string& dir, const Pin& pin);
+
+/// True when <dir>/<version>/model.gguf is there at all, hashed or not. In a
+/// user's model directory only an enable or a loaded file puts one there
+/// (SDD-013 D-701-2).
+bool modelFilePresent(const std::string& dir, const Pin& pin);
+
+/// SDD-013 D-701-1: the folders a package puts its bundled model under, from
+/// this executable's own path, in the order they are looked at:
+/// <exe>/models (Windows, the zips, a build tree), <exe>/../Resources/models
+/// (HmsCpap.app), <exe>/../share/hms-cpap/models (the Pi, Docker).
+std::vector<std::string> bundledModelDirs();
+/// The first <dir>/<version>/model.gguf of [dirs] that hashes to [pin], read
+/// in place; "" when none does.
+std::string findBundledModel(const std::vector<std::string>& dirs, const Pin& pin);
 
 struct InstallResult {
     bool ok = false;

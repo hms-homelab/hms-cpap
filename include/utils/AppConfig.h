@@ -427,11 +427,16 @@ struct AppConfig {
     } oscar;
 
     /// SDD-013: the local sleep model that writes each closed night's summary
-    /// from the database, with no network. `enabled` is set only through
-    /// POST /api/local-model/enable, which refuses until a model is published
-    /// and verified; PUT /api/config does not change it.
+    /// from the database, with no network. PUT /api/config changes neither
+    /// field. D-701-2 (7.0.1): on by default. While `set_by_user` is false,
+    /// LocalModelService decides `enabled` at start-up: on when a verified
+    /// model is in place (the bundled one, or one installed), off when there
+    /// is none. Only the Settings switch (POST /api/local-model/enable and
+    /// disable) and "load model from file" set `set_by_user`, and from then
+    /// on `enabled` is the user's choice, kept as saved.
     struct LocalModel {
-        bool enabled = false;
+        bool enabled = true;
+        bool set_by_user = false;
         std::string model_dir;          // default: empty (uses dataDir()/models)
     } local_model;
 
@@ -882,6 +887,8 @@ struct AppConfig {
             if (j.contains("local_model")) {
                 auto& lm = j["local_model"];
                 if (lm.contains("enabled"))   config.local_model.enabled = lm["enabled"];
+                if (lm.contains("set_by_user") && lm["set_by_user"].is_boolean())
+                    config.local_model.set_by_user = lm["set_by_user"];
                 if (lm.contains("model_dir")) config.local_model.model_dir = lm["model_dir"];
             }
 
@@ -1042,8 +1049,9 @@ struct AppConfig {
             j["oscar"]["data_dir"] = oscar.data_dir;
             j["oscar"]["profile"]  = oscar.profile;
 
-            j["local_model"]["enabled"]   = local_model.enabled;     // SDD-013
-            j["local_model"]["model_dir"] = local_model.model_dir;
+            j["local_model"]["enabled"]     = local_model.enabled;     // SDD-013
+            j["local_model"]["set_by_user"] = local_model.set_by_user; // D-701-2
+            j["local_model"]["model_dir"]   = local_model.model_dir;
 
             j["logging"]["enabled"] = logging.enabled;
             j["logging"]["file"]    = logging.file;
@@ -1228,8 +1236,9 @@ struct AppConfig {
         j["oscar"]["data_dir"] = oscar.data_dir;
         j["oscar"]["profile"]  = oscar.profile;
 
-        j["local_model"]["enabled"]   = local_model.enabled;     // SDD-013
-        j["local_model"]["model_dir"] = local_model.model_dir;
+        j["local_model"]["enabled"]     = local_model.enabled;     // SDD-013
+        j["local_model"]["set_by_user"] = local_model.set_by_user; // D-701-2
+        j["local_model"]["model_dir"]   = local_model.model_dir;
 
         j["logging"]["enabled"] = logging.enabled;
         j["logging"]["file"]    = logging.file;

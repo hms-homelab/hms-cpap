@@ -91,6 +91,10 @@ Source: "..\..\packaging\update\cpapdash-update.ps1"; DestDir: "{app}"; Flags: i
 Source: "..\..\dist-windows\*.dll";               DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "..\..\dist-windows\config.example.json";  DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "..\..\dist-windows\static\*";            DestDir: "{app}\static"; Flags: ignoreversion recursesubdirs createallsubdirs
+; SDD-013 D-701-1: the narrator model, beside the exe where hms_cpap.exe looks
+; for a bundled one ({app}\models), read in place. No skipifsourcedoesntexist:
+; an installer without it is a build fault, not a smaller installer.
+Source: "..\..\dist-windows\models\*";            DestDir: "{app}\models"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; ---------------------------------------------------------------------------
 ; Qt runtime, shipped WITH the application.

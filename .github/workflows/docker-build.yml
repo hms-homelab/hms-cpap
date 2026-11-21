@@ -389,8 +389,10 @@ jobs:
           # through WinRT, whose C++/WinRT headers come with the Windows SDK.
           # BUILD_TESTS=ON builds run_tests too (gtest is in vcpkg.json); the
           # last step of this job runs it, after the artifacts are uploaded.
+          # BUNDLE_NARRATOR_MODEL (SDD-013 D-701-1): the narrator model,
+          # fetched by its pinned SHA-256 into build\models for the package.
           cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static-md -DBUILD_TESTS=ON -DBUILD_WITH_WEB=ON -DBUILD_WITH_POSTGRESQL=ON -DBUILD_WITH_MYSQL=ON `
-            -DBUILD_WITH_SLEEPBRIDGE=ON -DBUILD_WITH_BLE=ON -DBUILD_SUPERVISOR=ON -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR" ..
+            -DBUILD_WITH_SLEEPBRIDGE=ON -DBUILD_WITH_BLE=ON -DBUILD_SUPERVISOR=ON -DBUNDLE_NARRATOR_MODEL=ON -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR" ..
           cmake --build . --parallel
 
       # ── Package Windows release ─────────────────────────────────
@@ -444,6 +446,11 @@ jobs:
           # Bundle Angular UI
           mkdir release\static\browser -Force
           Copy-Item -Recurse frontend\dist\frontend\browser\* release\static\browser\
+          # SDD-013 D-701-1: the narrator model beside the exe, where hms_cpap
+          # looks for a bundled one (<exe dir>\models). The zip and the
+          # installer both carry it; a release without it is a build fault.
+          if (-not (Test-Path build\models\narrator-v1\model.gguf)) { throw "the narrator model was not bundled" }
+          Copy-Item -Recurse build\models release\models
           # Sample config
           @'
           {
@@ -580,11 +587,14 @@ jobs:
       contents: read
 
     steps:
-      # Only VERSION, for the version checks below (#91).
+      # Only VERSION, for the version checks below (#91), and the narrator
+      # model's pin (SDD-013 D-701-1).
       - name: Checkout VERSION
         uses: actions/checkout@v4
         with:
-          sparse-checkout: VERSION
+          sparse-checkout: |
+            VERSION
+            cmake/narrator-pin.cmake
           sparse-checkout-cone-mode: false
 
       - name: Download installer
@@ -645,10 +655,16 @@ jobs:
           $app = "$env:LOCALAPPDATA\Programs\HMS-CPAP"
           # The tray finds hms_cpap.exe by sitting next to it, so this layout IS
           # the contract between the two.
-          foreach ($f in @('HmsCpapInstaller.exe','hms_cpap.exe','static\browser\index.html','platforms\qwindows.dll')) {
+          foreach ($f in @('HmsCpapInstaller.exe','hms_cpap.exe','static\browser\index.html','platforms\qwindows.dll','models\narrator-v1\model.gguf')) {
             if (-not (Test-Path "$app\$f")) { throw "missing after install: $f" }
             Write-Host "  ok $f"
           }
+          # SDD-013 D-701-1: the bundled narrator is the pinned one, byte for byte.
+          $pin = (Select-String -Path cmake\narrator-pin.cmake -Pattern 'HMS_NARRATOR_SHA256 "([0-9a-f]{64})"').Matches[0].Groups[1].Value
+          if ((Get-FileHash "$app\models\narrator-v1\model.gguf" -Algorithm SHA256).Hash.ToLower() -ne $pin) {
+            throw 'the installed narrator model is not the pinned one'
+          }
+          Write-Host '  ok the narrator model is the pinned one'
           # The old self-updater starts CpapDashDesktop.exe after installing and
           # rolls back if it cannot, so an upgrade leaves the new tray under that
           # name too, byte for byte.
@@ -1042,6 +1058,7 @@ jobs:
             -DBUILD_WITH_SLEEPBRIDGE=ON \
             -DBUILD_WITH_BLE=ON \
             -DBUILD_SUPERVISOR=ON \
+            -DBUNDLE_NARRATOR_MODEL=ON \
             -DCMAKE_PREFIX_PATH=$(brew --prefix qt) \
             ..
           cmake --build . --parallel
@@ -1055,6 +1072,10 @@ jobs:
           # hms_cpap now links.
           cp LICENSE LICENSE-sleepbridge release/
           cp -R frontend/dist/frontend/browser/* release/static/browser/
+          # SDD-013 D-701-1: the narrator model beside the binary (the app
+          # carries it in Contents/Resources, scripts/package-macos.sh).
+          test -f build/models/narrator-v1/model.gguf || { echo "the narrator model was not bundled"; exit 1; }
+          cp -R build/models release/models
           cat > release/config.example.json <<'EOF'
           {
             "device_id": "cpap_resmed_SERIAL",
@@ -1233,6 +1254,10 @@ jobs:
           mkdir -p release/static/browser
           cp armhf-out/hms_cpap release/
           cp -R ui-out/ui/dist/frontend/browser/. release/static/browser/
+          # SDD-013 D-701-1: the narrator model; install.sh and Apply put it in
+          # /usr/local/share/hms-cpap/models.
+          cp -R armhf-out/models release/models
+          test -f release/models/narrator-v1/model.gguf
           cp packaging/pi/install.sh packaging/pi/hms-cpap.service packaging/pi/README.txt release/
           # SDD-081: the OSCAR helper role (install.sh --oscar-helper).
           cp packaging/pi/hms-cpap-oscar-helper.service release/

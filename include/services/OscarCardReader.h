@@ -142,9 +142,11 @@ private:
     /// night; not already held as a card row (then noted as done).
     bool wanted(const std::string& key, long long start_ms, long long end_ms, const std::set<std::string>& removed);
     /// The store half on an open, gated database: every wanted session of
-    /// `profile` read and stored. The count stored.
+    /// `profile` read and stored. The count stored; [landed] gets each stored
+    /// session's start (SDD-013 D-701-3).
     int storeFrom(OscarDb& db, const std::string& profile, const std::string& card_root,
-                  const std::set<std::string>& removed, std::optional<CPAPSession>& newest);
+                  const std::set<std::string>& removed, std::optional<CPAPSession>& newest,
+                  std::vector<std::chrono::system_clock::time_point>& landed);
     ReadResult readRemote(const std::string& root);
     ReadResult finish(ReadResult r, Outcome o, std::string msg);
     /// Stores one decoded session. True when saved.

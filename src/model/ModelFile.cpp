@@ -1,5 +1,6 @@
 #include "model/ModelFile.h"
 
+#include "services/SetupService.h"
 #include "services/UpdateService.h"
 #include "utils/AppConfig.h"
 
@@ -11,14 +12,16 @@ namespace fs = std::filesystem;
 
 namespace hms_cpap::model {
 
-// SDD-013: narrator-v1, the release asset of hms-homelab/hms-cpap tag
-// narrator-v1 (47,175,872 bytes, Q4_K_M, llama.cpp 919794500475862f). The
-// runtime's prompt contract (model/LocalModel.h) is this file's; a new model
-// moves all three together.
-const char* const kNarratorModelVersion = "narrator-v1";
-const char* const kNarratorModelUrl =
-    "https://github.com/hms-homelab/hms-cpap/releases/download/narrator-v1/narrator-v1-q4_k_m.gguf";
-const char* const kNarratorModelSha256 = "a0d99c56137466735fa0371dd64e6bdb908b2e33cd250632670534734af48d00";
+// SDD-013: the pin is cmake/narrator-pin.cmake's (narrator-v1, the release
+// asset of hms-homelab/hms-cpap tag narrator-v1), compiled in by
+// cmake/NarratorModel.cmake, so the model a package bundles and the hash this
+// checks it against are one pin (D-701-1).
+#if !defined(HMS_NARRATOR_VERSION) || !defined(HMS_NARRATOR_URL) || !defined(HMS_NARRATOR_SHA256)
+#error "the narrator pin comes from cmake/narrator-pin.cmake (cmake/NarratorModel.cmake)"
+#endif
+const char* const kNarratorModelVersion = HMS_NARRATOR_VERSION;
+const char* const kNarratorModelUrl = HMS_NARRATOR_URL;
+const char* const kNarratorModelSha256 = HMS_NARRATOR_SHA256;
 
 namespace {
 
@@ -94,6 +97,26 @@ bool installedAndVerified(const std::string& dir, const Pin& pin) {
     std::error_code ec;
     if (!fs::is_regular_file(path, ec)) return false;
     return checkHash(path, pin).empty();
+}
+
+bool modelFilePresent(const std::string& dir, const Pin& pin) {
+    std::error_code ec;
+    return fs::is_regular_file(modelPath(dir, pin), ec);
+}
+
+std::vector<std::string> bundledModelDirs() {
+    const auto exe = SetupService::executableDir();
+    if (exe.empty()) return {};
+    const fs::path d(exe);
+    return {(d / "models").string(),                                  // Windows, the zips, a build tree
+            (d / ".." / "Resources" / "models").lexically_normal().string(),       // HmsCpap.app
+            (d / ".." / "share" / "hms-cpap" / "models").lexically_normal().string()};  // Pi, Docker
+}
+
+std::string findBundledModel(const std::vector<std::string>& dirs, const Pin& pin) {
+    for (const auto& dir : dirs)
+        if (!dir.empty() && installedAndVerified(dir, pin)) return modelPath(dir, pin);
+    return "";
 }
 
 InstallResult installFromFile(const std::string& src, const std::string& dir, const Pin& pin) {

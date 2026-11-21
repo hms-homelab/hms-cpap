@@ -28,6 +28,7 @@ BASE_URL="${HMS_CPAP_UPDATE_BASE:-https://github.com/$REPO/releases/download}"
 UPD="$HOME_DIR/.hms-cpap/update"
 BIN=/usr/local/bin/hms_cpap
 STATIC="$HOME_DIR/static/browser"
+MODELS=/usr/local/share/hms-cpap/models   # SDD-013 D-701-1
 LOG=/var/log/hms-cpap-update.log
 VERSION=""
 WORK=""
@@ -114,6 +115,14 @@ as_user rm -rf "$STATIC.previous"
 as_user test -d "$STATIC" && as_user mv "$STATIC" "$STATIC.previous"
 as_user mkdir -p "$STATIC" && as_user cp -R "$NEW_DIR/static/browser/." "$STATIC/" \
     || roll_back install "the new web UI could not be copied"
+# SDD-013 D-701-1: the narrator model the release carries, where hms_cpap
+# looks for a bundled one. An older zip has none; the binary checks the hash
+# of whatever is there and ignores a copy that is not its pin.
+if [ -d "$NEW_DIR/models" ]; then
+    install -d -m 755 "$MODELS"
+    cp -R "$NEW_DIR/models/." "$MODELS/" && chmod -R a+rX "$MODELS" \
+        || roll_back install "the narrator model could not be copied"
+fi
 
 # ── Preflight, as the user, never as root ───────────────────────────────────
 as_user env HOME="$HOME_DIR" "$BIN" --preflight || roll_back preflight "the new version's configuration check failed"

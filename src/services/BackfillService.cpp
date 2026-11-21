@@ -1,7 +1,9 @@
 #include "utils/TimeCompat.h"
 #include "services/BackfillService.h"
 #include "services/As11NightImport.h"
+#include "services/NightLanded.h"
 #include "services/RemovedNights.h"
+#include "utils/MachineZone.h"
 #include "services/SleepHqExportService.h"
 #include "parsers/CpapdashBridge.h"
 #include "utils/CardLayout.h"
@@ -171,6 +173,9 @@ void BackfillService::executeCardImport(UploadedCard kind, const std::string& ro
         }
         progress_.completed_at = currentTimestamp();
         notifySessionsSaved(counts.imported);
+        // SDD-013 D-701-3: the nights it stored landed (their daily rows were
+        // derived by the import).
+        night_landed::announceDays(counts.nights);
     } catch (const std::exception& e) {
         std::lock_guard<std::mutex> lock(progress_mutex_);
         progress_.status = "error";
@@ -310,6 +315,9 @@ void BackfillService::executeBackfill(const std::string& start_date,
         // SDD-029: a removed night stays out of a range backfill. A Reparse of
         // that one night clears the record before it gets here.
         const auto removed = removedNightSet(*db_, config_.device_id);
+        // SDD-013 D-701-3: the folders this pass wrote, announced once the
+        // STR and the daily rows are in.
+        std::vector<std::string> landed;
 
         for (const auto& folder : date_folders) {
             if (!running_) break;
@@ -436,6 +444,7 @@ void BackfillService::executeBackfill(const std::string& start_date,
                 for (const auto& w : night)
                     As11NightImport::replaceConstructedFiles(
                         *db_, config_.device_id, w.start, dataEndOf(w.session).value_or(w.start));
+                if (written.saved > 0) landed.push_back(folder);
             } else {
                 spdlog::warn("BackfillService: could not write night {}, kept as it was", folder);
                 std::lock_guard<std::mutex> lock(progress_mutex_);
@@ -479,8 +488,25 @@ void BackfillService::executeBackfill(const std::string& start_date,
         // left a backfilled history on the STR's numbers (the Pi, 2026-09-13:
         // 196 of 233 imported nights) and, with no STR, a blank dashboard
         // (issue #16).
-        processSTRFile();
+        std::vector<STRDailyRecord> str_records;
+        processSTRFile(&str_records);
         db_->aggregateDailySummaryFromSessions(config_.device_id);
+
+        // SDD-013 D-701-3: each night written landed, with its STR row when
+        // the card's STR has one, as the burst's close gives it.
+        for (const auto& folder : landed) {
+            std::optional<STRDailyRecord> rec;
+            for (auto it = str_records.rbegin(); it != str_records.rend(); ++it) {
+                const std::tm tm = wall::fieldsOf(wall::seconds(it->record_date));   // SDD-074 D4
+                char buf[9];
+                std::strftime(buf, sizeof(buf), "%Y%m%d", &tm);
+                if (folder == buf) {
+                    rec = *it;
+                    break;
+                }
+            }
+            night_landed::announce(folder, rec);
+        }
 
         {
             std::lock_guard<std::mutex> lock(progress_mutex_);
@@ -567,7 +593,7 @@ std::string BackfillService::currentTimestamp() {
     return oss.str();
 }
 
-bool BackfillService::processSTRFile() {
+bool BackfillService::processSTRFile(std::vector<STRDailyRecord>* parsed) {
     // SDD-010: STR.edf sits at the card ROOT, beside DATALOG, and
     // config_.local_dir IS that root. Looked for there and nowhere else.
     //
@@ -600,6 +626,7 @@ bool BackfillService::processSTRFile() {
             withoutRemovedNights(records, removedNightSet(*db_, config_.device_id)));
         spdlog::info("BackfillService: STR.edf processed — {} daily record(s)",
                      records.size());
+        if (parsed) *parsed = std::move(records);
         return true;
     } catch (const std::exception& e) {
         spdlog::warn("BackfillService: STR.edf parse error — {}", e.what());

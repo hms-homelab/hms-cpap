@@ -1,5 +1,6 @@
 #include "model/NarrationService.h"
 
+#include "database/SqlDialect.h"
 #include "services/AiGrounding.h"
 
 #include <cstdlib>
@@ -163,6 +164,19 @@ Narration narrateAndStore(IDatabase& db, const std::string& device_id, const std
         return r;
     }
     const auto night = modelNight(*metrics, str, night_facts::oximetryForNight(db, sleep_day));
+    const auto block = factBlock(night);
+
+    // D-701-3: a night announced again (a re-read, a second upload of the
+    // same card, every stored session read once per process) is summarized
+    // again only when what the model would be given changed.
+    const auto earlier = localSummaryRows(db, device_id, sleep_day);
+    if (!earlier.empty() && earlier.front().facts == block) {
+        r.night = night;
+        r.skipped = true;
+        r.why = "already summarized from these facts";
+        return r;
+    }
+
     r = narrate(night, model);
     if (!r.written) return r;
 
@@ -171,8 +185,50 @@ Narration narrateAndStore(IDatabase& db, const std::string& device_id, const std
                         hours >= 4.0 ? 100.0 : 0.0, r.text, kLocalSummarySource)) {
         r.written = false;
         r.why = "the summary could not be stored";
+        return r;
     }
+    // The new row is the one not there before: it gets its fact block, and
+    // the night's earlier local summaries go, so a night has one.
+    const auto t = db.dbType();
+    std::string not_earlier;
+    std::vector<std::string> params = {block, device_id, sleep_day};
+    for (const auto& e : earlier) {
+        params.push_back(e.id);
+        not_earlier += " AND id <> " + sql::param(static_cast<int>(params.size()), t);
+    }
+    db.executeQuery("UPDATE cpap_summaries SET facts = " + sql::param(1, t) + " WHERE device_id = " +
+                        sql::param(2, t) + " AND period = 'daily' AND source = '" + kLocalSummarySource +
+                        "' AND range_start = " + sql::castDate(3, t) + not_earlier,
+                    params);
+    for (const auto& e : earlier)
+        db.executeQuery("DELETE FROM cpap_summaries WHERE id = " + sql::param(1, t), {e.id});
     return r;
+}
+
+std::vector<LocalSummaryRow> localSummaryRows(IDatabase& db, const std::string& device_id,
+                                              const std::string& sleep_day) {
+    const auto t = db.dbType();
+    const auto rows = db.executeQuery(
+        "SELECT id, facts FROM cpap_summaries WHERE device_id = " + sql::param(1, t) +
+            " AND period = 'daily' AND source = '" + kLocalSummarySource + "' AND range_start = " +
+            sql::castDate(2, t) + " ORDER BY id DESC",
+        {device_id, sleep_day});
+    std::vector<LocalSummaryRow> out;
+    for (const auto& row : rows) {
+        LocalSummaryRow s;
+        const auto& id = row["id"];
+        if (id.isString()) s.id = id.asString();
+        else if (id.isNumeric()) s.id = std::to_string(id.asLargestInt());
+        if (s.id.empty()) continue;
+        s.facts = row["facts"].isString() ? row["facts"].asString() : "";
+        out.push_back(std::move(s));
+    }
+    return out;
+}
+
+std::string storedFactBlock(IDatabase& db, const std::string& device_id, const std::string& sleep_day) {
+    const auto rows = localSummaryRows(db, device_id, sleep_day);
+    return rows.empty() ? "" : rows.front().facts;
 }
 
 }  // namespace hms_cpap::model

@@ -22,6 +22,7 @@
 #include "sleepbridge/LiveNight.h"
 #include "services/CpapDashSyncService.h"
 #include "services/CardFileFeed.h"
+#include "services/NightLanded.h"
 #include "services/CpapDashLink.h"
 #include "services/CpapDashStream.h"
 #include "services/CardUpload.h"
@@ -296,6 +297,11 @@ int runLocalModelNight(hms_cpap::AppConfig& config, const std::string& config_pa
     const auto t0 = std::chrono::steady_clock::now();
     svc.handle(Event::NightClosed, folder);
     const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    // D-701-3: a night whose summary was written from these same facts is done.
+    if (const auto skipped = svc.status()["last_skipped"].asString(); !skipped.empty()) {
+        std::cout << "Local model: night " << skipped << ", already summarized from these facts" << std::endl;
+        return 0;
+    }
     const auto last = svc.status()["last"];
     std::cout << "Local model: night " << last["night"].asString() << ", "
               << (last["how"].asString().empty() ? "nothing written" : last["how"].asString()) << ", "
@@ -1456,8 +1462,9 @@ int main(int argc, char** argv) {
                 burst_service->addLiveNightListener([](bool live) { hms_cpap::SetupWatch::nightEvent(live); });
 
             // SDD-013: the local sleep model's nightly job. Built even when it
-            // is off, so the Settings switch needs no restart. It runs only on
-            // a night's close (the SDD-046 announce), never on a clock.
+            // is off, so the Settings switch needs no restart. It runs only
+            // when a night lands (D-701-3: the SDD-046 close, an upload, a
+            // re-read, an import), never on a clock.
             std::shared_ptr<hms_cpap::model::LocalModelService> local_model;
             {
                 std::shared_ptr<hms_cpap::IDatabase> lm_db = db;
@@ -1478,13 +1485,13 @@ int main(int argc, char** argv) {
                     [](const Json::Value& st) { hms_cpap::SetupWatch::localModelEvent(st); });
                 local_model->start();
                 hms_cpap::model::installRoutes(local_model.get());
-                // The night's STR row goes with it, read here on the burst's
-                // thread, so the model is given the night the daily summary is.
-                if (burst_service)
-                    burst_service->addNightClosedListener(
-                        [m = local_model, b = burst_service.get()](const std::string& folder) {
-                            m->onNightClosed(folder, b->strRecordForDay(folder));
-                        });
+                // Every path that stores a night says so (services/NightLanded.h),
+                // with the night's STR row when it has one, so the model is
+                // given the night the daily summary is.
+                hms_cpap::night_landed::listen(
+                    [m = local_model](const std::string& folder, const std::optional<hms_cpap::STRDailyRecord>& str) {
+                        m->onNightClosed(folder, str);
+                    });
             }
 
             // SDD-041: check GitHub for a newer stable release, daily and on
@@ -2337,6 +2344,7 @@ int main(int argc, char** argv) {
             hms_cpap::CpapController::setStreamService(nullptr);
             cpapdash_stream->stop();
             if (burst_service) burst_service->clearNightClosedListeners();
+            hms_cpap::night_landed::clear();
             local_model->stop();
             hms_cpap::CpapController::setGarminService(nullptr);
             garmin->stop();

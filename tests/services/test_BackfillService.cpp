@@ -2,10 +2,12 @@
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 #include "services/BackfillService.h"
+#include "services/NightLanded.h"
 #include "parsers/CpapdashBridge.h"
 
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 
 using namespace hms_cpap;
 using ::testing::_;
@@ -224,6 +226,14 @@ TEST(BackfillServiceTest, BackfillMarksSessionsCompleted) {
     // SDD-048: a backfill that saved a session asks for a republish, once.
     std::atomic<int> republish_asks{0};
     svc.setOnSessionsSaved([&] { ++republish_asks; });
+    // SDD-013 D-701-3: and the night it wrote landed (an upload, a Reparse).
+    std::mutex landed_mu;
+    std::vector<std::string> landed;
+    night_landed::clear();
+    night_landed::listen([&](const std::string& folder, const std::optional<STRDailyRecord>& str) {
+        std::lock_guard<std::mutex> lk(landed_mu);
+        landed.push_back(folder + (str ? "+str" : ""));
+    });
 
     // Run backfill synchronously (not via start/trigger which uses a thread)
     // We call trigger + start, then stop after completion
@@ -238,11 +248,14 @@ TEST(BackfillServiceTest, BackfillMarksSessionsCompleted) {
             status["status"].asString() != "idle") break;
     }
     svc.stop();
+    night_landed::clear();
 
     auto status = svc.getStatus();
     EXPECT_EQ(status["status"].asString(), "complete");
     EXPECT_GE(status["sessions_saved"].asInt(), 1);
     EXPECT_EQ(republish_asks.load(), 1);
+    ASSERT_EQ(landed.size(), 1u);
+    EXPECT_EQ(landed[0], "20260206") << "announced once, and with no STR on this card";
 
     // Cleanup
     std::filesystem::remove_all(tmp);
@@ -278,6 +291,9 @@ TEST(BackfillServiceTest, BackfillWithoutSaveDoesNotMarkCompleted) {
     // SDD-048: nothing saved, nothing for Home Assistant to hear.
     std::atomic<int> republish_asks{0};
     svc.setOnSessionsSaved([&] { ++republish_asks; });
+    std::atomic<int> landed{0};   // SDD-013 D-701-3: nothing stored, nothing landed
+    night_landed::clear();
+    night_landed::listen([&](const std::string&, const std::optional<STRDailyRecord>&) { ++landed; });
     svc.start();
     svc.trigger("2026-02-07", "2026-02-07");
 
@@ -288,11 +304,13 @@ TEST(BackfillServiceTest, BackfillWithoutSaveDoesNotMarkCompleted) {
             status["status"].asString() != "idle") break;
     }
     svc.stop();
+    night_landed::clear();
 
     auto status = svc.getStatus();
     EXPECT_EQ(status["status"].asString(), "complete");
     EXPECT_EQ(status["sessions_saved"].asInt(), 0);
     EXPECT_EQ(republish_asks.load(), 0);
+    EXPECT_EQ(landed.load(), 0);
 
     std::filesystem::remove_all(tmp);
 }

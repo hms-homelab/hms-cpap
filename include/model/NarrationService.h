@@ -53,6 +53,9 @@ std::string templateSummary(const NightFacts& night);
 
 struct Narration {
     bool written = false;     ///< false: nothing to store (no night, or the model did not run)
+    /// D-701-3: nothing written because the night's local summary was
+    /// written from this same fact block (narrateAndStore).
+    bool skipped = false;
     std::string text;
     std::string how;          ///< "model" or "template"
     std::string why;          ///< the reason for a template, or for nothing written
@@ -78,7 +81,26 @@ Narration narrate(const NightFacts& night, ILocalModel& model);
 /// as a daily summary with source "local". [str] is the night's STR row, when
 /// the card has one (modelNight). Nothing is stored when the night is not in
 /// the database or the model is not ready.
+///
+/// D-701-3: the row keeps the fact block it was written from
+/// (cpap_summaries.facts). A night whose fact block is the one its local
+/// summary was written from is skipped before the model runs (skipped); a
+/// night whose facts changed replaces its earlier local summary, so a night
+/// has one.
 Narration narrateAndStore(IDatabase& db, const std::string& device_id, const std::string& sleep_day,
                           ILocalModel& model, const STRDailyRecord* str = nullptr);
+
+/// One of a night's local summary rows: its id, and the fact block it was
+/// written from ("" for a row stored before cpap_summaries.facts existed).
+struct LocalSummaryRow {
+    std::string id;
+    std::string facts;
+};
+/// The night's local daily summaries, newest first.
+std::vector<LocalSummaryRow> localSummaryRows(IDatabase& db, const std::string& device_id,
+                                              const std::string& sleep_day);
+/// The fact block the night's newest local summary was written from; "" when
+/// it has none (or one written before the column existed).
+std::string storedFactBlock(IDatabase& db, const std::string& device_id, const std::string& sleep_day);
 
 }  // namespace hms_cpap::model

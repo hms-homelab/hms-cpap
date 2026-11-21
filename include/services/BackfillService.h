@@ -158,7 +158,8 @@ private:
     ///         False leaves cpap_daily_summary unfilled, so the caller derives it
     ///         from the sessions instead rather than finishing with a blank
     ///         dashboard (issue #16).
-    bool processSTRFile();
+    /// [parsed] gets the records read, when given (SDD-013 D-701-3).
+    bool processSTRFile(std::vector<STRDailyRecord>* parsed = nullptr);
 };
 
 }  // namespace hms_cpap

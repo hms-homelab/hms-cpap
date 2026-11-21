@@ -90,6 +90,14 @@ if [ -f "$BIN_DST" ]; then
 fi
 install -m 755 -o root -g root "$HERE/hms_cpap" "$BIN_DST"
 
+# SDD-013 D-701-1: the narrator model, where hms_cpap looks for a bundled one
+# (<exe dir>/../share/hms-cpap/models), read in place. An older zip has none.
+if [ -d "$HERE/models" ]; then
+    install -d -m 755 /usr/local/share/hms-cpap/models
+    cp -R "$HERE/models/." /usr/local/share/hms-cpap/models/
+    chmod -R a+rX /usr/local/share/hms-cpap/models
+fi
+
 # ── SDD-081: the OSCAR helper role ───────────────────────────────────────────
 # One role per install (F9): the helper's unit, and the service's stopped and
 # disabled. hms_cpap --oscar-helper --setup finds hms-cpap and takes the three

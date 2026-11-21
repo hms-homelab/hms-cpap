@@ -575,6 +575,9 @@ void SQLiteDatabase::createSchema() {
     // the column existed came from the configured LLM.
     sqlite3_exec(db_, "ALTER TABLE cpap_summaries ADD COLUMN source TEXT NOT NULL DEFAULT 'llm'",
                  nullptr, nullptr, nullptr);
+    // SDD-013 D-701-3: the fact block a local summary was written from, so a
+    // night announced again with the same facts is not summarized twice.
+    sqlite3_exec(db_, "ALTER TABLE cpap_summaries ADD COLUMN facts TEXT", nullptr, nullptr, nullptr);
 
     // oximetry_sessions (O2 Ring)
     exec(R"(

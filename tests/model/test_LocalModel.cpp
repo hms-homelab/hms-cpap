@@ -329,6 +329,10 @@ protected:
         db_ = openEngine(Engine::SQLite, db_path_, skip);
         ASSERT_TRUE(db_) << skip;
         config_.local_model.model_dir = (fs::path(dir_) / "models").string();
+        // The switch as a user left it off: these tests turn it on through
+        // Settings. The default (D-701-2) has its own tests below.
+        config_.local_model.enabled = false;
+        config_.local_model.set_by_user = true;
         model_bytes_ = "the published model";
         ref_ = writeFile(fs::path(dir_) / "ref.gguf", model_bytes_);
     }
@@ -348,6 +352,7 @@ protected:
         d.config = &config_;
         d.device_id = device_;
         d.pin = pin;
+        d.bundled_dirs = bundled_dirs_;
         d.make_model = [reply, ready, this](const std::string& path) {
             made_paths_.push_back(path);
             auto m = std::make_unique<ScriptedModel>();
@@ -378,6 +383,7 @@ protected:
     std::unique_ptr<LocalModelService> svc_;
     std::vector<std::string> made_paths_;
     std::vector<std::string> prompts_;   ///< every prompt any model was given
+    std::vector<std::string> bundled_dirs_;   ///< none unless a test puts one there
     int downloads_ = 0;
 };
 
@@ -536,6 +542,242 @@ TEST_F(LocalModelServiceTest, ANightNotInTheDatabaseIsLeftAndSaidSo) {
     EXPECT_NE(svc_->status()["last"]["why"].asString().find("2099-07-05"), std::string::npos);
 }
 
+// -- D-701-3: a night announced again is not summarized twice -------------------
+
+TEST_F(LocalModelServiceTest, ANightAnnouncedAgainWithTheSameFactsIsNotSummarizedTwice) {
+    NightSpec n;
+    n.hypopneas = 6;
+    saveNight(*db_, device_, localAt(2099, 7, 1, 23), n);
+    make(testPin());
+    ASSERT_EQ(svc_->requestEnable(), "");
+    svc_->handle(LocalModelService::Event::Download);
+
+    svc_->handle(LocalModelService::Event::NightClosed, "20990701");
+    ASSERT_EQ(summaries().size(), 1u);
+    const auto asked = prompts_.size();
+    const auto block = storedFactBlock(*db_, device_, "2099-07-01");
+    EXPECT_EQ(block.rfind("Night: 2099-07-01\n", 0), 0u) << "the row keeps the block it was written from";
+    EXPECT_EQ(block, prompts_.back()) << "the very block the model was given";
+
+    // A re-read, a second upload of the same card: the same facts.
+    svc_->handle(LocalModelService::Event::NightClosed, "20990701");
+    EXPECT_EQ(prompts_.size(), asked) << "the model is not run again";
+    EXPECT_EQ(summaries().size(), 1u);
+    EXPECT_EQ(svc_->status()["last_skipped"].asString(), "2099-07-01");
+    EXPECT_EQ(svc_->status()["last"]["how"].asString(), "model") << "Settings still shows the night written";
+
+    // The STR arrives: the facts changed, so the night is written again, and
+    // the new summary replaces the old one.
+    STRDailyRecord str;
+    str.family = STRDailyRecord::Family::AutoSet;
+    str.mode = 1;
+    str.ahi = 1.0;
+    svc_->handle(LocalModelService::Event::NightClosed, "20990701", str);
+    EXPECT_EQ(prompts_.size(), asked + 1);
+    EXPECT_EQ(svc_->status()["last"]["how"].asString(), "model");
+    const auto rows = summaries();
+    ASSERT_EQ(rows.size(), 1u) << "a night has one local summary";
+    EXPECT_NE(storedFactBlock(*db_, device_, "2099-07-01"), block);
+    EXPECT_NE(storedFactBlock(*db_, device_, "2099-07-01").find("Therapy mode: APAP"), std::string::npos);
+}
+
+TEST_F(LocalModelServiceTest, ALocalSummaryFromBeforeTheFactsColumnIsWrittenAgainAndReplaced) {
+    NightSpec n;
+    n.hypopneas = 6;
+    saveNight(*db_, device_, localAt(2099, 7, 1, 23), n);
+    // What 7.0.0 stored: a local summary with no fact block.
+    ASSERT_TRUE(db_->saveSummary(device_, "daily", "2099-07-01", "2099-07-01", 1, 1.0, 6.0, 100.0,
+                                 "Written by 7.0.0.", kLocalSummarySource));
+    // And an LLM summary of the same night, which is not the model's to touch.
+    ASSERT_TRUE(db_->saveSummary(device_, "daily", "2099-07-01", "2099-07-01", 1, 1.0, 6.0, 100.0,
+                                 "From the configured LLM."));
+    make(testPin());
+    ASSERT_EQ(svc_->requestEnable(), "");
+    svc_->handle(LocalModelService::Event::Download);
+    svc_->handle(LocalModelService::Event::NightClosed, "20990701");
+
+    const auto rows = summaries();
+    ASSERT_EQ(rows.size(), 2u);
+    int local = 0;
+    for (const auto& r : rows) {
+        if (r["source"].asString() != "local") {
+            EXPECT_EQ(r["summary_text"].asString(), "From the configured LLM.");
+            continue;
+        }
+        ++local;
+        EXPECT_EQ(r["summary_text"].asString(), "Your AHI was 1.00.");
+    }
+    EXPECT_EQ(local, 1);
+}
+
+// -- D-701-1 / D-701-2: the bundled model, on by default --------------------------
+
+TEST_F(LocalModelServiceTest, ABundledModelIsFoundAndAFreshInstallComesUpOnWithNoDownload) {
+    AppConfig fresh;
+    fresh.local_model.model_dir = config_.local_model.model_dir;
+    config_ = fresh;
+    ASSERT_TRUE(config_.local_model.enabled) << "on is the default";
+    ASSERT_FALSE(config_.local_model.set_by_user);
+
+    const auto bundle = (fs::path(dir_) / "app" / "models").string();
+    writeFile(fs::path(modelPath(bundle, testPin())), model_bytes_);
+    bundled_dirs_ = {(fs::path(dir_) / "nothing-here").string(), bundle};
+    make(testPin());
+    EXPECT_FALSE(svc_->status()["enabled"].asBool()) << "not on before the model is found";
+    EXPECT_EQ(svc_->status()["state"].asString(), "installing");
+
+    svc_->handle(LocalModelService::Event::Startup);
+    const auto s = svc_->status();
+    EXPECT_TRUE(s["enabled"].asBool());
+    EXPECT_TRUE(s["bundled"].asBool());
+    EXPECT_TRUE(s["installed"].asBool());
+    EXPECT_EQ(s["state"].asString(), "ready");
+    EXPECT_EQ(downloads_, 0);
+    EXPECT_FALSE(fs::exists(modelPath(config_.local_model.model_dir, testPin())))
+        << "the bundled copy is read where it is, never copied";
+    ASSERT_FALSE(made_paths_.empty());
+    EXPECT_EQ(made_paths_.back(), modelPath(bundle, testPin()));
+    EXPECT_FALSE(config_.local_model.set_by_user) << "a default is not the user's choice";
+
+    // And a night that lands is summarized from it.
+    NightSpec n;
+    n.hypopneas = 6;
+    saveNight(*db_, device_, localAt(2099, 7, 1, 23), n);
+    svc_->handle(LocalModelService::Event::NightClosed, "20990701");
+    EXPECT_EQ(summaries().size(), 1u);
+    EXPECT_EQ(made_paths_.back(), modelPath(bundle, testPin()));
+}
+
+TEST_F(LocalModelServiceTest, ABundleThatIsNotThePinnedModelIsNotUsed) {
+    config_ = AppConfig{};
+    config_.local_model.model_dir = (fs::path(dir_) / "models").string();
+    const auto bundle = (fs::path(dir_) / "app" / "models").string();
+    writeFile(fs::path(modelPath(bundle, testPin())), "a different file");
+    bundled_dirs_ = {bundle};
+    make(testPin());
+    svc_->handle(LocalModelService::Event::Startup);
+    EXPECT_FALSE(svc_->status()["installed"].asBool());
+    EXPECT_FALSE(svc_->status()["enabled"].asBool()) << "no verified model: off, not an error";
+    EXPECT_EQ(svc_->status()["state"].asString(), "off");
+    EXPECT_FALSE(config_.local_model.enabled);
+    EXPECT_FALSE(config_.local_model.set_by_user);
+}
+
+TEST_F(LocalModelServiceTest, WithNoModelAnywhereANeverTouchedInstallIsOffAndTheSwitchStillDownloads) {
+    config_ = AppConfig{};
+    config_.local_model.model_dir = (fs::path(dir_) / "models").string();
+    make(testPin());
+    svc_->handle(LocalModelService::Event::Startup);
+    EXPECT_EQ(svc_->status()["state"].asString(), "off");
+    EXPECT_EQ(svc_->requestEnable(), "");
+    svc_->handle(LocalModelService::Event::Download);
+    EXPECT_EQ(downloads_, 1) << "the download stays the fallback";
+    EXPECT_TRUE(config_.local_model.enabled);
+    EXPECT_TRUE(config_.local_model.set_by_user);
+}
+
+TEST_F(LocalModelServiceTest, TheUsersOffIsKeptOverTheBundleAndSaved) {
+    const auto cfg_path = (fs::path(dir_) / "config.json").string();
+    const auto bundle = (fs::path(dir_) / "app" / "models").string();
+    writeFile(fs::path(modelPath(bundle, testPin())), model_bytes_);
+    bundled_dirs_ = {bundle};
+
+    config_ = AppConfig{};
+    config_.local_model.model_dir = (fs::path(dir_) / "models").string();
+    make(testPin());
+    svc_->handle(LocalModelService::Event::Startup);
+    ASSERT_TRUE(svc_->status()["enabled"].asBool());
+    svc_->disable();
+    EXPECT_TRUE(config_.local_model.set_by_user);
+    ASSERT_TRUE(config_.save(cfg_path));
+
+    // The next start (an update): read back, it stays off.
+    AppConfig again;
+    ASSERT_TRUE(AppConfig::load(cfg_path, again));
+    EXPECT_FALSE(again.local_model.enabled);
+    EXPECT_TRUE(again.local_model.set_by_user);
+    config_ = again;
+    make(testPin());
+    svc_->handle(LocalModelService::Event::Startup);
+    EXPECT_FALSE(svc_->status()["enabled"].asBool());
+    EXPECT_EQ(svc_->status()["state"].asString(), "off");
+    EXPECT_TRUE(svc_->status()["installed"].asBool()) << "the model is there for when it is switched on";
+    EXPECT_EQ(svc_->requestEnable(), "");
+    EXPECT_TRUE(svc_->status()["enabled"].asBool());
+    EXPECT_EQ(downloads_, 0);
+}
+
+// 7.0.0 wrote "enabled": false into every config it saved, touched or not.
+TEST_F(LocalModelServiceTest, A700ConfigThatNeverUsedTheSwitchComesUpOn) {
+    const auto cfg_path = writeFile(fs::path(dir_) / "config.json",
+                                    R"({"local_model": {"enabled": false, "model_dir": ""}})");
+    AppConfig old;
+    ASSERT_TRUE(AppConfig::load(cfg_path, old));
+    ASSERT_FALSE(old.local_model.enabled);
+    ASSERT_FALSE(old.local_model.set_by_user);
+    old.local_model.model_dir = (fs::path(dir_) / "models").string();
+    config_ = old;
+
+    const auto bundle = (fs::path(dir_) / "app" / "models").string();
+    writeFile(fs::path(modelPath(bundle, testPin())), model_bytes_);
+    bundled_dirs_ = {bundle};
+    make(testPin());
+    svc_->handle(LocalModelService::Event::Startup);
+    EXPECT_TRUE(svc_->status()["enabled"].asBool());
+    EXPECT_TRUE(config_.local_model.enabled);
+    EXPECT_FALSE(config_.local_model.set_by_user);
+}
+
+TEST_F(LocalModelServiceTest, A700ConfigThatDownloadedTheModelAndSwitchedItOffStaysOff) {
+    AppConfig old;   // as 7.0.0 saved it: off, never marked
+    old.local_model.enabled = false;
+    old.local_model.model_dir = (fs::path(dir_) / "models").string();
+    config_ = old;
+    // Only an enable (a download, a loaded file) puts the model here.
+    writeFile(fs::path(modelPath(config_.local_model.model_dir, testPin())), model_bytes_);
+    const auto bundle = (fs::path(dir_) / "app" / "models").string();
+    writeFile(fs::path(modelPath(bundle, testPin())), model_bytes_);
+    bundled_dirs_ = {bundle};
+    make(testPin());
+    svc_->handle(LocalModelService::Event::Startup);
+    EXPECT_FALSE(svc_->status()["enabled"].asBool());
+    EXPECT_FALSE(config_.local_model.enabled);
+    EXPECT_TRUE(config_.local_model.set_by_user) << "now recorded as the user's choice";
+}
+
+TEST_F(LocalModelServiceTest, A700ConfigThatWasOnStaysOn) {
+    AppConfig old;
+    old.local_model.enabled = true;
+    old.local_model.model_dir = (fs::path(dir_) / "models").string();
+    config_ = old;
+    writeFile(fs::path(modelPath(config_.local_model.model_dir, testPin())), model_bytes_);
+    make(testPin());
+    svc_->handle(LocalModelService::Event::Startup);
+    EXPECT_TRUE(svc_->status()["enabled"].asBool());
+    EXPECT_FALSE(svc_->status()["bundled"].asBool()) << "the copy it downloaded";
+    EXPECT_EQ(svc_->status()["state"].asString(), "ready");
+}
+
+TEST(LocalModelBundle, TheBundledFoldersAreFoundFromTheExecutable) {
+    const auto dirs = bundledModelDirs();
+    ASSERT_EQ(dirs.size(), 3u);
+    const fs::path exe = fs::path(dirs[0]).parent_path();
+    EXPECT_EQ(fs::path(dirs[0]), exe / "models");
+    EXPECT_EQ(fs::path(dirs[1]), (exe / ".." / "Resources" / "models").lexically_normal());
+    EXPECT_EQ(fs::path(dirs[2]), (exe / ".." / "share" / "hms-cpap" / "models").lexically_normal());
+    EXPECT_EQ(findBundledModel({}, pinnedModel()), "");
+}
+
+TEST(LocalModelBundle, ThePinIsTheBuildsOne) {
+    // cmake/narrator-pin.cmake, compiled in: one pin for the bundle and the check.
+    const auto pin = pinnedModel();
+    EXPECT_EQ(pin.version, "narrator-v1");
+    EXPECT_EQ(pin.sha256, "a0d99c56137466735fa0371dd64e6bdb908b2e33cd250632670534734af48d00");
+    EXPECT_EQ(pin.url.rfind("https://github.com/hms-homelab/hms-cpap/releases/download/narrator-v1/", 0), 0u);
+    EXPECT_TRUE(verifyRefusal(pin).empty());
+    EXPECT_TRUE(downloadRefusal(pin).empty());
+}
+
 TEST_F(LocalModelServiceTest, TheConfiguredLlmPathStillStoresSourceLlm) {
     ASSERT_TRUE(db_->saveSummary(device_, "daily", "2099-07-01", "2099-07-01", 1, 1.0, 6.0, 100.0,
                                  "From the configured LLM."));
@@ -565,10 +807,40 @@ protected:
     void clean() {
         db_->executeQuery("DELETE FROM cpap_summaries WHERE device_id = " + sql::param(1, db_->dbType()),
                           {device_});
+        cleanup(*db_, device_);
     }
     std::shared_ptr<IDatabase> db_;
     std::string device_, path_;
 };
+
+// D-701-3 on every engine: the row keeps its fact block, the same facts are
+// skipped, changed facts replace the night's local summary.
+TEST_P(SummarySourceBackendTest, ANightHasOneLocalSummaryWrittenFromItsFacts) {
+    NightSpec n;
+    n.hypopneas = 6;
+    saveNight(*db_, device_, localAt(2099, 7, 1, 23), n);
+    ScriptedModel model;
+    for (int i = 0; i < 4; ++i) model.replies.push_back(std::string("Your AHI was 1.00."));
+
+    const auto first = narrateAndStore(*db_, device_, "2099-07-01", model);
+    ASSERT_TRUE(first.written) << engineName(GetParam()) << ": " << first.why;
+    const auto block = storedFactBlock(*db_, device_, "2099-07-01");
+    EXPECT_EQ(block, factBlock(first.night)) << engineName(GetParam());
+
+    const auto again = narrateAndStore(*db_, device_, "2099-07-01", model);
+    EXPECT_TRUE(again.skipped) << engineName(GetParam());
+    EXPECT_EQ(model.prompts.size(), 1u);
+
+    STRDailyRecord str;
+    str.family = STRDailyRecord::Family::AutoSet;
+    str.mode = 1;
+    const auto changed = narrateAndStore(*db_, device_, "2099-07-01", model, &str);
+    EXPECT_TRUE(changed.written) << engineName(GetParam());
+    const auto rows = localSummaryRows(*db_, device_, "2099-07-01");
+    ASSERT_EQ(rows.size(), 1u) << engineName(GetParam()) << ": the old local summary is replaced";
+    EXPECT_NE(rows[0].facts, block);
+    EXPECT_EQ(rows[0].facts, factBlock(changed.night));
+}
 
 TEST_P(SummarySourceBackendTest, EachSummarySaysWhatWroteIt) {
     ASSERT_TRUE(db_->saveSummary(device_, "daily", "2099-07-01", "2099-07-01", 1, 1.0, 6.0, 100.0,

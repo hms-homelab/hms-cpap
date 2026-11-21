@@ -147,6 +147,8 @@ set(TEST_SOURCES
     ml/test_hmm_smoother.cpp
     ml/test_sleep_stage_trainer.cpp
     services/test_BackfillService.cpp
+    # SDD-013 D-701-3: every landed night is announced.
+    services/test_NightLanded.cpp
     services/test_SessionDiscoveryService.cpp
     services/test_OximetryService.cpp
     services/test_O2RingFileWatch.cpp

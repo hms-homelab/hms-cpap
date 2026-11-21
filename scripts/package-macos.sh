@@ -53,6 +53,18 @@ chmod +x "$MACOS_DIR/hms_cpap"
 # hms-cpap's licence and the Sleep Bridge component's, which hms_cpap links.
 cp "$REPO_ROOT/LICENSE" "$REPO_ROOT/LICENSE-sleepbridge" "$RESOURCES/"
 
+# SDD-013 D-701-1: the narrator model, in Resources, where hms_cpap looks for
+# a bundled one (<exe dir>/../Resources/models) and where the signature seals
+# it as a resource. A build configured without -DBUNDLE_NARRATOR_MODEL=ON gets
+# an app that downloads it from Settings instead, and says so here.
+if [ -f "$BUILD_DIR/models/narrator-v1/model.gguf" ]; then
+    rm -rf "$RESOURCES/models"
+    cp -R "$BUILD_DIR/models" "$RESOURCES/models"
+    echo "==> narrator model bundled"
+else
+    echo "!! no narrator model in $BUILD_DIR/models -- configure with -DBUNDLE_NARRATOR_MODEL=ON" >&2
+fi
+
 # The service resolves its web assets relative to its own executable
 # (SetupService::resolveStaticDir), so static/browser sits next to the binary
 # rather than in Resources where a Mac app would normally put it.

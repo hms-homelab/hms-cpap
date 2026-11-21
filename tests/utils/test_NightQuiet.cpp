@@ -9,6 +9,7 @@
 
 #include "database/SQLiteDatabase.h"
 #include "services/BurstCollectorService.h"
+#include "services/NightLanded.h"
 #include "services/SyncFolderState.h"
 #include "utils/NightQuiet.h"
 
@@ -151,8 +152,9 @@ TEST_F(NightQuietTest, TheCollectorAnnouncesAQuietNightOnce) {
     EXPECT_TRUE(nightHourPassed(nightHourStates(*db_, "q_dev"), "20260923"));
 }
 
-// SDD-013: the close is told to every listener (Garmin and the local sleep
-// model), once each, and to none after they are cleared.
+// SDD-078: the close is told to every listener (Garmin), once each, and to
+// none after they are cleared. SDD-013 D-701-3: and it is a night landed,
+// which is how the local sleep model hears it.
 TEST_F(NightQuietTest, EveryNightClosedListenerIsToldOnce) {
     setEnv("CPAP_DEVICE_ID", "q_two");
     BurstCollectorService svc(300);
@@ -160,9 +162,13 @@ TEST_F(NightQuietTest, EveryNightClosedListenerIsToldOnce) {
     svc.injectDependenciesForTest(db_, nullptr, nullptr);
     svc.setSourceForTest("local");
 
-    std::vector<std::string> first, second;
+    std::vector<std::string> first, second, landed;
     svc.addNightClosedListener([&first](const std::string& f) { first.push_back(f); });
     svc.addNightClosedListener([&second](const std::string& f) { second.push_back(f); });
+    night_landed::clear();
+    night_landed::listen([&landed](const std::string& f, const std::optional<STRDailyRecord>&) {
+        landed.push_back(f);
+    });
 
     const auto start = now_ - hours(8);
     save("q_two", start);
@@ -170,6 +176,8 @@ TEST_F(NightQuietTest, EveryNightClosedListenerIsToldOnce) {
     EXPECT_EQ(svc.announceQuietNightsForTest(now_ + minutes(30)), 1);
     EXPECT_EQ(first, std::vector<std::string>{"20260923"});
     EXPECT_EQ(second, std::vector<std::string>{"20260923"});
+    EXPECT_EQ(landed, std::vector<std::string>{"20260923"});
+    night_landed::clear();
 
     svc.clearNightClosedListeners();
     const auto next = now_ + hours(20);

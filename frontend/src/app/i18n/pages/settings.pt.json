@@ -204,7 +204,7 @@
     },
     "localModel": {
       "heading": "Modelo de sono local",
-      "desc": "Escreve o resumo de cada noite nesta máquina, a partir dos dados guardados, sem rede. O arquivo do modelo (cerca de 62 MB) é baixado na primeira vez que é ativado, ou carregado de um arquivo.",
+      "desc": "Escreve o resumo de cada noite nesta máquina, a partir dos dados guardados, sem rede. O modelo (cerca de 45 MB) vem com o hms-cpap; uma instalação que não o tem o baixa na primeira vez que é ativado, ou o carrega de um arquivo.",
       "enabled": "Resumir cada noite com o modelo local",
       "version": "Modelo",
       "lastNight": "Última noite resumida",

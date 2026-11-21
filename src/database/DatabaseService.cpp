@@ -580,6 +580,16 @@ bool DatabaseService::connect() {
             } catch (const std::exception& e) {
                 std::cerr << "  DB: SDD-013 summary source migration failed: " << e.what() << std::endl;
             }
+            // SDD-013 D-701-3: the fact block a local summary was written
+            // from, so a night announced again with the same facts is not
+            // summarized twice. NULL for every other row.
+            try {
+                pqxx::work txn(*conn_);
+                txn.exec("ALTER TABLE cpap_summaries ADD COLUMN IF NOT EXISTS facts TEXT");
+                txn.commit();
+            } catch (const std::exception& e) {
+                std::cerr << "  DB: SDD-013 summary facts migration failed: " << e.what() << std::endl;
+            }
 
             // Auto-migrate v2.2.0: Oximetry tables (O2 Ring)
             try {

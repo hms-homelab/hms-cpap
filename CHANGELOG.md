@@ -5,6 +5,31 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.0.1]
+
+### Changed
+- **The local sleep model comes with hms-cpap (SDD-013).** Every package now
+  carries the narrator model (narrator-v1, about 45 MB): the Windows installer
+  and zip, the macOS app and zip, the Raspberry Pi zip, and the Docker image,
+  so the Home Assistant add-on too. It is checked against the same pinned
+  SHA-256 as before and read where the package put it; nothing is downloaded.
+  A build without it still downloads it from Settings, or loads it from a
+  file.
+- **The local sleep model is on by default.** An install whose Settings switch
+  was never used comes up with it on once the model is found. A switch turned
+  off in Settings stays off, including on a 7.0.0 install that downloaded the
+  model and then turned it off.
+
+### Fixed
+- **Uploaded and imported nights get the local summary too.** Until now only a
+  night that closed on its own while hms-cpap was collecting was summarized by
+  the local model, so a night that came in by an uploaded card, a Reparse, a
+  backfill, "Re-read my nights", a Sefam, Löwenstein or BMC card, the
+  AirSense 11 or DreamStation 2 over Bluetooth, a Mule, or OSCAR had none.
+  Every one of those now says when a night is stored, and the model writes its
+  summary. A night read again with the same data is not summarized twice; one
+  whose data changed gets a new summary in place of the old one.
+
 ## [7.0.0] - 2026-11-21
 
 ### Added

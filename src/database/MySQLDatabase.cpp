@@ -1191,6 +1191,8 @@ void MySQLDatabase::migrateSchema() {
 
         // SDD-013: what wrote the summary ('llm' or 'local').
         {"cpap_summaries", "source", "VARCHAR(16) NOT NULL DEFAULT 'llm'"},
+        // SDD-013 D-701-3: the fact block a local summary was written from.
+        {"cpap_summaries", "facts", "TEXT"},
 
         // Oximetry metrics, added with the tables themselves.
         {"oximetry_sessions", "avg_spo2",      "DOUBLE"},

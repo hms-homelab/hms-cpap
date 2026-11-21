@@ -204,7 +204,7 @@
     },
     "localModel": {
       "heading": "Helyi alvásmodell",
-      "desc": "Minden éjszaka összefoglalóját ezen a gépen írja meg, a tárolt adatokból, hálózat nélkül. A modellfájl (kb. 62 MB) az első bekapcsoláskor töltődik le, vagy fájlból tölthető be.",
+      "desc": "Minden éjszaka összefoglalóját ezen a gépen írja meg, a tárolt adatokból, hálózat nélkül. A modell (kb. 45 MB) a hms-cpap része; ha egy telepítésből hiányzik, az első bekapcsoláskor letölti, vagy fájlból tölthető be.",
       "enabled": "Minden éjszaka összefoglalása a helyi modellel",
       "version": "Modell",
       "lastNight": "Utoljára összefoglalt éjszaka",

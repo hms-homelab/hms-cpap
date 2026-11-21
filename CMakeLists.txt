@@ -294,6 +294,9 @@ FetchContent_Populate(hms_shared)
 # SDD-013: the local sleep model's runtime (llama.cpp, pinned), unless
 # BUILD_WITH_LOCAL_MODEL=OFF.
 include(cmake/LocalModel.cmake)
+# SDD-013 D-701-1: its pin, compiled in, and the model itself for a package
+# (-DBUNDLE_NARRATOR_MODEL=ON).
+include(cmake/NarratorModel.cmake)
 
 # LLM module (nlohmann_json + curl only)
 add_library(hms_llm STATIC

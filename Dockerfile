@@ -65,7 +65,8 @@ RUN set -eu; \
 # Copy source code
 WORKDIR /build
 COPY CMakeLists.txt VERSION ./
-# cmake/SleepBridge.cmake and its pins, included by CMakeLists.txt.
+# cmake/SleepBridge.cmake and its pins, and the narrator model's pin, included
+# by CMakeLists.txt.
 COPY cmake/ ./cmake/
 COPY src/ ./src/
 COPY include/ ./include/
@@ -85,11 +86,16 @@ COPY llm_prompt.txt ./
 # prebuilt Sleep Bridge component (LICENSE-sleepbridge), fetched and checked
 # against cmake/sleepbridge-pins.cmake; OFF builds without it.
 ARG SLEEPBRIDGE=OFF
+# SDD-013 D-701-1: BUNDLE_NARRATOR_MODEL fetches the narrator model by its
+# pinned SHA-256 (cmake/narrator-pin.cmake) into build/models; the runtime
+# stage carries it, so the image (and the Home Assistant add-on built FROM it)
+# summarizes nights with no download.
 RUN mkdir build && cd build && \
     cmake -DBUILD_TESTS=OFF -DBUILD_WITH_WEB=ON -DBUILD_WITH_MYSQL=ON -DBUILD_WITH_BLE=ON \
-          -DBUILD_WITH_SLEEPBRIDGE=${SLEEPBRIDGE} .. && \
+          -DBUILD_WITH_SLEEPBRIDGE=${SLEEPBRIDGE} -DBUNDLE_NARRATOR_MODEL=ON .. && \
     make -j$(nproc) && \
-    strip hms_cpap
+    strip hms_cpap && \
+    test -f models/narrator-v1/model.gguf
 
 # =============================================================================
 # Stage 3: Runtime
@@ -129,6 +135,10 @@ RUN useradd -r -u 1000 -m -s /bin/bash cpap
 # Copy binary from builder
 COPY --from=builder /build/build/hms_cpap /usr/local/bin/hms_cpap
 RUN chmod +x /usr/local/bin/hms_cpap
+
+# SDD-013 D-701-1: the narrator model, where hms_cpap looks for a bundled one
+# (<exe dir>/../share/hms-cpap/models), read in place, never copied to /config.
+COPY --from=builder /build/build/models/ /usr/local/share/hms-cpap/models/
 
 # Both licences ship with the image: MIT for hms-cpap, and the Sleep Bridge
 # component's own.

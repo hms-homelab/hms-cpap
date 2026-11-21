@@ -204,7 +204,7 @@
     },
     "localModel": {
       "heading": "Modèle de sommeil local",
-      "desc": "Rédige le résumé de chaque nuit sur cette machine, à partir des données enregistrées, sans réseau. Le fichier du modèle (environ 62 Mo) est téléchargé la première fois qu'il est activé, ou chargé depuis un fichier.",
+      "desc": "Rédige le résumé de chaque nuit sur cette machine, à partir des données enregistrées, sans réseau. Le modèle (environ 45 Mo) est fourni avec hms-cpap ; une installation qui ne l'a pas le télécharge la première fois qu'il est activé, ou le charge depuis un fichier.",
       "enabled": "Résumer chaque nuit avec le modèle local",
       "version": "Modèle",
       "lastNight": "Dernière nuit résumée",

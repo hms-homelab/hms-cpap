@@ -204,7 +204,7 @@
     },
     "localModel": {
       "heading": "Local Sleep Model",
-      "desc": "Writes each night's summary on this machine, from the stored data, with no network. The model file (about 62 MB) is downloaded the first time it is turned on, or loaded from a file.",
+      "desc": "Writes each night's summary on this machine, from the stored data, with no network. The model (about 45 MB) comes with hms-cpap; an install without it downloads it the first time it is turned on, or loads it from a file.",
       "enabled": "Summarize each night with the local model",
       "version": "Model",
       "lastNight": "Last night summarized",

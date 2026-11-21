@@ -39,6 +39,7 @@
 #include "services/BmcCardMirror.h"
 #include "services/PhilipsCardMirror.h"
 #include "services/NightFacts.h"
+#include "services/NightLanded.h"
 #include "services/AiGrounding.h"
 #include "database/SQLiteDatabase.h"
 #include "database/DatabaseFactory.h"
@@ -60,6 +61,15 @@
 namespace hms_cpap {
 
 namespace {
+
+/// SDD-013 D-701-3: the nights of [saved] (an import's stored, closed
+/// sessions) landed.
+void announceSaved(const std::vector<CPAPSession>& saved) {
+    std::vector<std::chrono::system_clock::time_point> starts;
+    for (const auto& s : saved)
+        if (s.session_start) starts.push_back(*s.session_start);
+    night_landed::announceStarts(starts);
+}
 
 /// SDD-054: a folder listing's signature: how many files, how many KB, the
 /// newest stamp. Two listings with the same one show the same folder.
@@ -546,6 +556,7 @@ As11NightImport::Result BurstCollectorService::importAs11Nights() {
     if (r.saved.empty()) return r;
     last_data_at_.store(std::chrono::steady_clock::now().time_since_epoch().count());
     db_service_->updateDeviceLastSeen(device_id_);
+    announceSaved(r.saved);   // SDD-013 D-701-3
 
     // The newest night it saved, published as a card night is when it is
     // over: the session, its metrics and summary, the range summaries if due.
@@ -735,6 +746,7 @@ Ds2NightImport::Result BurstCollectorService::importDs2Nights() {
     // No STR from Bluetooth: the daily summary comes from the sessions, and
     // the newest night is published as a BMC night is. No SleepHQ (D8).
     processSessionSummary();
+    announceSaved(r.saved);   // SDD-013 D-701-3
     const auto& latest = r.saved.back();
     if (latest.session_start && data_publisher_ && mqtt_client_ && mqtt_client_->isConnected()) {
         data_publisher_->publishSession(latest);
@@ -1195,6 +1207,9 @@ bool BurstCollectorService::forceCompleteSession(const std::string& sleep_day) {
                       /*already_closed=*/true);
         const STRDailyRecord* rec = strRecordForNight(session_start.value());
         markNightAnnounced(*db_service_, device_id_, folder, now, rec ? strSignature(*rec) : "");
+        // SDD-013 D-701-3: closed by hand is closed: it landed.
+        night_landed::announce(strDayForSessionStart(session_start.value()),
+                               rec ? std::optional<STRDailyRecord>(*rec) : std::nullopt);
     }
     return true;
 }
@@ -2644,6 +2659,7 @@ bool BurstCollectorService::executeBurstCycle() {
             return false;
         }
 
+        std::vector<std::chrono::system_clock::time_point> landed;   // SDD-013 D-701-3
         for (const auto& ps : prisma_sessions) {
             if (isRemovedNight(removed_nights_, ps.session_start)) {
                 continue;  // SDD-029: an operator removed this night
@@ -2674,6 +2690,7 @@ bool BurstCollectorService::executeBurstCycle() {
             if (db_service_) {
                 db_service_->saveSession(*parsed);
                 db_service_->markSessionCompleted(device_id_, ps.session_start);
+                landed.push_back(ps.session_start);
             }
 
             if (data_publisher_) {
@@ -2692,6 +2709,8 @@ bool BurstCollectorService::executeBurstCycle() {
         // cpap_daily_summary has no other writer for Lowenstein (no STR.edf) --
         // re-aggregate from the sessions just saved above (issue #14).
         processSessionSummary();
+        // SDD-013 D-701-3: a session saved here is complete, so its night landed.
+        night_landed::announceStarts(landed);
 
         if (data_publisher_) {
             data_publisher_->publishSessionCompleted();
@@ -2755,6 +2774,7 @@ bool BurstCollectorService::executeBurstCycle() {
         }
 
         int parsed_count = 0, refused_count = 0;
+        std::vector<std::chrono::system_clock::time_point> landed;   // SDD-013 D-701-3
 
         for (const auto& ss : sefam_sessions) {
             if (isRemovedNight(removed_nights_, ss.session_start)) {
@@ -2786,6 +2806,7 @@ bool BurstCollectorService::executeBurstCycle() {
             if (db_service_) {
                 db_service_->saveSession(*parsed);
                 db_service_->markSessionCompleted(device_id_, ss.session_start);
+                landed.push_back(ss.session_start);
             }
 
             if (data_publisher_) {
@@ -2804,6 +2825,7 @@ bool BurstCollectorService::executeBurstCycle() {
         // Same reason as Lowenstein: a Sefam card has no STR.edf equivalent, so
         // nothing else writes cpap_daily_summary.
         processSessionSummary();
+        night_landed::announceStarts(landed);   // SDD-013 D-701-3
 
         if (data_publisher_) {
             data_publisher_->publishSessionCompleted();
@@ -4205,12 +4227,14 @@ int BurstCollectorService::announceQuietNights(std::chrono::system_clock::time_p
                   << kNightQuiet.count() << " min, it is over"
                   << (rec ? "" : " (the STR has no record for it yet)") << std::endl;
 
-        // SDD-078 D2: the night's close is when its Garmin SpO2 is asked for;
-        // SDD-013: and when the local sleep model writes its summary.
+        // SDD-078 D2: the night's close is when its Garmin SpO2 is asked for.
         {
             std::lock_guard<std::mutex> lk(night_closed_mu_);
             for (const auto& f : night_closed_) f(n.date_folder);
         }
+        // SDD-013 D-701-3: and it landed, with its STR row, which the local
+        // sleep model writes its summary from.
+        night_landed::announce(n.date_folder, strRecordForDay(n.date_folder));
 
         // D5: SleepHQ gets it now, with no second quiet window. Not a night
         // whose transfer never finished (D3): its files are still arriving,
@@ -4257,6 +4281,9 @@ void BurstCollectorService::republishRevisedNight() {
     std::cout << "CPAP: the STR changed night " << newest[0].date_folder
               << ", publishing it again" << std::endl;
     if (data_publisher_) publishNightOutcome(start);
+    // SDD-013 D-701-3: the night's data changed, so it is announced again
+    // with the STR row that changed it.
+    night_landed::announce(newest[0].date_folder, *rec);
 }
 
 bool BurstCollectorService::executeBmcBurst() {
@@ -4341,6 +4368,9 @@ void BurstCollectorService::storeCardSessions(std::vector<CardSession> sessions,
     const auto now = std::chrono::steady_clock::now();
     bool live_grew = false;
     int imported = 0, grown = 0;
+    // SDD-013 D-701-3: the starts of the sessions this pass stored closed, or
+    // closed on their stored span below; their nights landed.
+    std::vector<std::chrono::system_clock::time_point> landed;
     for (std::size_t i = 0; i < sessions.size(); ++i) {
         auto& s = *sessions[i].session;
         const int closed = sessions[i].closed;
@@ -4406,6 +4436,7 @@ void BurstCollectorService::storeCardSessions(std::vector<CardSession> sessions,
         } else {
             closeWithDataEnd(*db_service_, device_id_, start, s);   // SDD-037 D2
             if (key == card_live_start_) card_live_start_ = 0;      // the card says it ended
+            landed.push_back(start);                                // SDD-013 D-701-3
         }
         card_seen_[key] = seen_value;
         if (stored) ++grown; else ++imported;
@@ -4433,8 +4464,9 @@ void BurstCollectorService::storeCardSessions(std::vector<CardSession> sessions,
         const bool is_live = card_live_start_ != 0 && std::llabs(at - card_live_start_) <= 5;
         if (is_live && !live_quiet) continue;
         if (open.duration_seconds <= 0) continue;   // nothing the data knows (SDD-037)
-        db_service_->markSessionCompletedAt(device_id_, open.start,
-                                            open.start + std::chrono::seconds(open.duration_seconds));
+        if (db_service_->markSessionCompletedAt(device_id_, open.start,
+                                                open.start + std::chrono::seconds(open.duration_seconds)))
+            landed.push_back(open.start);
         if (is_live) {
             std::cout << "CPAP: the " << what << " session has not grown for "
                       << card_mask_quiet_.count() << " s; closed on its data" << std::endl;
@@ -4444,6 +4476,7 @@ void BurstCollectorService::storeCardSessions(std::vector<CardSession> sessions,
 
     // No STR on these cards: the daily summary comes from the sessions.
     if (imported + grown > 0) processSessionSummary();
+    night_landed::announceStarts(landed);
 
     if (card_pending_publish_ && data_publisher_ && mqtt_client_ && mqtt_client_->isConnected()) {
         const auto night = std::move(card_pending_publish_);

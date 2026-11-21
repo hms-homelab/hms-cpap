@@ -1,6 +1,7 @@
 #include "services/OscarCardReader.h"
 
 #include "services/As11NightImport.h"
+#include "services/NightLanded.h"
 #include "services/OscarDb.h"
 #include "services/RemovedNights.h"
 #include "utils/SessionEnd.h"
@@ -293,7 +294,8 @@ bool OscarCardReader::wanted(const std::string& key, long long start_ms, long lo
 }
 
 int OscarCardReader::storeFrom(OscarDb& db, const std::string& profile, const std::string& root,
-                               const std::set<std::string>& removed, std::optional<CPAPSession>& newest) {
+                               const std::set<std::string>& removed, std::optional<CPAPSession>& newest,
+                               std::vector<std::chrono::system_clock::time_point>& landed) {
     int stored = 0;
     db.begin();
     for (const auto& h : db.sessions(profile)) {
@@ -308,6 +310,7 @@ int OscarCardReader::storeFrom(OscarDb& db, const std::string& profile, const st
         if (!storeOne(*parsed, h.session_id, root)) continue;
         done_[key] = h.end_ms;
         ++stored;
+        if (parsed->session_start) landed.push_back(*parsed->session_start);
         if (!newest || parsed->session_start > newest->session_start) newest = std::move(*parsed);
     }
     db.end();
@@ -335,9 +338,11 @@ OscarCardReader::ReadResult OscarCardReader::readOnce() {
     if (!g.ok) return finish(r, Outcome::NotSupported, g.why);
     const auto removed = opt_.removed ? opt_.removed() : std::set<std::string>{};
     std::optional<CPAPSession> newest;
-    r.stored = storeFrom(*db, s.profile, root, removed, newest);
+    std::vector<std::chrono::system_clock::time_point> landed;
+    r.stored = storeFrom(*db, s.profile, root, removed, newest, landed);
     if (r.stored > 0 && opt_.db) {
         opt_.db->aggregateDailySummaryFromSessions(opt_.device_id);   // SDD-026
+        night_landed::announceStarts(landed);                         // SDD-013 D-701-3
         if (opt_.on_stored && newest) opt_.on_stored(*newest, r.stored);
     }
     return finish(r, r.stored > 0 ? Outcome::Imported : run.outcome, "");
@@ -388,11 +393,13 @@ OscarCardReader::ReadResult OscarCardReader::readRemote(const std::string& root)
     }
     const auto ps = db->profiles();
     std::optional<CPAPSession> newest;
-    if (!ps.empty()) r.stored = storeFrom(*db, ps.front(), root, removed, newest);
+    std::vector<std::chrono::system_clock::time_point> landed;
+    if (!ps.empty()) r.stored = storeFrom(*db, ps.front(), root, removed, newest, landed);
     db.reset();
     cleanup();
     if (r.stored > 0 && opt_.db) {
         opt_.db->aggregateDailySummaryFromSessions(opt_.device_id);   // SDD-026
+        night_landed::announceStarts(landed);                         // SDD-013 D-701-3
         if (opt_.on_stored && newest) opt_.on_stored(*newest, r.stored);
     }
     return finish(r, r.stored > 0 ? Outcome::Imported : rr.outcome, "");

@@ -35,7 +35,11 @@ std::string nowLocal() {
 
 }  // namespace
 
-LocalModelService::LocalModelService(Deps deps) : deps_(std::move(deps)) {}
+LocalModelService::LocalModelService(Deps deps) : deps_(std::move(deps)) {
+    // D-701-2: a switch the user never used is settled by Startup, once it
+    // knows whether a verified model is in place; off until then.
+    default_pending_ = deps_.config && !deps_.config->local_model.set_by_user;
+}
 
 LocalModelService::~LocalModelService() { stop(); }
 
@@ -83,13 +87,39 @@ void LocalModelService::enqueue(Event e, const std::string& arg,
 
 bool LocalModelService::enabled() const {
     std::lock_guard<std::mutex> lk(mu_);
-    return deps_.config && deps_.config->local_model.enabled;
+    return deps_.config && deps_.config->local_model.enabled && !default_pending_;
 }
 
-void LocalModelService::setEnabled(bool on) {
+void LocalModelService::setEnabled(bool on, bool by_user) {
     std::lock_guard<std::mutex> lk(mu_);
     if (!deps_.config) return;
     deps_.config->local_model.enabled = on;
+    if (by_user) {
+        deps_.config->local_model.set_by_user = true;
+        default_pending_ = false;
+    }
+    if (!deps_.config_path.empty()) deps_.config->save(deps_.config_path);
+}
+
+void LocalModelService::settleDefault(bool have_model) {
+    std::lock_guard<std::mutex> lk(mu_);
+    if (!default_pending_ || !deps_.config) return;
+    default_pending_ = false;
+    auto& lm = deps_.config->local_model;
+    bool on = have_model;
+    bool mark = false;
+    // A 7.0.0 config says "enabled": false whether or not anyone touched it
+    // (every save wrote it). A model file in the user's own model directory
+    // is the difference: only an enable or a loaded file puts one there, so
+    // this user switched it on and then off, and off is kept as their choice.
+    if (on && !lm.enabled && modelFilePresent(modelDir(lm.model_dir), deps_.pin)) {
+        on = false;
+        mark = true;
+        std::cout << "Local model: left off, as it was switched off in Settings" << std::endl;
+    }
+    if (on == lm.enabled && !mark) return;
+    lm.enabled = on;
+    if (mark) lm.set_by_user = true;
     if (!deps_.config_path.empty()) deps_.config->save(deps_.config_path);
 }
 
@@ -99,15 +129,25 @@ std::string LocalModelService::dir() const {
 }
 
 std::unique_ptr<ILocalModel> LocalModelService::makeModel() const {
-    const auto path = modelPath(dir(), deps_.pin);
+    std::string path;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        path = model_path_;
+    }
+    if (path.empty()) path = modelPath(dir(), deps_.pin);
     if (deps_.make_model) return deps_.make_model(path);
     return std::make_unique<GgufModel>(path, deps_.pin.sha256);
 }
 
-void LocalModelService::noteInstalled() {
+void LocalModelService::noteInstalled(const std::string& path, bool bundled) {
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        model_path_ = path;
+    }
     const auto why = makeModel()->whyNotReady();
     std::lock_guard<std::mutex> lk(mu_);
     installed_ = true;
+    bundled_ = bundled;
     runtime_ready_ = why.empty();
     runtime_why_ = why;
     state_.clear();
@@ -132,7 +172,7 @@ std::string LocalModelService::requestEnable() {
         have = installed_;
     }
     if (have) {
-        setEnabled(true);
+        setEnabled(true, /*by_user=*/true);
         return "";
     }
     if (auto why = verifyRefusal(deps_.pin); !why.empty()) return why;
@@ -149,7 +189,7 @@ std::string LocalModelService::requestEnable() {
 }
 
 void LocalModelService::disable() {
-    setEnabled(false);
+    setEnabled(false, /*by_user=*/true);
     std::lock_guard<std::mutex> lk(mu_);
     if (state_ == "error") {
         state_.clear();
@@ -187,18 +227,30 @@ void LocalModelService::handle(Event e, const std::string& arg,
 
     switch (e) {
         case Event::Startup: {
-            if (installedAndVerified(dir(), deps_.pin)) {
-                noteInstalled();
-            } else if (enabled()) {
-                std::cerr << "Local model: on, but no verified model file is in place" << std::endl;
+            // D-701-1: the package's own copy first, read where it is; then
+            // one installed in the model directory.
+            std::string path;
+            bool bundled = false;
+            if (verifyRefusal(deps_.pin).empty()) {
+                path = findBundledModel(deps_.bundled_dirs, deps_.pin);
+                bundled = !path.empty();
+                if (!bundled && installedAndVerified(dir(), deps_.pin)) path = modelPath(dir(), deps_.pin);
             }
+            if (!path.empty()) {
+                noteInstalled(path, bundled);
+                std::cout << "Local model: " << deps_.pin.version << (bundled ? " bundled at " : " installed at ")
+                          << path << std::endl;
+            }
+            settleDefault(!path.empty());
+            if (path.empty() && enabled())
+                std::cerr << "Local model: on, but no verified model file is in place" << std::endl;
             return;
         }
         case Event::Download: {
             const auto r = downloadModel(dir(), deps_.pin, deps_.download);
             if (r.ok) {
-                noteInstalled();
-                setEnabled(true);
+                noteInstalled(r.path, false);
+                setEnabled(true, /*by_user=*/true);
                 std::cout << "Local model: on (" << r.path << ")" << std::endl;
             } else {
                 std::lock_guard<std::mutex> lk(mu_);
@@ -214,8 +266,8 @@ void LocalModelService::handle(Event e, const std::string& arg,
             std::error_code ec;
             std::filesystem::remove(arg, ec);
             if (r.ok) {
-                noteInstalled();
-                setEnabled(true);
+                noteInstalled(r.path, false);
+                setEnabled(true, /*by_user=*/true);
                 std::cout << "Local model: loaded from a file and on (" << r.path << ")" << std::endl;
             } else {
                 std::lock_guard<std::mutex> lk(mu_);
@@ -238,6 +290,12 @@ void LocalModelService::handle(Event e, const std::string& arg,
             else
                 std::cout << "Local model: night " << day << " not summarized: " << r.why << std::endl;
             std::lock_guard<std::mutex> lk(mu_);
+            // D-701-3: a night skipped for its unchanged facts is not news:
+            // "last" stays the last night the job wrote (or failed to).
+            if (r.skipped) {
+                last_skipped_ = day;
+                return;
+            }
             last_night_ = day;
             last_how_ = r.written ? r.how : "";
             last_at_ = nowLocal();
@@ -265,6 +323,7 @@ Json::Value LocalModelService::status() const {
     v["published"] = published;
     v["version"] = deps_.pin.version;
     v["installed"] = installed_;
+    v["bundled"] = bundled_;
     v["runtime"] = runtime_ready_;
     v["busy"] = busy_;
 
@@ -273,6 +332,9 @@ Json::Value LocalModelService::status() const {
         if (!published) {
             state = "not_published";
             message = verifyRefusal(deps_.pin);
+        } else if (default_pending_) {
+            // D-701-2: Startup is still finding and checking the model.
+            state = "installing";
         } else if (on && installed_) {
             state = runtime_ready_ ? "ready" : "no_runtime";
             if (!runtime_ready_) message = runtime_why_;
@@ -294,6 +356,7 @@ Json::Value LocalModelService::status() const {
         last["why"] = last_why_;
     }
     v["last"] = last;
+    v["last_skipped"] = last_skipped_;
     return v;
 }
 
