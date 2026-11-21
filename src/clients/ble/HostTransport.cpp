@@ -41,6 +41,15 @@ std::string normalizeUuid(const std::string& uuid) {
     return s;
 }
 
+CharacteristicPick pickCharacteristics(const std::vector<std::string>& uuids, const GattSpec& spec) {
+    CharacteristicPick pick;
+    for (int i = 0; i < static_cast<int>(uuids.size()); i++) {
+        if (pick.write < 0 && uuids[i] == spec.write_uuid) pick.write = i;
+        if (pick.notify < 0 && uuids[i] == spec.notify_uuid) pick.notify = i;
+    }
+    return pick;
+}
+
 RadioStatus switchOn(const RadioSwitchOps& ops, const std::string& advice) {
     RadioStatus s;
     s.state = ops.state ? ops.state() : Radio::Failed;

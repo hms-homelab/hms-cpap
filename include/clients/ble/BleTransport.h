@@ -102,6 +102,18 @@ struct GattSpec {
     std::string notify_uuid;
 };
 
+/// Which of a device's characteristics [spec] wants: the index (into
+/// [uuids], each in normalizeUuid form, in the order the OS listed them) of
+/// the first write and the first notify match, -1 for none. The two are
+/// matched independently, so one characteristic can be both: the DreamStation
+/// 2 writes and notifies on the same one (#87).
+struct CharacteristicPick {
+    int write = -1;
+    int notify = -1;
+    bool found() const { return write >= 0 && notify >= 0; }
+};
+CharacteristicPick pickCharacteristics(const std::vector<std::string>& uuids, const GattSpec& spec);
+
 struct LinkHandlers {
     /// The characteristics were found, notifications are about to be turned on.
     std::function<void()> ready;

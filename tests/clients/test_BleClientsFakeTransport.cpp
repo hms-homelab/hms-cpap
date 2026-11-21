@@ -244,6 +244,43 @@ TEST(BleUuid, ShortAndLongFormsMeetInOneForm) {
     EXPECT_EQ(ble::normalizeUuid("E8FB0001-A14B-98F9-831B-4E2941D01248"), oxyii::kServiceUuid);
 }
 
+// #87: the DreamStation 2 writes and notifies on one characteristic, so its
+// spec names the same UUID twice. Every backend matched write first and
+// notify only "else", so notify was never found and the read failed with
+// "the characteristics were not found". The GATT table below is the one a
+// user listed with bluetoothctl from their DS2.
+TEST(BleCharacteristics, OneCharacteristicCanBeBothWriteAndNotify) {
+    const std::string data = ble::normalizeUuid("22a4e311-a097-4517-9b81-cf32af60b982");
+    const std::vector<std::string> ds2 = {
+        ble::normalizeUuid("676d860a-a2a9-4d7b-b25d-8be9a51dd69c"),
+        data,
+        ble::normalizeUuid("2a28"), ble::normalizeUuid("2a25"), ble::normalizeUuid("2a24"),
+        ble::normalizeUuid("2a29"), ble::normalizeUuid("2a05"),
+    };
+    const auto pick = ble::pickCharacteristics(ds2, ble::GattSpec{data, data});
+    EXPECT_TRUE(pick.found());
+    EXPECT_EQ(pick.write, 1);
+    EXPECT_EQ(pick.notify, 1);
+}
+
+TEST(BleCharacteristics, SeparateWriteAndNotifyAreEachFound) {
+    const std::vector<std::string> uuids = {"n", "x", "w"};
+    const auto pick = ble::pickCharacteristics(uuids, ble::GattSpec{"w", "n"});
+    EXPECT_TRUE(pick.found());
+    EXPECT_EQ(pick.write, 2);
+    EXPECT_EQ(pick.notify, 0);
+}
+
+TEST(BleCharacteristics, TheFirstMatchWinsAndAMissingOneIsReported) {
+    const auto twice = ble::pickCharacteristics({"w", "w", "n"}, ble::GattSpec{"w", "n"});
+    EXPECT_EQ(twice.write, 0);
+    const auto none = ble::pickCharacteristics({"w", "x"}, ble::GattSpec{"w", "n"});
+    EXPECT_FALSE(none.found());
+    EXPECT_EQ(none.write, 0);
+    EXPECT_EQ(none.notify, -1);
+    EXPECT_FALSE(ble::pickCharacteristics({}, ble::GattSpec{"w", "n"}).found());
+}
+
 TEST(BleUuid, AShortServiceUuidStillIdentifiesTheMachine) {
     EXPECT_TRUE(as11::advertIsAirSense("", {ble::normalizeUuid("FD56")}));
     EXPECT_FALSE(as11::advertIsAirSense("", {ble::normalizeUuid("180D")}));

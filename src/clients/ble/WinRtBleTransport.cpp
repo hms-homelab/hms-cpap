@@ -500,16 +500,21 @@ public:
 
             std::vector<wg::GattDeviceService> held;
             wg::GattCharacteristic wc{nullptr}, nc{nullptr};
+            std::vector<wg::GattCharacteristic> all;
+            std::vector<std::string> uuids;
             for (const auto& svc : services->Services()) {
                 held.push_back(svc);
                 auto chars = within(svc.GetCharacteristicsAsync(wb::BluetoothCacheMode::Uncached), kCallWait);
                 if (!chars || chars->Status() != wg::GattCommunicationStatus::Success) continue;
                 for (const auto& c : chars->Characteristics()) {
-                    const std::string u = uuidOf(c.Uuid());
-                    if (u == spec.write_uuid && !wc) wc = c;
-                    else if (u == spec.notify_uuid && !nc) nc = c;
+                    all.push_back(c);
+                    uuids.push_back(uuidOf(c.Uuid()));
                 }
             }
+            // One characteristic can be both (#87: the DreamStation 2's).
+            const auto pick = pickCharacteristics(uuids, spec);
+            if (pick.write >= 0) wc = all[pick.write];
+            if (pick.notify >= 0) nc = all[pick.notify];
             if (!wc || !nc) return fail(LinkError::NoCharacteristics, "the characteristics were not found", &held);
 
             const auto value_token = nc.ValueChanged([state](const wg::GattCharacteristic&,
