@@ -13,7 +13,7 @@ import {
   errorText, groupKeys, hostOf, latestCommand, latestConfigValues, recordingWarning, releaseLine, riskyGroups,
   switchView, groupCode, ds2PairView, ds2PairRunning, ds2RefusalKey, ds2Reads, ds2NextRead, isIsoDay,
   as11ResetRefusalKey, ClockChoice, ClockDraft, ClockView, Reread, clockChanged, clockDifference, clockDraftOf,
-  clockSettingOf, filterZones, fixedOffsets, learnedOffer, rereadLine,
+  clockSettingOf, filterZones, fixedOffsets, hasDangerActions, learnedOffer, rereadLine,
 } from './devices-model';
 import {
   MuleDs2Pairing, muleDs2ErrorKey, muleDs2ModePayload, muleDs2On, muleDs2Pairing, muleDs2Reading, muleDs2RefusalKey,
@@ -47,7 +47,7 @@ interface UpdateWarning {
   standalone: true,
   imports: [CommonModule, FormsModule, RouterLink, TranslatePipe, OtaProgressComponent, BridgeSourceComponent],
   templateUrl: './devices.component.html',
-  styleUrls: ['./devices.component.css', './devices-clock.css'],
+  styleUrls: ['./devices.component.css', './devices-clock.css', './devices-actions.css'],
 })
 export class DevicesComponent implements OnInit, OnDestroy {
   answer: DevicesAnswer | null = null;
@@ -107,6 +107,7 @@ export class DevicesComponent implements OnInit, OnDestroy {
   readonly fixedOffsets = fixedOffsets();
   readonly clockChanged = clockChanged;
   readonly learnedOffer = learnedOffer;
+  readonly hasDanger = hasDangerActions;
   /** What the person changed and has not saved yet; absent shows the saved clock. */
   private clockEdits: Record<string, ClockDraft> = {};
   private clockShown: Record<string, { setting: string; draft: ClockDraft }> = {};

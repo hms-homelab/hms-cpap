@@ -488,7 +488,9 @@
              the everyday ones (the kind's own, Re-read my nights, Pair, the move
              to the cloud), then Restart, then the destructive ones in red. The
              rarely used are under More. -->
+        <!-- Layout B (Albin 2026-11-21): everyday on the left, destructive pushed right. -->
         <div class="actions" *ngIf="!confirms.get(d.key)">
+          <div class="act-main">
           <!-- everyday: the kind's own -->
           <button type="button" class="btn btn-primary" *ngIf="d.detail.oscar as o" (click)="oscarReadNow(d)"
                   [disabled]="busy[d.key] || o.reading || (!o.set_up && o.where !== 'helper')">
@@ -550,7 +552,9 @@
             </select>
             <button type="button" class="btn btn-secondary" (click)="restart(d)" [disabled]="busy[d.key]">{{ 'devices.action.restart' | translate }}</button>
           </ng-container>
-          <!-- destructive, last, in red -->
+          </div>
+          <!-- destructive, last, in red, at the right -->
+          <div class="act-danger" *ngIf="hasDanger(d)">
           <button type="button" class="btn danger" *ngIf="d.kind === 'as11_ble' && !d.detail.not_compiled && d.detail.paired"
                   (click)="askAs11Forget(d)">{{ 'devices.as11.forgetPairing' | translate }}</button>
           <button type="button" class="btn danger" *ngIf="d.kind === 'ds2_ble' && !d.detail.not_compiled && d.detail.paired"
@@ -564,6 +568,7 @@
               <button type="button" class="btn danger" (click)="askForget(d)" [disabled]="d.present !== 'no'">{{ 'devices.forget.button' | translate }}</button>
             </span>
           </ng-container>
+          </div>
         </div>
         <!-- What the row's buttons need said, under it. -->
         <div class="hint" *ngIf="(d.kind === 'ds2_ble' && !d.detail.not_compiled) || (d.kind === 'mule' && muleDs2On(d) && d.detail.state.ds2.bonded)">

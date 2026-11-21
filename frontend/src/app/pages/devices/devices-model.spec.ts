@@ -9,7 +9,7 @@ import {
   recordingWarning, releaseLine, riskyGroups, switchView,
   groupCode, ds2PairView, ds2PairRunning, ds2RefusalKey, ds2Reads, ds2NextRead, isIsoDay, as11ResetRefusalKey,
   offsetSetting, fixedOffsets, clockChoiceOf, clockDraftOf, clockSettingOf, clockChanged, filterZones, clockDifference,
-  learnedOffer, rereadLine,
+  hasDangerActions, learnedOffer, rereadLine,
 } from './devices-model.ts';
 import type { ClockView, Reread } from './devices-model.ts';
 
@@ -354,6 +354,15 @@ test('the learned clock is a suggestion: Use this saves it as a fixed offset, go
   assert.equal(learnedOffer(clock({ setting: 'Australia/Brisbane', kind: 'zone',
                                     learned: { offset: 36000, text: '+10:00', at: 0, from: 'card_stamps', nights: 2, offer: true } }))?.offer,
                true, 'a zone is not the fixed offset, so it is still offered');
+});
+
+test('item 10 layout B: the destructive group shows only where there is a destructive action', () => {
+  assert.equal(hasDangerActions({ kind: 'sleepbridge', detail: {} }), true, 'Reset Wi-Fi, Forget this device');
+  assert.equal(hasDangerActions({ kind: 'mule', detail: {} }), true);
+  assert.equal(hasDangerActions({ kind: 'ds2_ble', detail: { paired: true } }), true, 'Forget pairing');
+  assert.equal(hasDangerActions({ kind: 'ds2_ble', detail: { paired: false } }), false);
+  assert.equal(hasDangerActions({ kind: 'as11_ble', detail: { paired: true, not_compiled: true } }), false);
+  assert.equal(hasDangerActions({ kind: 'o2ring', detail: {} }), false);
 });
 
 test('issue #95: a learned clock the server does not offer is never a button', () => {

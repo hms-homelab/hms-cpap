@@ -527,6 +527,18 @@ export function learnedOffer(clock: ClockView | null | undefined): {
   return { text: l.text || use, at: Number(l.at) || 0, use, offer, preview };
 }
 
+/**
+ * Item 10, layout B: does this card have destructive actions (shown apart,
+ * at the right of its actions row)? A Mule & Miner and a Sleep Bridge always
+ * do (Reset Wi-Fi, Forget this device); a paired AirSense 11 or DreamStation 2
+ * its Forget pairing.
+ */
+export function hasDangerActions(d: { kind: string; detail?: any }): boolean {
+  if (d.kind === 'mule' || d.kind === 'sleepbridge') return true;
+  if (d.kind === 'as11_ble' || d.kind === 'ds2_ble') return !d.detail?.not_compiled && !!d.detail?.paired;
+  return false;
+}
+
 /** A "Re-read my nights" in progress on one card. */
 export interface Reread {
   backup: number;                // tables backed up before the re-read

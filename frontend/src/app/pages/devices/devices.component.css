@@ -67,12 +67,7 @@ dd { margin: 0; color: #ddd; min-width: 0; overflow-wrap: anywhere; }
 /* ── footer, pinned to the bottom; the same thin line as between the rows ── */
 .footer { margin-top: auto; display: flex; flex-direction: column; gap: 0.6rem; padding-top: 0.75rem;
           border-top: 1px solid var(--line); }
-/* Item 10: one row of same-size buttons; it wraps into equal cells, never a column of odds. */
-.actions { display: grid; grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr)); gap: 0.5rem; }
-.actions > .btn, .actions > .btn-wrap > .btn, .actions > select { width: 100%; min-height: 2.15rem; text-align: center;
-  white-space: normal; }
-.actions > .btn-wrap { display: block; }
-.actions > .btn-wrap > .btn { height: 100%; }
+/* The actions row (item 10, layout B): devices-actions.css. */
 .action-line { display: flex; gap: 0.5rem; align-items: center; }
 .action-group { border: 1px solid #3a3d55; border-radius: 6px; margin: 0; padding: 0.35rem 0.7rem 0.6rem;
                 min-width: 0; max-width: 100%; display: flex; flex-direction: column; gap: 0.45rem; }
