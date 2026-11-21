@@ -264,6 +264,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The AI agent's MQTT connection has no built-in user name.** With `MQTT_USER` unset it connects anonymously, as the collector does; a set `MQTT_USER`/`MQTT_PASSWORD` is used as before.
 
 ### Fixed
+- **The Sleep Bridge setup's token link opens CpapDash on the Sharing tab
+  (#90).** Step 6's "Generate a token on CpapDash.com", in the desktop app and
+  the web wizard, opened Settings > Account; it now opens
+  `https://www.cpapdash.com/settings?tab=sharing`, where the hms-cpap token
+  is, and a signed-out visit comes back to that tab after sign-in. The web
+  wizard's words name Settings > Sharing instead of a "Settings > hms-cpap"
+  that does not exist.
+- **Windows: the installer, its title and both programs say the release's
+  version (#91).** The installer reads the VERSION file itself instead of
+  taking a version only from the build, and stamps it into its title, its own
+  file version and Add/Remove Programs; hms_cpap.exe now has a file version
+  (it had none) and HmsCpapInstaller.exe a numeric one, both from VERSION.
+- **Windows: uninstalling removes the Sleep Bridge firewall rule and the
+  program folder's run-time files (#92).** The rule's removal was decided
+  while installing, before the rule existed, so a first install never
+  removed it. The uninstaller now checks at uninstall time and removes it
+  with one permission prompt, only when the rule is there; it also removes
+  hms-cpap.log (and its rotations) and the upload scratch folder. The data
+  folder (`%USERPROFILE%\.hms-cpap`) is still never touched.
 - **A stop during a re-parse no longer loses the night.** With the web UI,
   a SIGTERM (docker stop, a service restart) ends the server through Drogon's
   own handler, and the backfill worker was left running until a static

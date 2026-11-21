@@ -5,6 +5,14 @@ project(hms_cpap CXX)
 file(STRINGS "${CMAKE_SOURCE_DIR}/VERSION" HMS_CPAP_VERSION LIMIT_COUNT 1)
 string(STRIP "${HMS_CPAP_VERSION}" HMS_CPAP_VERSION)
 add_compile_definitions(HMS_CPAP_VERSION="${HMS_CPAP_VERSION}")
+# The same version as four numbers, for a Windows VERSIONINFO's FILEVERSION
+# (cmake/hms_cpap.rc.in, desktop/qt/resources/supervisor.rc.in).
+string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.([0-9]+)" _hms_v "${HMS_CPAP_VERSION}")
+if(_hms_v)
+    set(HMS_CPAP_VERSION_RC "${CMAKE_MATCH_1},${CMAKE_MATCH_2},${CMAKE_MATCH_3},0")
+else()
+    set(HMS_CPAP_VERSION_RC "0,0,0,0")
+endif()
 
 # C++20 on MSVC (needed for designated initializers in hms-shared/db),
 # C++17 on Linux (system pqxx is built with C++17 — ABI mismatch if we use C++20).
@@ -374,6 +382,9 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 if(WIN32)
     # mdns.h needs these for GetAdaptersAddresses and the Winsock calls.
     target_link_libraries(${PROJECT_NAME} ws2_32 iphlpapi)
+    # #91: hms_cpap.exe's file version, from VERSION like everything else.
+    configure_file(cmake/hms_cpap.rc.in "${CMAKE_CURRENT_BINARY_DIR}/hms_cpap.rc" @ONLY)
+    target_sources(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/hms_cpap.rc")
 endif()
 
 # Link libraries

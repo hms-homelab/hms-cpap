@@ -19,14 +19,27 @@
 #define OldAppExe "CpapDashDesktop.exe"
 ; SDD-073 D7: the inbound rule for the Sleep Bridge stream, by this name.
 #define FirewallRule "HmsCpap Sleep Bridge (TCP 8894)"
+; #91: the version is the repo's VERSION file, the one CMake stamps into both
+; exes. CI passes it as /DAppVersion; a build without it reads the file
+; itself, so no build of this script can carry a version of its own.
 #ifndef AppVersion
-  #define AppVersion "0.0.0"
+  #define VersionFile FileOpen(AddBackslash(SourcePath) + "..\..\VERSION")
+  #define AppVersion Trim(FileRead(VersionFile))
+  #expr FileClose(VersionFile)
 #endif
 
 [Setup]
 AppId={{8C4F1E2A-7B3D-4A5E-9C1F-6D2E8A0B4F71}
 AppName={#AppName}
 AppVersion={#AppVersion}
+; The title bar and Add/Remove Programs ("HmsCpap Installer version x.y.z")
+; and Setup's own file version, all from AppVersion (#91).
+AppVerName={#AppName} version {#AppVersion}
+VersionInfoVersion={#AppVersion}
+VersionInfoProductVersion={#AppVersion}
+VersionInfoProductName=HmsCpap
+VersionInfoDescription={#AppName} Setup
+VersionInfoCompany={#AppPublisher}
 AppPublisher={#AppPublisher}
 AppSupportURL=https://github.com/hms-homelab/hms-cpap
 DefaultDirName={localappdata}\Programs\HMS-CPAP
@@ -107,6 +120,16 @@ Type: files; Name: "{autodesktop}\{#OldAppName}.lnk"
 
 [UninstallDelete]
 Type: files; Name: "{app}\{#OldAppExe}"
+; #92: what hms_cpap.exe writes into its own folder at run time. The log (and
+; its rotations) goes beside the exe when that folder is writable, which a
+; per-user install's is. Drogon's upload scratch (tmp\00..FF) is "uploads",
+; under the working folder or the document root (static), whichever this
+; Drogon resolves it to. None of it is the user's data: that lives in
+; %USERPROFILE%\.hms-cpap, which nothing here touches (see the NOTE below).
+Type: files;          Name: "{app}\hms-cpap.log*"
+Type: files;          Name: "{app}\.hms-cpap-write-test"
+Type: filesandordirs; Name: "{app}\uploads"
+Type: filesandordirs; Name: "{app}\static\uploads"
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"
@@ -151,11 +174,11 @@ Filename: "{app}\{#AppExe}"; Description: "Start {#AppName} now"; Flags: nowait 
 Filename: "{cmd}"; Parameters: "/C taskkill /IM {#AppExe} /F /T"; Flags: runhidden; RunOnceId: "StopTray"
 Filename: "{cmd}"; Parameters: "/C taskkill /IM {#OldAppExe} /F /T"; Flags: runhidden; RunOnceId: "StopOldTray"
 Filename: "{cmd}"; Parameters: "/C taskkill /IM hms_cpap.exe /F /T"; Flags: runhidden; RunOnceId: "StopService"
-; SDD-073 D7: the rule goes with the program (the same one elevated command).
-Filename: "{sys}\netsh.exe"; \
-    Parameters: "advfirewall firewall delete rule name=""{#FirewallRule}"""; \
-    Verb: runas; Flags: shellexec runhidden waituntilterminated; RunOnceId: "FirewallRule"; \
-    Check: FirewallRulePresent
+; SDD-073 D7: the rule goes with the program. Not an entry here: an
+; [UninstallRun] Check is evaluated while INSTALLING, when the uninstall log is
+; written, and on a first install the rule is not there yet ([Run] adds it
+; after), so the delete was never recorded and the rule outlived the program
+; (#92). CurUninstallStepChanged in [Code] asks at uninstall time instead.
 
 ; NOTE, deliberately: nothing here touches %USERPROFILE%\.hms-cpap. That folder
 ; holds the user's config and their entire therapy database. An uninstaller that
@@ -197,6 +220,21 @@ begin
   Result := Exec(ExpandConstant('{sys}\netsh.exe'),
                  'advfirewall firewall show rule name="{#FirewallRule}"',
                  '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
+end;
+
+// #92: the uninstall's side of SDD-073 D7. A per-user uninstaller has no
+// elevation, and removing a firewall rule needs it, so this one command asks
+// (one UAC prompt, the same netsh the install asked for), and only when the
+// rule is there. Declined, the uninstall still completes.
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  ResultCode: Integer;
+begin
+  if CurUninstallStep <> usUninstall then Exit;
+  if not FirewallRulePresent() then Exit;
+  ShellExec('runas', ExpandConstant('{sys}\netsh.exe'),
+            'advfirewall firewall delete rule name="{#FirewallRule}"',
+            '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);

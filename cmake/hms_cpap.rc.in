@@ -1,0 +1,34 @@
+// Windows version resource for hms_cpap.exe (#91).
+//
+// Right-click -> Properties -> Details, and the UAC prompt's "Program name",
+// read this. Substituted by CMake from the VERSION file, the same source the
+// tray's resource (desktop/qt/resources/supervisor.rc.in) and the installer
+// (desktop/windows/installer.iss) use, so all three say one version.
+
+1 VERSIONINFO
+FILEVERSION    @HMS_CPAP_VERSION_RC@
+PRODUCTVERSION @HMS_CPAP_VERSION_RC@
+FILEFLAGSMASK  0x3fL
+FILEFLAGS      0x0L
+FILEOS         0x40004L     // VOS_NT_WINDOWS32
+FILETYPE       0x1L         // VFT_APP
+FILESUBTYPE    0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"    // US English, Unicode
+        BEGIN
+            VALUE "CompanyName",      "HMS"
+            VALUE "FileDescription",  "HmsCpap service"
+            VALUE "FileVersion",      "@HMS_CPAP_VERSION@"
+            VALUE "InternalName",     "hms_cpap"
+            VALUE "OriginalFilename", "hms_cpap.exe"
+            VALUE "ProductName",      "HmsCpap"
+            VALUE "ProductVersion",   "@HMS_CPAP_VERSION@"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END
