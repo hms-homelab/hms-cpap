@@ -124,6 +124,10 @@ Json::Value MLTrainingService::getStatus() const {
     {
         std::lock_guard<std::mutex> lock(models_mutex_);
         status["models_loaded"] = models_loaded_;
+        // The four models (AHI, mask fit, compliance, anomaly) are trained and
+        // loaded together, so a loaded set always holds all of them. The
+        // Settings panel shows this count.
+        status["model_count"] = models_loaded_ ? 4 : 0;
     }
 
     {
