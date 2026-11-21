@@ -206,6 +206,7 @@ void LocalModelService::handle(Event e, const std::string& arg,
                 message_ = r.error;
                 std::cerr << "Local model: download failed: " << r.error << std::endl;
             }
+            tellState();
             return;
         }
         case Event::InstallFile: {
@@ -222,6 +223,7 @@ void LocalModelService::handle(Event e, const std::string& arg,
                 message_ = r.error;
                 std::cerr << "Local model: the file was not loaded: " << r.error << std::endl;
             }
+            tellState();
             return;
         }
         case Event::NightClosed: {
@@ -243,6 +245,15 @@ void LocalModelService::handle(Event e, const std::string& arg,
             return;
         }
     }
+}
+
+void LocalModelService::tellState() {
+    if (!state_listener_) return;
+    // busy_ is still set (the Busy guard ends with handle()); the page is
+    // told the outcome, so it is said as not busy.
+    Json::Value v = status();
+    v["busy"] = false;
+    state_listener_(v);
 }
 
 Json::Value LocalModelService::status() const {

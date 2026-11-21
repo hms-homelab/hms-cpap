@@ -429,6 +429,9 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
         config_->display_clock = j["display_clock"].asString() == "host" ? "host" : "machine";
         machine_clocks::setDisplayHost(config_->display_clock == "host");
     }
+    // The dashboard's usage target ("Xh+ target met").
+    if (j.isMember("usage_target_hours") && j["usage_target_hours"].isNumeric())
+        config_->usage_target_hours = AppConfig::usageTargetHoursOf(j["usage_target_hours"].asInt64());
     if (j.isMember("flashair_url"))  config_->flashair_url = j["flashair_url"].asString();
     if (j.isMember("auto_update"))   config_->auto_update = j["auto_update"].asBool();
     if (j.isMember("local_dir")) config_->local_dir = j["local_dir"].asString();

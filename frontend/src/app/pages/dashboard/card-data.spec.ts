@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { hasCardData, CARD_FIELDS } from './card-data.ts';
+import { hasCardData, CARD_FIELDS, usageColorFor, usageTargetHoursOf } from './card-data.ts';
 
 // What /api/dashboard sends for latest_night on a myAir-only install (no daily
 // summary row: only the 30-day compliance, which defaults to "0").
@@ -69,4 +69,17 @@ test('a channel the machine fills with zeros is empty when zeros mean "no channe
                            CARD_FIELDS.csrTrend, { zeroIsEmpty: true }), true);
   // Without the option a zero counts: EPR level 0 is "EPR off", a setting.
   assert.equal(hasCardData([{ epr_level: 0 }], CARD_FIELDS.eprTrend), true);
+});
+
+test('the usage target is the setting, 4 h when unset, bounded to 1..12', () => {
+  assert.equal(usageTargetHoursOf(undefined), 4);
+  assert.equal(usageTargetHoursOf(null), 4);
+  assert.equal(usageTargetHoursOf('x'), 4);
+  assert.equal(usageTargetHoursOf(6), 6);
+  assert.equal(usageTargetHoursOf(0), 1);
+  assert.equal(usageTargetHoursOf(20), 12);
+  // 4.50 h against 4 h is met (the summary must say the same).
+  assert.equal(usageColorFor(4.5, 4), '#4ade80');
+  assert.equal(usageColorFor(4.5, 8), '#fb923c');
+  assert.equal(usageColorFor(1.5, 4), '#ef4444');
 });

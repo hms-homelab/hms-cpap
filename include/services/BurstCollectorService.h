@@ -159,6 +159,19 @@ public:
         night_closed_.clear();
     }
 
+    /// Issue #96: told true when a burst leaves a night live in the ledger
+    /// that the previous burst did not (and false when none is live any
+    /// more), on the burst's thread; the first burst always tells. It must
+    /// only take the event and return.
+    void addLiveNightListener(std::function<void(bool live)> f) {
+        std::lock_guard<std::mutex> lk(night_closed_mu_);
+        if (f) live_night_.push_back(std::move(f));
+    }
+    /// Is any night in the ledger live (SyncFolderState nightState)?
+    bool anyNightLive();
+    /// The check the burst loop makes after each cycle (tests call it).
+    void tellLiveNight();
+
     /// SDD-013: the STR row of day [yyyymmdd] from the last STR read, the one
     /// the daily summary is given, or none. On the burst's thread only (a
     /// night-closed listener), where that STR is written.
@@ -382,6 +395,8 @@ private:
     std::shared_ptr<MyAirService> myair_;
     std::mutex night_closed_mu_;
     std::vector<std::function<void(const std::string&)>> night_closed_;   // SDD-078 D2, SDD-013
+    std::vector<std::function<void(bool)>> live_night_;                   // issue #96
+    int live_night_told_{-1};                                             // -1 never told
     std::string device_name_;
     /// SDD-010: the card ROOT when CPAP_SOURCE=local. STR.edf and DATALOG are
     /// siblings INSIDE it. Never the DATALOG folder itself: that was the old
@@ -1337,6 +1352,10 @@ private:
     /// file. Called at start, after a residue sweep, and after the publisher
     /// is rebuilt.
     void refreshCardIdentity();
+
+    /// #94 follow-up: the Home Assistant device name the supply and cleaning
+    /// publishers announce, the same as the data publisher's.
+    std::string haDeviceName() const;
 };
 
 } // namespace hms_cpap

@@ -288,6 +288,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The AI agent's MQTT connection has no built-in user name.** With `MQTT_USER` unset it connects anonymously, as the collector does; a set `MQTT_USER`/`MQTT_PASSWORD` is used as before.
 
 ### Fixed
+- **The Devices page is tidier.** Each card's facts are aligned rows with a
+  thin line between them, the Sleep Bridge's folder has Copy beside it, and
+  the Machine clock is one line with "Change" (its suggestion and warning
+  only when the machine's own files said it on two nights). The actions are
+  one row of same-size buttons: the everyday ones at the left (Read now,
+  Re-read my nights, Pair, Switch to the CpapDash cloud, Restart), Reset
+  Wi-Fi and Forget this device in red at the right; rarely used ones are
+  under More. A device alone uses the page's width; on a phone the buttons
+  sit two to a row, the red ones on their own last line.
+- **The dashboard's usage target is a setting.** Settings > Display has
+  "Nightly usage target (hours)", 4 by default (the usual insurance
+  compliance rule), 1 to 12; the dashboard's "Xh+ target met" and its usage
+  colours use it. The local sleep model's night summary keeps judging usage
+  against 8 hours, the target it was trained on, and a summary whose wording
+  contradicts its own facts (a met target called short, or the reverse) is
+  not stored; the plain summary is written instead.
+- **Settings follows "Load model from file" to the end.** The Local Sleep
+  Model section stayed on "Checking the model file..." until the page was
+  reloaded. The server now says when the file is in place (or why it was
+  refused), and the section shows it; a download is followed the same way.
+- **`hms_cpap --local-model-night` runs beside the service.** It refused to
+  start because the service held web_port, though that mode serves no web
+  page; it no longer checks that port.
+- **Sleep Bridge setup notices a card put in after its first step opened
+  (macOS).** The step heard /Volumes change when the card's folder was made,
+  before the card was mounted on it, looked too early and was never told
+  again, so "Found your machine's card" and Read card never appeared until
+  the step was opened again. It now also hears macOS say the card finished
+  mounting (and was removed).
+- **The Windows tray icon is no longer a blank square (#97).** Each tray
+  state is now an .ico with 16, 20, 24, 32 and 48 px images built into the
+  program and loaded by Windows itself at the size the notification area
+  asks for. macOS keeps its menu bar icons.
+- **The dashboard shows LIVE SESSION on first load while a night is open
+  (#96).** The page read the live state once, which could be before the
+  night was live (the service just started, the bridge's first batch not
+  read yet), and never asked again until a reload. A burst that leaves a
+  night live, or settles it, now tells an open dashboard on the watch socket,
+  and the page reads the live state again then and when the socket opens.
+- **Settings > CpapDash Cloud shows the stream's state right after Save
+  (#98).** The line stayed an empty box until a reload: the stream was still
+  starting when Save read it, and the page did not listen for the change.
+  It now follows each state change the server pushes, and says "Connecting"
+  while the stream starts.
+- **A Sleep Bridge machine is no longer said to be on UTC+00:00 (#95).** The
+  machine's clock was learned from the file times of the bridge's folder,
+  which hms-cpap writes itself with this computer's clock, so an Eastern
+  machine read as drift -5 h and zone +00:00, and "Use this" would have moved
+  every night by 5 hours. A bridge's folder no longer teaches the clock, and
+  a clock learned from one before is dropped at startup (the Machine clock
+  setting stays). The Devices page shows and compares the whole learned
+  offset, says where it was learned, and offers "Use this" only when the
+  machine's own card file times said the same offset on two separate nights,
+  with the change it makes beside the button ("last night would start at
+  07:10 instead of 22:10"); anything else is shown as information only.
 - **An AirSense 11 is no longer titled "ResMed AirSense 10" (#94).** The
   dashboard's title and the report cover used the configured device name, and
   the config.json the desktop setup wizard writes has none, which has always
@@ -298,6 +353,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   model. A name chosen in Settings is kept. A card moved from one machine to
   another keeps the first one's identification file beside the second's; the
   machine whose serial the newest night's EDF header names is the one read.
+  When those headers carry no serial, STR.edf's header decides, and with
+  neither the Identification.tgt is read, never the older .json on its own.
+- **Home Assistant names the machine the same way (#94 follow-up).** The
+  device's name in Home Assistant was the configured device name, so it too
+  said "ResMed AirSense 10" on a desktop install. Every announcement of the
+  device (the readings, the live mask and events, supplies, cleaning) now
+  uses the dashboard title's rule: a name chosen in Settings, else the
+  machine's maker and model from its card, else "CPAP".
+- **A new desktop install starts on its own device id (#94 follow-up).** The
+  setup wizard wrote no device id, so a fresh install started on the old
+  fixed id `cpap_resmed_23243570851`, moved off it, and on the way emptied
+  that id's retained Home Assistant topics on the broker, which another
+  install on the same broker may still use. The wizard now writes a new id
+  (`cpapdash_` and 8 hex characters) and the name "CPAP"; Start Over with
+  "Settings only" keeps the id the kept nights are filed under. A move off
+  an old id now empties that id's retained topics only when this install
+  has nights under it, which says it published there. No existing install's
+  id changes.
 - **"Record each night for support" applies without a restart (ticket 179).**
   Turning it on or off in Settings did nothing until hms-cpap restarted: the
   setting was read once, when the Bluetooth client was made. It now reaches

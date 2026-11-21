@@ -19,13 +19,48 @@
 #include <QWinEventNotifier>
 #endif
 
+#ifdef Q_OS_MACOS
+#include <CoreFoundation/CoreFoundation.h>
+#include <DiskArbitration/DiskArbitration.h>
+#include <QMetaObject>
+#endif
+
 namespace cpapdash::supervisor {
 
 // ── DriveWatch ─────────────────────────────────────────────────────────────
 
+#ifdef Q_OS_MACOS
+namespace {
+
+// A volume's mount point is made in /Volumes BEFORE the volume is mounted on
+// it, so the /Volumes change alone came too early: the step looked, found
+// an empty folder, and nothing said when the mount finished (a card, or a
+// disk image, inserted after the step was open was never noticed).
+// DiskArbitration says it: a disk's volume path is set once it is mounted,
+// and gone when it is unmounted.
+void daChanged(DADiskRef, CFArrayRef, void* context) {
+    QMetaObject::invokeMethod(static_cast<DriveWatch*>(context), "changed", Qt::QueuedConnection);
+}
+
+void daGone(DADiskRef, void* context) {
+    QMetaObject::invokeMethod(static_cast<DriveWatch*>(context), "changed", Qt::QueuedConnection);
+}
+
+}  // namespace
+#endif
+
 DriveWatch::DriveWatch(QObject* parent) : QObject(parent) {
 #if defined(Q_OS_MACOS)
     watcher_.addPath("/Volumes");
+    if (DASessionRef session = DASessionCreate(kCFAllocatorDefault)) {
+        const void* keys[] = {kDADiskDescriptionVolumePathKey};
+        CFArrayRef watch = CFArrayCreate(kCFAllocatorDefault, keys, 1, &kCFTypeArrayCallBacks);
+        DARegisterDiskDescriptionChangedCallback(session, nullptr, watch, daChanged, this);
+        DARegisterDiskDisappearedCallback(session, nullptr, daGone, this);
+        CFRelease(watch);
+        DASessionScheduleWithRunLoop(session, CFRunLoopGetMain(), kCFRunLoopDefaultMode);
+        da_session_ = session;
+    }
 #elif defined(Q_OS_LINUX)
     const QString user = qEnvironmentVariable("USER");
     for (const QString& dir : {QString("/media/") + user, QString("/run/media/") + user, QString("/media")})
@@ -37,6 +72,15 @@ DriveWatch::DriveWatch(QObject* parent) : QObject(parent) {
 
 DriveWatch::~DriveWatch() {
     if (auto* app = QCoreApplication::instance()) app->removeNativeEventFilter(this);
+#ifdef Q_OS_MACOS
+    if (da_session_) {
+        auto session = static_cast<DASessionRef>(da_session_);
+        DAUnregisterCallback(session, reinterpret_cast<void*>(daChanged), this);
+        DAUnregisterCallback(session, reinterpret_cast<void*>(daGone), this);
+        DASessionUnscheduleFromRunLoop(session, CFRunLoopGetMain(), kCFRunLoopDefaultMode);
+        CFRelease(session);
+    }
+#endif
 }
 
 bool DriveWatch::nativeEventFilter(const QByteArray& type, void* message, qintptr*) {

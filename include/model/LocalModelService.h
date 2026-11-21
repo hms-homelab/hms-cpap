@@ -92,7 +92,14 @@ public:
     /// The model directory (local_model.model_dir, or <data dir>/models).
     std::string dir() const;
 
+    /// Told status() each time a download or a loaded file finishes (put in
+    /// place, or refused), on the worker's thread, so an open Settings page
+    /// follows the state instead of keeping "Checking the model file..." until
+    /// a reload. Set once, before start(). It must only take the event.
+    void setStateListener(std::function<void(const Json::Value&)> f) { state_listener_ = std::move(f); }
+
 private:
+    void tellState();
     void run();
     void enqueue(Event e, const std::string& arg,
                  std::optional<STRDailyRecord> str = std::nullopt);
@@ -122,6 +129,7 @@ private:
     std::string state_;       // "" = derived from the above
     std::string message_;
     std::string last_night_, last_how_, last_at_, last_why_;
+    std::function<void(const Json::Value&)> state_listener_;
 };
 
 }  // namespace hms_cpap::model

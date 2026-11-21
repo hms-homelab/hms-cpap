@@ -34,6 +34,16 @@
 #include <nlohmann/json.hpp>
 #include <optional>
 
+#ifdef Q_OS_WIN
+#include <QImage>
+#include <QPixmap>
+#include <string>
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 namespace cpapdash::supervisor {
 
 namespace {
@@ -55,7 +65,38 @@ QString dataDir() {
 /// gets an invisible menu bar item they cannot click, which reads as "the app
 /// did not start". A wrong-looking icon is a bug report; an absent one is a
 /// support ticket about something that is actually running fine.
+#ifdef Q_OS_WIN
+/// #97: the state's .ico from the exe's own resources (TRAY_<STATE>,
+/// supervisor.rc), every size it carries, through Windows' own LoadImageW:
+/// the PNG QIcon showed as a blank light square in the Windows 11
+/// notification area, and an .ico read this way needs no Qt image plugin.
+QIcon windowsTrayIcon(const char* state) {
+    std::wstring name = L"TRAY_";
+    for (const char* c = state; *c; ++c)
+        name += static_cast<wchar_t>(*c >= 'a' && *c <= 'z' ? *c - 'a' + 'A' : *c);
+    QIcon icon;
+    const HINSTANCE self = GetModuleHandleW(nullptr);
+    for (const int px : {16, 20, 24, 32, 48}) {
+        const HICON h =
+            static_cast<HICON>(LoadImageW(self, name.c_str(), IMAGE_ICON, px, px, LR_DEFAULTCOLOR));
+        if (!h) continue;
+        const QImage img = QImage::fromHICON(h);
+        DestroyIcon(h);
+        if (!img.isNull()) icon.addPixmap(QPixmap::fromImage(img));
+    }
+    return icon;
+}
+#endif
+
 QIcon stateIcon(const char* state) {
+#ifdef Q_OS_WIN
+    {
+        const QIcon ico = windowsTrayIcon(state);
+        if (!ico.isNull()) return ico;
+        qWarning("HmsCpap: the tray .ico resources are missing from the exe; "
+                 "falling back to the PNG set");
+    }
+#endif
 #ifdef Q_OS_MACOS
     {
         QIcon mono(QStringLiteral(":/icons/mono-%1.png").arg(state));
@@ -556,6 +597,16 @@ void TrayShell::startOver() {
     child_->stop();
 
     const QString dir = dataDir();
+    // #94 follow-up: "Settings only" keeps every night, and they are filed
+    // under this install's id, so the new settings keep the id.
+    nlohmann::json previous;
+    if (!wipe_data) {
+        QFile old(dir + "/config.json");
+        if (old.open(QIODevice::ReadOnly)) {
+            try { previous = nlohmann::json::parse(old.readAll().toStdString()); }
+            catch (const std::exception&) {}
+        }
+    }
     QFile::remove(dir + "/config.json");
 
     if (wipe_data) {
@@ -568,12 +619,12 @@ void TrayShell::startOver() {
     // Straight into setup. Clearing the configuration and then leaving someone
     // staring at a stopped service would be a worse place than they started;
     // "start over" means start over, so the wizard opens.
-    runWizard(/*wipe_first=*/false);
+    runWizard(/*wipe_first=*/false, previous);
 }
 
 /// Opens the configurator and, if it is completed, writes the result and starts
 /// the service. Shared by Start Over and by a first run.
-void TrayShell::runWizard(bool wipe_first) {
+void TrayShell::runWizard(bool wipe_first, const nlohmann::json& previous) {
     if (wipe_first) {
         child_->stop();
         QFile::remove(dataDir() + "/config.json");
@@ -606,7 +657,7 @@ void TrayShell::runWizard(bool wipe_first) {
             "Could not save your settings to " + out.fileName());
         return;
     }
-    out.write(QByteArray::fromStdString(wizard.model().current().dump(2)));
+    out.write(QByteArray::fromStdString(withInstallIdentity(wizard.model().current(), previous).dump(2)));
     out.close();
 
     // Finishing setup used to hand straight back to the menu bar while the

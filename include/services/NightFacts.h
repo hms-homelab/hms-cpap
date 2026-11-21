@@ -105,7 +105,9 @@ extern const char* const kNoGapRule;
 /// SDD-024 rule when any is not, and the no-gap rule always.
 std::vector<std::string> rules(const std::vector<NightFacts>& nights);
 
-/// The daily summary's facts block (the {metrics} of the prompt).
+/// The daily summary's facts block (the {metrics} of the prompt). Its usage
+/// line states "% of 8h target", fixed: the local narrator was trained on it
+/// (the dashboard's own usage target is config usage_target_hours).
 std::string renderNight(const NightFacts& night);
 
 /// The weekly / monthly facts block. [label] is "Weekly" or "Monthly".

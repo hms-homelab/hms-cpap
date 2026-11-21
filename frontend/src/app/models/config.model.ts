@@ -19,6 +19,8 @@ export interface AppConfig {
   flashair_url: string;
   /** SDD-074 decision 2: show times on the machine's clock (default) or this computer's. */
   display_clock?: 'machine' | 'host';
+  /** The nightly usage target, hours, 1 to 12 (4 when unset): the dashboard's "Xh+ target met". */
+  usage_target_hours?: number;
   /** SDD-041 D1: apply a newer release without asking, once idle. Off by default. */
   auto_update?: boolean;
   local_dir: string;

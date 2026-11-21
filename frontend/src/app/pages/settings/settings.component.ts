@@ -7,6 +7,8 @@ import { switchMap, takeUntil, takeWhile, tap } from 'rxjs/operators';
 import { RouterLink } from '@angular/router';
 import { CpapApiService, CpapDashStreamStatus, SleepBridge, UpdateStatus } from '../../services/cpap-api.service';
 import { SleepBridgeWatch } from '../../services/sleepbridge-watch';
+import { localModelOfFrame, streamOfFrame } from '../setup/bridge-setup';
+import { usageTargetHoursOf } from '../dashboard/card-data';
 import { BridgeSourceComponent } from '../../components/bridge-source/bridge-source.component';
 import { bridgeInUse } from '../../components/bridge-source/bridge-source-model';
 import { UpdateFlowService } from '../../services/update-flow.service';
@@ -640,6 +642,8 @@ import { showLocalModelSection } from './local-model';
                   </ng-container>
                 </span>
                 <span *ngSwitchCase="'connecting'">{{ 'settings.cloud.streamState.connecting' | translate }}</span>
+                <!-- Issue #98: just saved on, not started yet: an empty box said nothing. -->
+                <span *ngSwitchCase="'off'">{{ 'settings.cloud.streamState.connecting' | translate }}</span>
                 <span *ngSwitchCase="'no_token'">{{ 'settings.cloud.streamState.noToken' | translate }}</span>
                 <span *ngSwitchCase="'unreachable'">{{ 'settings.cloud.streamState.unreachable' | translate }}</span>
                 <span *ngSwitchCase="'refused'">{{ 'settings.cloud.streamState.refused' | translate:{ status: s.http_status } }}</span>
@@ -802,6 +806,14 @@ import { showLocalModelSection } from './local-model';
               <small class="hint">
 {{ 'settings.display.hint' | translate }}
               </small>
+            </label>
+            <!-- The usage target the dashboard's "Xh+ target met" and the night summary share. -->
+            <label>
+              {{ 'settings.display.usageTarget' | translate }}
+              <input type="number" min="1" max="12" step="1" name="usage_target_hours"
+                     [ngModel]="config.usage_target_hours ?? 4"
+                     (ngModelChange)="config.usage_target_hours = usageTargetHoursOf($event)" />
+              <small class="hint">{{ 'settings.display.usageTargetHint' | translate }}</small>
             </label>
           </div>
         </div>
@@ -1542,6 +1554,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
   localModelBusy = false;
   localModelError = '';
   readonly showLocalModelSection = showLocalModelSection;
+  readonly usageTargetHoursOf = usageTargetHoursOf;
 
   // Backfill state
   backfillStart = '';
@@ -1835,6 +1848,16 @@ export class SettingsComponent implements OnInit, OnDestroy {
               public updateFlow: UpdateFlowService, zone: NgZone) {
     this.bridgeWatch = new SleepBridgeWatch(zone, (f) => {
       if (f.t === 'sleepbridge' && f.status) this.bridges = (f.status.bridges ?? []) as SleepBridge[];
+      // Issue #98: the stream's state as it changes (a Save starts it
+      // "off" -> "connecting" -> "connected"), not only as it was read.
+      const stream = streamOfFrame<CpapDashStreamStatus>(f);
+      if (stream) this.streamStatus = stream;
+      // The model loaded from a file (or downloaded) is in place, or refused.
+      const model = localModelOfFrame(f);
+      if (model) {
+        this.localModel = model;
+        if (model.state === 'error' && typeof model['message'] === 'string') this.localModelError = model['message'] as string;
+      }
     }, () => { this.bridgesWatchClosed = true; });
   }
 

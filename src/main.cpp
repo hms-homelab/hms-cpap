@@ -67,6 +67,7 @@
 #include "utils/ConfigManager.h"
 #include "utils/AppConfig.h"
 #include "utils/DeviceIdMigration.h"
+#include "utils/MachineIdentity.h"
 #include "utils/CardResidue.h"
 #include "utils/CardImport.h"
 #include "utils/SessionEnd.h"
@@ -805,7 +806,12 @@ int main(int argc, char** argv) {
     // restart loop hides the cause and tells the user a guess. Fail here, name
     // the problem, and say what to change.
     {
-        const auto report = hms_cpap::PreflightService::run(config);
+        // --local-model-night serves no web page and runs beside the service
+        // that holds web_port: that port being in use is no problem for it.
+        bool serves_web = true;
+        for (int a = 1; a < argc; ++a)
+            if (std::strcmp(argv[a], "--local-model-night") == 0) serves_web = false;
+        const auto report = hms_cpap::PreflightService::run(config, serves_web);
         if (preflight_only) {
             std::cout << "Preflight checks:\n" << report.render();
             std::cout << (report.ok() ? "OK: configuration looks usable.\n"
@@ -999,8 +1005,12 @@ int main(int argc, char** argv) {
         } else {
             std::cout << "Config: device id " << old_id << " -> " << config.device_id << ", "
                       << moved << " session(s) moved" << std::endl;
+            if (hms_cpap::noteDeviceIdMoved(config, moved)) config.save(config_path);
             bool cleared = true;
-            if (config.mqtt.enabled && !config.mqtt.broker.empty()) {
+            if (!config.device_id_previous_published) {
+                std::cout << "MQTT: this install never published as " << old_id
+                          << "; its Home Assistant topics are left to whoever did" << std::endl;
+            } else if (config.mqtt.enabled && !config.mqtt.broker.empty()) {
                 hms::MqttConfig mc;
                 mc.broker = config.mqtt.broker;
                 mc.port = config.mqtt.port;
@@ -1116,6 +1126,12 @@ int main(int argc, char** argv) {
         // by the bursts). mqtt/LiveState.h. Its own client, as the Sleep
         // Bridge's was: MQTT on but the client not connected, the message is
         // dropped and the log says so.
+        // #94 follow-up: the device's name in Home Assistant, by the rule the
+        // data publisher announces it with, so the two never disagree.
+        const std::string ha_device_name = hms_cpap::machineName(
+            config.device_name,
+            hms_cpap::installIdentity(config.legacySource() == "local" ? config.local_dir : "",
+                                      config.archive_dir, hms_cpap::AppConfig::dataDir()));
         std::shared_ptr<hms_cpap::LiveState> live_state;
         if (config.mqtt.enabled) {
             hms::MqttConfig live_cfg;
@@ -1135,7 +1151,7 @@ int main(int argc, char** argv) {
                     }
                     return live_mqtt->publish(topic, payload, qos, retain);
                 },
-                config.device_id, config.device_name);
+                config.device_id, ha_device_name);
             live_state->announce();
             burst_service->setLiveState(live_state);
         }
@@ -1434,6 +1450,11 @@ int main(int argc, char** argv) {
                         [g = garmin](const std::string& folder) { g->onNightClosed(folder); });
             }
 
+            // Issue #96: an open dashboard hears a night go live (or settle)
+            // from the burst that saw it, on the watch socket.
+            if (burst_service)
+                burst_service->addLiveNightListener([](bool live) { hms_cpap::SetupWatch::nightEvent(live); });
+
             // SDD-013: the local sleep model's nightly job. Built even when it
             // is off, so the Settings switch needs no restart. It runs only on
             // a night's close (the SDD-046 announce), never on a clock.
@@ -1451,6 +1472,10 @@ int main(int argc, char** argv) {
                 ld.device_id   = hms_cpap::ConfigManager::get(
                     "CPAP_DEVICE_ID", hms_cpap::AppConfig::kDefaultDeviceId);
                 local_model = std::make_shared<hms_cpap::model::LocalModelService>(std::move(ld));
+                // An open Settings page hears the model put in place (or
+                // refused) on the watch socket.
+                local_model->setStateListener(
+                    [](const Json::Value& st) { hms_cpap::SetupWatch::localModelEvent(st); });
                 local_model->start();
                 hms_cpap::model::installRoutes(local_model.get());
                 // The night's STR row goes with it, read here on the burst's
@@ -2187,11 +2212,11 @@ int main(int argc, char** argv) {
                                      bool retain) {
                                     return mq->isConnected() && mq->publish(topic, payload, qos, retain);
                                 },
-                                config.device_id, config.device_name);
+                                config.device_id, ha_device_name);
                             live->announce();
                         } else if (live_state) {
                             live = std::make_shared<hms_cpap::mule::LivePublisher>(
-                                nullptr, config.device_id, config.device_name);
+                                nullptr, config.device_id, ha_device_name);
                         }
                         if (live && live_state)
                             live->setState(live_state, hms_cpap::LiveState::kMuleBle);

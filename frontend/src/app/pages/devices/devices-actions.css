@@ -1,0 +1,13 @@
+/* Item 10, layout B (Albin 2026-11-21): one row of same-size buttons, the
+   everyday ones at the left and the destructive ones pushed to the right. A
+   phone gives each group its own lines, the destructive ones last. Its own
+   file so devices.component.css stays inside the per-stylesheet budget. */
+.actions { display: flex; flex-wrap: wrap; align-items: stretch; gap: 0.5rem 1.5rem; }
+.act-main, .act-danger { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.act-danger { margin-left: auto; }
+.actions .btn, .actions select { min-width: 9.5rem; min-height: 2.15rem; text-align: center; white-space: normal; }
+.btn-wrap { display: flex; }
+@media (max-width: 560px) {
+  .act-main, .act-danger { display: grid; grid-template-columns: 1fr 1fr; width: 100%; margin-left: 0; }
+  .actions .btn, .actions select, .btn-wrap { min-width: 0; width: 100%; }
+}

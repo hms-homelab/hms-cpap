@@ -15,6 +15,7 @@
 // them on every engine; the routes only route.
 //
 #include "database/IDatabase.h"
+#include "utils/MachineZone.h"
 
 #include <json/json.h>
 
@@ -27,10 +28,21 @@ namespace hms_cpap::clockapi {
 /// Devices page warns (SDD-074 decision 1).
 constexpr long long kWarnDifference = 15 * 60;
 
+/// Issue #95: a learned clock is offered as a one-click setting only when the
+/// machine's own card stamps said it on this many separate nights.
+constexpr int kNightsToOffer = 2;
+
 /// {"device_id", "setting", "kind": "host"|"fixed"|"zone", "offset_now",
-///  "host_zone", "host_offset_now", "learned": {"offset", "text", "at"} | null,
-///  "difference_s", "warn"}
+///  "host_zone", "host_offset_now",
+///  "learned": {"offset" (drift + zone), "text", "at", "from": "card_stamps"|"brp_growth"|"",
+///              "nights", "use" (the setting it would be), "offer",
+///              "preview": {"night_start", "now", "would_be"} | null} | null,
+///  "difference_s" (learned offset vs the setting's), "warn"}
 Json::Value view(IDatabase& db, const std::string& device_id, long long now, bool learnable);
+
+/// The latest night's start on this computer's clock, read with [zone] ("now")
+/// and with a fixed [offset_s] ("would_be"), as HH:MM; null with no night.
+Json::Value preview(IDatabase& db, const std::string& device_id, const MachineZone& zone, long long offset_s);
 
 struct Result {
     int status{200};

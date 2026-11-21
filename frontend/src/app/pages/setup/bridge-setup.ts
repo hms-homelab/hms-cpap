@@ -72,18 +72,30 @@ export interface WatchedStatus {
 /** One frame of the watch socket (api/sleepbridge/watch). */
 export type WatchFrame =
   | { t: 'sleepbridge'; event: string; sender?: string; status?: WatchedStatus }
-  | { t: 'cpapdash'; event: string; stream?: { state?: string; [k: string]: unknown } };
+  | { t: 'cpapdash'; event: string; stream?: { state?: string; [k: string]: unknown } }
+  | { t: 'night'; event: 'live' | 'settled' | string }
+  | { t: 'localmodel'; event: string; status?: { state?: string; [k: string]: unknown } };
 
 /** A text frame, read; null for anything that is not one of ours. */
 export function parseWatchFrame(text: string): WatchFrame | null {
   try {
     const v = JSON.parse(text);
     if (!v || typeof v !== 'object') return null;
-    if (v.t === 'sleepbridge' || v.t === 'cpapdash') return v as WatchFrame;
+    if (v.t === 'sleepbridge' || v.t === 'cpapdash' || v.t === 'night' || v.t === 'localmodel') return v as WatchFrame;
     return null;
   } catch {
     return null;
   }
+}
+
+/**
+ * Issue #96: a frame after which the dashboard reads /api/realtime again: a
+ * night went live or settled, or the socket just opened (its bridges'
+ * snapshot), which closes the gap between the page's first read and the
+ * socket being there.
+ */
+export function realtimeFrame(f: WatchFrame): boolean {
+  return f.t === 'night' || (f.t === 'sleepbridge' && f.event === 'snapshot');
 }
 
 /**
@@ -210,6 +222,24 @@ export function streamStateKey(state: string | undefined, savedOff: boolean | nu
   if (s === 'no_token' || s === '') return 'setup.bridge.online.state.notYet';
   const known = ['connecting', 'connected', 'unreachable', 'refused', 'revoked', 'closed', 'unavailable'];
   return 'setup.bridge.online.state.' + (known.includes(s) ? s : 'unknown');
+}
+
+/**
+ * Issue #98: the CpapDash stream state a watch frame carries (its snapshot on
+ * connect and each change after), for Settings to show as it happens; null
+ * for any other frame.
+ */
+export function streamOfFrame<T = { state?: string; [k: string]: unknown }>(f: WatchFrame): T | null {
+  return f.t === 'cpapdash' && f.stream && typeof f.stream.state === 'string' ? (f.stream as unknown as T) : null;
+}
+
+/**
+ * The local sleep model's status a watch frame carries when its download or
+ * a loaded file finished, for Settings (no more "Checking the model file..."
+ * until a reload); null for any other frame.
+ */
+export function localModelOfFrame(f: WatchFrame): { state?: string; [k: string]: unknown } | null {
+  return f.t === 'localmodel' && f.status && typeof f.status.state === 'string' ? f.status : null;
 }
 
 /** One dark module of a QR code, as an SVG rect. */

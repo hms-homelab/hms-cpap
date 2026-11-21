@@ -72,7 +72,7 @@
       "subtitle": "Az utolsó alvásidőszak teljesítménye",
       "ahiScore": "AHI-pontszám",
       "usage": "Használat",
-      "targetMet": "4h+ cél teljesítve",
+      "targetMet": "{{h}}h+ cél teljesítve",
       "maskLeak": "Maszkszivárgás",
       "totalEvents": "Összes esemény",
       "eventsPerHr": "{{v}} esemény/óra",

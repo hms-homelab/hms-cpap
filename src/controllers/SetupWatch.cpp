@@ -64,6 +64,36 @@ void SetupWatch::streamEvent(const Json::Value& stream) {
     sendAll(sleepbridge::streamWatchFrame("state", stream));
 }
 
+std::string SetupWatch::nightFrame(bool live) {
+    return std::string(R"({"t":"night","event":")") + (live ? "live" : "settled") + "\"}";
+}
+
+void SetupWatch::nightEvent(bool live) {
+    {
+        std::lock_guard<std::mutex> lk(g_mu);
+        if (g_watchers.empty()) return;
+    }
+    sendAll(nightFrame(live));
+}
+
+std::string SetupWatch::localModelFrame(const Json::Value& status) {
+    Json::Value v(Json::objectValue);
+    v["t"]      = "localmodel";
+    v["event"]  = "state";
+    v["status"] = status;
+    Json::StreamWriterBuilder w;
+    w["indentation"] = "";
+    return Json::writeString(w, v);
+}
+
+void SetupWatch::localModelEvent(const Json::Value& status) {
+    {
+        std::lock_guard<std::mutex> lk(g_mu);
+        if (g_watchers.empty()) return;
+    }
+    sendAll(localModelFrame(status));
+}
+
 void SetupWatch::handleNewConnection(const drogon::HttpRequestPtr&, const drogon::WebSocketConnectionPtr& conn) {
     // Keeps the connection open through proxies; never news.
     conn->setPingMessage("", std::chrono::seconds(30));

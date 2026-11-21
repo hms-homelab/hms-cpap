@@ -76,7 +76,8 @@ private:
     void saveSettings(const ConfigModel& model, bool via_api,
                       const std::vector<std::string>& restart_reasons);
     void startOver();
-    void runWizard(bool wipe_first);
+    /// [previous]: the config.json Start Over cleared, whose id the new one keeps.
+    void runWizard(bool wipe_first, const nlohmann::json& previous = nlohmann::json());
     void syncNow();
 
     ChildProcess* child_;

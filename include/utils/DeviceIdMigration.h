@@ -36,6 +36,13 @@ bool isOldDefaultDeviceId(const std::string& id);
 /// earlier start left unfinished. The caller saves the config when it changed.
 bool beginDeviceIdBackfill(AppConfig& config);
 
+/// Between steps 2 and 3 (#94 follow-up). Nights moved off the old id mean this
+/// install ran, and published, under it: its retained topics are its own, and
+/// step 3 clears them. With none, step 3 leaves the broker alone, because
+/// another install on the same broker may still be on that id. True when the
+/// config changed and must be saved.
+bool noteDeviceIdMoved(AppConfig& config, int sessions_moved);
+
 /// Step 3. Empties every retained topic under the old id on the broker
 /// (homeassistant/<component>/<old>/... and cpap/<old>/...). False when the
 /// broker could not be reached, so a later start tries again.

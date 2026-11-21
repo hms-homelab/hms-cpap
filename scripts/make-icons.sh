@@ -135,6 +135,37 @@ for pair in "22 " "44 @2x"; do
         "$OUT/mono-problem${SUFFIX}.png"
 done
 
+# ── Windows tray .ico, one per state (#97) ──────────────────────────────────
+#
+# The Windows notification area showed a blank light square for the PNG
+# QIcon. Windows' own tray wants an HICON at SM_CXSMICON (16 px at 100%,
+# 20 at 125%, 24 at 150%, 32 at 200%) and 48 for its large views, so each
+# state is also an .ico with exactly those sizes, drawn at each size from
+# the same glyph as the colour family (never one bitmap scaled by Windows).
+# supervisor.rc embeds them; TrayShell loads them with LoadImageW.
+tray_ico() {   # tray_ico <state> <fill> <alpha> [dot]
+    local st=$1 fill=$2 alpha=$3 dot=${4:-} parts=()
+    for s in 16 20 24 32 48; do
+        local g=$(( s * 92 / 100 )) f="$TMP/tray-$st-$s.png"
+        magick "$MONO_MASTER" -fill "$fill" -colorize 100 \
+            -filter Lanczos -resize "${g}x${g}" \
+            -background none -gravity center -extent "${s}x${s}" \
+            -alpha set -channel A -evaluate multiply "$alpha" +channel "$f"
+        if [ -n "$dot" ]; then
+            local d=$(( s * 42 / 100 )); local cx=$(( s - d/2 - 1 )) cy=$(( s - d/2 - 1 ))
+            magick "$f" -fill "$dot" -stroke none -draw "circle $cx,$cy $cx,$(( cy - d/2 ))" "$f"
+        fi
+        parts+=("$f")
+    done
+    # 32-bit entries: a few-colour glyph is otherwise written palettised and
+    # loses its soft edges to a hard 1-bit mask.
+    magick "${parts[@]}" -type TrueColorAlpha "$OUT/tray-$st.ico"
+}
+tray_ico running  "#7FC3E8" 1
+tray_ico starting "#7FC3E8" 0.55
+tray_ico stopped  "#9AA0A6" 1
+tray_ico problem  "#9AA0A6" 1 "#d64545"
+
 # ── Scrollbar arrows ────────────────────────────────────────────────────────
 #
 # Qt cannot draw a scrollbar arrow from a stylesheet alone -- border-triangle

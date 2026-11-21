@@ -1,4 +1,4 @@
-import { Component, OnInit, ViewChild, ElementRef, AfterViewInit } from '@angular/core';
+import { Component, OnInit, OnDestroy, ViewChild, ElementRef, AfterViewInit, NgZone } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterLink } from '@angular/router';
 import { TranslatePipe, TranslateService } from '@ngx-translate/core';
@@ -23,7 +23,9 @@ import { UpdateBannerComponent } from '../../components/dashboard/update-banner.
 import { detectDesaturations, odiPerHour, inferSampleSec } from '../../utils/signal-analysis';
 import { isGradableAhi } from '../../utils/index-kind';
 import { summaryRefreshOutcome } from './summary-refresh';
-import { hasCardData, CARD_FIELDS } from './card-data';
+import { hasCardData, CARD_FIELDS, DEFAULT_USAGE_TARGET_HOURS, usageTargetHoursOf } from './card-data';
+import { SleepBridgeWatch } from '../../services/sleepbridge-watch';
+import { realtimeFrame } from '../setup/bridge-setup';
 import Chart from 'chart.js/auto';
 
 const MODE_LABELS: Record<string, string> = {
@@ -252,7 +254,7 @@ const MODE_LABELS: Record<string, string> = {
     .empty-actions { display: flex; gap: 0.75rem; flex-wrap: wrap; justify-content: center; }
   `]
 })
-export class DashboardComponent implements OnInit, AfterViewInit {
+export class DashboardComponent implements OnInit, AfterViewInit, OnDestroy {
   @ViewChild('ahiChart') ahiChartRef!: ElementRef<HTMLCanvasElement>;
   @ViewChild('usageChart') usageChartRef!: ElementRef<HTMLCanvasElement>;
   @ViewChild('pressureChart') pressureChartRef!: ElementRef<HTMLCanvasElement>;
@@ -288,6 +290,10 @@ export class DashboardComponent implements OnInit, AfterViewInit {
   isCpapMode = true;
   private charts: Chart[] = [];
   private liveCharts: Chart[] = [];
+  /** Settings' usage target, hours (config usage_target_hours). */
+  usageTarget = DEFAULT_USAGE_TARGET_HOURS;
+  /** Issue #96: the watch socket; a night frame re-reads /api/realtime. */
+  private watch: SleepBridgeWatch | null = null;
 
   // Section data
   keyMetrics: KeyMetricsData | null = null;
@@ -318,7 +324,7 @@ export class DashboardComponent implements OnInit, AfterViewInit {
   summaryRefreshMsg = '';
 
   constructor(private api: CpapApiService, private t: TranslateService,
-              private lang: LanguageService) {}
+              private lang: LanguageService, private zone: NgZone) {}
 
   fmtDuration(val: string | number | undefined): string {
     const hours = +(val || 0);
@@ -394,33 +400,23 @@ export class DashboardComponent implements OnInit, AfterViewInit {
         if (name) {
           this.deviceName = name;
         }
+        // Settings' usage target, the one the night summary states too.
+        this.usageTarget = usageTargetHoursOf(cfg?.usage_target_hours);
+        if (this.keyMetrics) this.keyMetrics = { ...this.keyMetrics, usageTargetHours: this.usageTarget };
+        if (this.strMetrics) this.strMetrics = { ...this.strMetrics, usageTargetHours: this.usageTarget };
       },
       error: () => {},
     });
 
-    // Check for live session + O2Ring data
-    this.api.getRealtime().subscribe({
-      next: (rt) => {
-        if (!rt) return;
-        if (rt.session) {
-          this.liveSession = rt.session;
-        }
-        if (rt.oximetry?.active) {
-          this.liveSpO2 = rt.oximetry.spo2 > 0 ? String(rt.oximetry.spo2) : '';
-          this.liveHR = rt.oximetry.hr > 0 ? String(rt.oximetry.hr) : '';
-        }
-        this.realtimeData = {
-          sessionStatus: rt.session ? 'active' : 'completed',
-          sessionDuration: rt.session?.duration_hours || '',
-          lastSessionTime: '',
-          currentPressure: rt.session?.current_pressure || 0,
-          minPressure: rt.session?.min_pressure || 0,
-          maxPressure: rt.session?.max_pressure || 0,
-        };
-        setTimeout(() => this.renderLiveCharts(), 50);
-      },
-      error: () => {},
-    });
+    // Check for live session + O2Ring data, now and (issue #96) again each
+    // time the server says a night went live or settled: the first read can
+    // come before the night is live (the service just started, the bridge's
+    // first batch not read yet), and nothing asked again until a reload.
+    this.loadRealtime();
+    this.watch = new SleepBridgeWatch(this.zone, (f) => {
+      if (realtimeFrame(f)) this.loadRealtime();
+    }, () => { this.watch = null; });
+    this.watch.connect();
 
     this.api.getDashboard().subscribe(d => {
       this.data = d;
@@ -442,6 +438,7 @@ export class DashboardComponent implements OnInit, AfterViewInit {
         compliancePct: parseFloat(d.latest_night.compliance_pct) || 0,
         sessionActive: !!this.liveSession,
         mode: this.modeName,
+        usageTargetHours: this.usageTarget,
       };
 
       // The newest session, for its event count. SDD-026: the AHI and the
@@ -500,6 +497,7 @@ export class DashboardComponent implements OnInit, AfterViewInit {
                 cai: parseFloat(r.cai_str) || 0,
                 hi: parseFloat(r.hi_str) || 0,
                 rin: parseFloat(r.rin_str) || 0,
+                usageTargetHours: this.usageTarget,
               } : null;
 
               const oa = Math.round((parseFloat(r.oai) || 0) * (parseFloat(r.duration_minutes) || 0) / 60);
@@ -684,6 +682,41 @@ export class DashboardComponent implements OnInit, AfterViewInit {
 
   ngAfterViewInit() {
     if (this.data) this.renderCharts();
+  }
+
+  ngOnDestroy() {
+    this.watch?.close();
+    this.watch = null;
+    this.liveCharts.forEach(c => c.destroy());
+  }
+
+  /** GET /api/realtime into the LIVE SESSION panel and the status card. */
+  private loadRealtime() {
+    this.api.getRealtime().subscribe({
+      next: (rt) => {
+        if (!rt) return;
+        this.liveSession = rt.session || null;
+        if (this.keyMetrics) this.keyMetrics = { ...this.keyMetrics, sessionActive: !!this.liveSession };
+        if (rt.oximetry?.active) {
+          this.liveSpO2 = rt.oximetry.spo2 > 0 ? String(rt.oximetry.spo2) : '';
+          this.liveHR = rt.oximetry.hr > 0 ? String(rt.oximetry.hr) : '';
+        }
+        this.realtimeData = {
+          sessionStatus: rt.session ? 'active' : 'completed',
+          sessionDuration: rt.session?.duration_hours || '',
+          lastSessionTime: '',
+          currentPressure: rt.session?.current_pressure || 0,
+          minPressure: rt.session?.min_pressure || 0,
+          maxPressure: rt.session?.max_pressure || 0,
+        };
+        if (!this.liveSession) {
+          this.liveCharts.forEach(c => c.destroy());
+          this.liveCharts = [];
+        }
+        setTimeout(() => this.renderLiveCharts(), 50);
+      },
+      error: () => {},
+    });
   }
 
   private renderLiveCharts() {
@@ -871,7 +904,7 @@ export class DashboardComponent implements OnInit, AfterViewInit {
         labels,
         datasets: [{
           label: this.t.instant('dashboard.chart.usageAxis'), data: this.data.usage_trend.map(p => +p.value),
-          backgroundColor: this.data.usage_trend.map(p => +p.value >= 4 ? 'rgba(76,175,80,0.7)' : 'rgba(255,152,0,0.7)'),
+          backgroundColor: this.data.usage_trend.map(p => +p.value >= this.usageTarget ? 'rgba(76,175,80,0.7)' : 'rgba(255,152,0,0.7)'),
           borderRadius: 4,
         }]
       },

@@ -9,7 +9,7 @@ import {
   recordingWarning, releaseLine, riskyGroups, switchView,
   groupCode, ds2PairView, ds2PairRunning, ds2RefusalKey, ds2Reads, ds2NextRead, isIsoDay, as11ResetRefusalKey,
   offsetSetting, fixedOffsets, clockChoiceOf, clockDraftOf, clockSettingOf, clockChanged, filterZones, clockDifference,
-  learnedOffer, rereadLine,
+  hasDangerActions, learnedOffer, rereadLine,
 } from './devices-model.ts';
 import type { ClockView, Reread } from './devices-model.ts';
 
@@ -344,11 +344,38 @@ test('the difference is said in minutes under an hour, else in hours', () => {
 test('the learned clock is a suggestion: Use this saves it as a fixed offset, gone once it is the setting', () => {
   assert.equal(learnedOffer(clock()), null);
   assert.equal(learnedOffer(undefined), null);
-  const l = learnedOffer(clock({ learned: { offset: 36000, text: '+10:00', at: 1763500000 } }));
-  assert.deepEqual(l, { text: '+10:00', at: 1763500000, use: '+10:00', offer: true });
-  assert.equal(learnedOffer(clock({ setting: '+10:00', kind: 'fixed', learned: { offset: 36000, text: '+10:00', at: 0 } }))?.offer, false);
-  assert.equal(learnedOffer(clock({ setting: 'Australia/Brisbane', kind: 'zone', learned: { offset: 36000, text: '+10:00', at: 0 } }))?.offer,
+  const preview = { night_start: '2026-11-19 22:10:00', now: '07:10', would_be: '22:10' };
+  const l = learnedOffer(clock({ learned: { offset: 36000, text: '+10:00', at: 1763500000, from: 'card_stamps', nights: 2,
+                                            use: '+10:00', offer: true, preview } }));
+  assert.deepEqual(l, { text: '+10:00', at: 1763500000, use: '+10:00', offer: true,
+                        preview: { now: '07:10', would_be: '22:10' } });
+  assert.equal(learnedOffer(clock({ setting: '+10:00', kind: 'fixed',
+                                    learned: { offset: 36000, text: '+10:00', at: 0, from: 'card_stamps', nights: 2, offer: true } }))?.offer, false);
+  assert.equal(learnedOffer(clock({ setting: 'Australia/Brisbane', kind: 'zone',
+                                    learned: { offset: 36000, text: '+10:00', at: 0, from: 'card_stamps', nights: 2, offer: true } }))?.offer,
                true, 'a zone is not the fixed offset, so it is still offered');
+});
+
+test('item 10 layout B: the destructive group shows only where there is a destructive action', () => {
+  assert.equal(hasDangerActions({ kind: 'sleepbridge', detail: {} }), true, 'Reset Wi-Fi, Forget this device');
+  assert.equal(hasDangerActions({ kind: 'mule', detail: {} }), true);
+  assert.equal(hasDangerActions({ kind: 'ds2_ble', detail: { paired: true } }), true, 'Forget pairing');
+  assert.equal(hasDangerActions({ kind: 'ds2_ble', detail: { paired: false } }), false);
+  assert.equal(hasDangerActions({ kind: 'as11_ble', detail: { paired: true, not_compiled: true } }), false);
+  assert.equal(hasDangerActions({ kind: 'o2ring', detail: {} }), false);
+});
+
+test('issue #95: a learned clock the server does not offer is never a button', () => {
+  // A Sleep Bridge night: -05:00 learned while recording, not from the card's stamps.
+  const brp = learnedOffer(clock({ learned: { offset: -18000, text: '-05:00', at: 1, from: 'brp_growth', nights: 3, offer: false } }));
+  assert.equal(brp?.offer, false);
+  const legacy = learnedOffer(clock({ learned: { offset: 0, text: '+00:00', at: 1, from: '', nights: 0, offer: false } }));
+  assert.equal(legacy?.offer, false);
+  assert.equal(legacy?.preview, null);
+  const one = learnedOffer(clock({ learned: { offset: 36000, text: '+10:00', at: 1, from: 'card_stamps', nights: 1, offer: false } }));
+  assert.equal(one?.offer, false);
+  // An answer from before 7.0.0 (no offer field) is never offered.
+  assert.equal(learnedOffer(clock({ learned: { offset: 36000, text: '+10:00', at: 1 } }))?.offer, false);
 });
 
 test('a re-read says the backup, then the worker\'s progress, then done, from its own status', () => {

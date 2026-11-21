@@ -2,6 +2,7 @@ import { Component, Input } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { TranslatePipe, TranslateService } from '@ngx-translate/core';
 import { formatIndex } from '../../utils/format';
+import { usageColorFor, usageTargetHoursOf } from '../../pages/dashboard/card-data';
 
 export interface KeyMetricsData {
   ahi: number;
@@ -13,6 +14,8 @@ export interface KeyMetricsData {
   compliancePct: number;
   sessionActive: boolean;
   mode: string;
+  /** Settings' usage target, hours (4 when unset): "Xh+ target met". */
+  usageTargetHours?: number;
 }
 
 @Component({
@@ -47,7 +50,7 @@ export interface KeyMetricsData {
             <div class="mu-primary">{{ 'dashboard.keyMetrics.usage' | translate }}</div>
             <div class="mu-secondary">
               <span class="mu-value">{{ fmtDuration(data.usageHours) }}</span>
-              <span class="mu-assess" *ngIf="data.usageHours >= 4">{{ 'dashboard.keyMetrics.targetMet' | translate }}</span>
+              <span class="mu-assess" *ngIf="data.usageHours >= usageTarget">{{ 'dashboard.keyMetrics.targetMet' | translate:{ h: usageTarget } }}</span>
             </div>
           </div>
         </div>
@@ -162,9 +165,10 @@ export class KeyMetricsComponent {
     if (this.data.ahi < 30) return this.t.instant('dashboard.keyMetrics.ahiModerate');
     return this.t.instant('dashboard.keyMetrics.ahiSevere');
   }
+  get usageTarget(): number { return usageTargetHoursOf(this.data?.usageTargetHours); }
   get usageColor(): string {
     if (!this.data) return '#888';
-    return this.data.usageHours >= 4 ? '#4ade80' : this.data.usageHours >= 2 ? '#fb923c' : '#ef4444';
+    return usageColorFor(this.data.usageHours, this.usageTarget);
   }
   get leakColor(): string {
     if (!this.data) return '#888';

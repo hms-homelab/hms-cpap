@@ -1,7 +1,9 @@
 /* SDD-074: the Machine clock / Ring clock row on a Devices card. Its own file
    so devices.component.css stays inside the per-stylesheet budget. */
-.clock-row dt { margin-bottom: 0.15rem; }
 .clock-row dd { display: flex; flex-direction: column; gap: 0.4rem; align-items: stretch; }
+/* Item 10: the clock in one line, "Change" beside it. */
+.clock-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 0.5rem; }
+.clock-line .link { margin-left: 0; }
 .clock-pick { display: flex; flex-wrap: wrap; gap: 0.4rem; }
 .clock-pick select { flex: 1 1 14rem; min-width: 0; max-width: 100%; }
 .clock-pick select.offset { flex: 0 0 auto; }

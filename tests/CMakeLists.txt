@@ -123,6 +123,8 @@ set(TEST_SOURCES
     desktop/test_BridgeSetup.cpp
     # SDD-081: the OSCAR helper role, its window's choices and its tray line.
     desktop/test_HelperSetup.cpp
+    # #94 follow-up: the wizard's config.json names this install.
+    desktop/test_InstallIdentity.cpp
 
     utils/test_FailureLogThrottle.cpp
     clients/test_EzShareClient.cpp

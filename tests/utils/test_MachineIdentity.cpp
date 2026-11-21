@@ -143,10 +143,11 @@ TEST(ReadBluetoothIdentification, NoBluetoothFolderIsEmpty) {
     EXPECT_TRUE(readBluetoothIdentification("").empty());
 }
 
-TEST(ReadIdentification, JsonWinsWhenBothArePresent) {
+TEST(ReadIdentification, JsonWinsWhenBothNameTheSameMachine) {
     CardRoot card;
-    card.write("Identification.tgt", kTgt);
-    card.write("Identification.json", kJson);
+    card.write("Identification.tgt", kTgt);                       // 99990000001
+    card.write("Identification.json", R"({"FlowGenerator":{"IdentificationProfiles":{
+        "Product":{"SerialNumber":"99990000001","ProductName":"AirCurve11VAuto"}}}})");
     EXPECT_EQ(readIdentification(card.path()).model, "AirCurve 11 VAuto");
 }
 
@@ -252,11 +253,43 @@ TEST(ReadIdentification, ACardMovedBackToAnAirSense10NamesThe10) {
     EXPECT_EQ(id.serial, "99990000001");
 }
 
-TEST(ReadIdentification, TwoMachinesAndNoNightsTheJsonWins) {
+// #94 fallback: the two files disagree and the newest night's EDFs carry no
+// SRN. The stale .json is not taken on its own word.
+TEST(ReadIdentification, TwoMachinesAndNoSerialInTheNightsTheTgtWins) {
+    CardRoot card;
+    card.write("Identification.tgt", kTgt);                       // AirSense 10, 99990000001
+    card.write("Identification.json", kJson);                     // AirCurve 11, 99990000002
+    writeEdfHeader(card.path(), "20261120", "20261120_223000_BRP.edf", "Startdate 20-NOV-2026 X X X");
+    const auto id = readIdentification(card.path());
+    EXPECT_EQ(id.model, "AirSense 10 AutoSet");
+    EXPECT_EQ(id.serial, "99990000001");
+}
+
+TEST(ReadIdentification, TwoMachinesAndNoNightsTheTgtWins) {
     CardRoot card;
     card.write("Identification.tgt", kTgt);
     card.write("Identification.json", kJson);
-    EXPECT_EQ(readIdentification(card.path()).model, "AirCurve 11 VAuto");
+    EXPECT_EQ(readIdentification(card.path()).model, "AirSense 10 AutoSet");
+}
+
+namespace {
+void writeStr(const std::string& root, const std::string& recording) {
+    std::string header(256, ' ');
+    header.replace(0, 8, "0       ");
+    header.replace(88, std::min<size_t>(80, recording.size()), recording.substr(0, 80));
+    std::ofstream(fs::path(root) / "STR.edf", std::ios::binary) << header;
+}
+}  // namespace
+
+TEST(ReadIdentification, TwoMachinesAndNoSerialInTheNightsStrNamesTheMachine) {
+    CardRoot card;
+    card.write("Identification.tgt", kTgt);                       // AirSense 10, 99990000001
+    card.write("Identification.json", kJson);                     // AirCurve 11, 99990000002
+    writeEdfHeader(card.path(), "20261120", "20261120_223000_BRP.edf", "Startdate 20-NOV-2026 X X X");
+    writeStr(card.path(), "Startdate 20-NOV-2026 X X X SRN=99990000002 MID=46");
+    EXPECT_EQ(readIdentification(card.path()).model, "AirCurve 11 VAuto") << "STR.edf names the .json's";
+    writeStr(card.path(), "Startdate 20-NOV-2026 X X X SRN=99990000001 MID=36");
+    EXPECT_EQ(readIdentification(card.path()).model, "AirSense 10 AutoSet") << "STR.edf names the .tgt's";
 }
 
 TEST(ReadIdentification, AnEdfWithoutASerialGivesNothing) {
@@ -339,6 +372,56 @@ TEST(DeviceBlock, CarriesWhatTheCardSaid) {
     EXPECT_EQ(d["model"].asString(), "AirCurve 11 VAuto");
     EXPECT_EQ(d["serial_number"].asString(), "99990000002");
     EXPECT_EQ(d["sw_version"].asString(), "SW04600.18.8.7.0");
+}
+
+// #94 follow-up: Home Assistant's name for the device, by the dashboard
+// title's rule. CPAP_DEVICE_NAME is what the service bridges device_name into.
+namespace {
+class DeviceNameEnv {
+public:
+    explicit DeviceNameEnv(const char* value) {
+        if (const char* v = std::getenv("CPAP_DEVICE_NAME")) {
+            saved_ = v;
+            had_ = true;
+        }
+        set(value);
+    }
+    ~DeviceNameEnv() { set(had_ ? saved_.c_str() : nullptr); }
+
+private:
+    static void set(const char* v) {
+#ifdef _WIN32
+        _putenv_s("CPAP_DEVICE_NAME", v ? v : "");
+#else
+        if (v) setenv("CPAP_DEVICE_NAME", v, 1); else unsetenv("CPAP_DEVICE_NAME");
+#endif
+    }
+    std::string saved_;
+    bool had_ = false;
+};
+}  // namespace
+
+TEST(DeviceBlock, TheLegacyNameGivesWayToTheMachine) {
+    DeviceNameEnv env("ResMed AirSense 10");
+    DataPublisherService pub(nullptr, nullptr);
+    EXPECT_EQ(pub.deviceInfo()["name"].asString(), "CPAP") << "no model known: no machine named";
+    pub.setIdentity({"ResMed", "AirSense 11 AutoSet", "99990000009", ""});
+    EXPECT_EQ(pub.deviceInfo()["name"].asString(), "ResMed AirSense 11 AutoSet");
+    EXPECT_EQ(pub.deviceName(), "ResMed AirSense 11 AutoSet");
+}
+
+TEST(DeviceBlock, TheNewInstallNameGivesWayToTheMachine) {
+    DeviceNameEnv env("CPAP");
+    DataPublisherService pub(nullptr, nullptr);
+    pub.setIdentity({"ResMed", "AirCurve 11 VAuto", "", ""});
+    EXPECT_EQ(pub.deviceInfo()["name"].asString(), "ResMed AirCurve 11 VAuto");
+}
+
+TEST(DeviceBlock, ANameSomeoneChoseIsKept) {
+    DeviceNameEnv env("Bedroom AirSense");
+    DataPublisherService pub(nullptr, nullptr);
+    pub.setIdentity({"ResMed", "AirSense 11 AutoSet", "", ""});
+    EXPECT_EQ(pub.deviceInfo()["name"].asString(), "Bedroom AirSense");
 }
 
 TEST(DeviceBlock, AnEmptyIdentityDoesNotEraseAKnownOne) {

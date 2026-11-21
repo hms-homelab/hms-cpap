@@ -30,6 +30,12 @@ struct AppConfig {
     /// cleared once they and its Home Assistant topics have. A start that finds
     /// it finishes the move instead of minting a second id.
     std::string device_id_previous;
+    /// #94 follow-up: whether this install ever published under
+    /// device_id_previous, so its retained Home Assistant topics are its own to
+    /// clear. A move starts it false; nights found under the old id make it
+    /// true. A move an older build began has no key and keeps that build's
+    /// meaning: true. Written only while a move is under way.
+    bool device_id_previous_published = true;
 
     // ── Data source: TWO questions, not one (SDD-022) ───────────────────────
     //
@@ -146,6 +152,18 @@ struct AppConfig {
     /// (the default: what the machine's own screen shows, as stored) or
     /// "host" (this computer's clock).
     std::string display_clock = "machine";
+    /// The nightly usage target, in hours: the dashboard's "Xh+ target met".
+    /// 4 h by default, the usual insurance compliance rule; 1 to 12. The local
+    /// narrator's fact block keeps "% of 8h target" (what it was trained on).
+    int usage_target_hours = kDefaultUsageTargetHours;
+    static constexpr int kDefaultUsageTargetHours = 4;
+    static constexpr int kMinUsageTargetHours = 1;
+    static constexpr int kMaxUsageTargetHours = 12;
+    static int usageTargetHoursOf(long long v) {
+        if (v < kMinUsageTargetHours) return kMinUsageTargetHours;
+        if (v > kMaxUsageTargetHours) return kMaxUsageTargetHours;
+        return static_cast<int>(v);
+    }
     /// SDD-056: a FlashAir on the home WiFi (APPMODE=5) answers by mDNS.
     std::string flashair_url = "http://flashair.local";
     /// SDD-041 D1: apply a newer release without asking, once the collector is
@@ -691,6 +709,8 @@ struct AppConfig {
                 config.device_id_pinned = j["device_id_pinned"].get<bool>();
             if (j.contains("device_id_previous") && j["device_id_previous"].is_string())
                 config.device_id_previous = j["device_id_previous"].get<std::string>();
+            if (j.contains("device_id_previous_published") && j["device_id_previous_published"].is_boolean())
+                config.device_id_previous_published = j["device_id_previous_published"].get<bool>();
             if (j.contains("source"))       config.source = j["source"];
             // SDD-022. Read the new pair when present; migrate from `source`
             // when not. Rule 2: a config carrying BOTH -- written by an older
@@ -713,6 +733,8 @@ struct AppConfig {
             if (j.contains("ezshare_range")) config.ezshare_range = j["ezshare_range"];
             if (j.contains("display_clock") && j["display_clock"].is_string())
                 config.display_clock = j["display_clock"] == "host" ? "host" : "machine";
+            if (j.contains("usage_target_hours") && j["usage_target_hours"].is_number())
+                config.usage_target_hours = usageTargetHoursOf(j["usage_target_hours"].get<long long>());
             if (j.contains("flashair_url"))  config.flashair_url = j["flashair_url"];
             if (j.contains("auto_update"))   config.auto_update = j["auto_update"];
             if (j.contains("local_dir"))     config.local_dir = j["local_dir"];
@@ -911,7 +933,10 @@ struct AppConfig {
             // SDD-051. Written only when set, so a config that never had them
             // does not grow keys nobody asked for.
             if (device_id_pinned) j["device_id_pinned"] = true;
-            if (!device_id_previous.empty()) j["device_id_previous"] = device_id_previous;
+            if (!device_id_previous.empty()) {
+                j["device_id_previous"] = device_id_previous;
+                j["device_id_previous_published"] = device_id_previous_published;
+            }
             j["transport"] = transport;
             j["format"]    = format;
             // SDD-022 migration rule 3: keep writing `source` for ONE release,
@@ -921,6 +946,7 @@ struct AppConfig {
             j["ezshare_url"] = ezshare_url;
             j["ezshare_range"] = ezshare_range;
             j["display_clock"] = display_clock;
+            j["usage_target_hours"] = usage_target_hours;
             j["flashair_url"] = flashair_url;
             j["auto_update"] = auto_update;
             j["local_dir"] = local_dir;
@@ -1079,6 +1105,7 @@ struct AppConfig {
         j["ezshare_url"] = ezshare_url;
         j["ezshare_range"] = ezshare_range;
         j["display_clock"] = display_clock;
+        j["usage_target_hours"] = usage_target_hours;
         j["flashair_url"] = flashair_url;
         j["auto_update"] = auto_update;
         j["local_dir"] = local_dir;

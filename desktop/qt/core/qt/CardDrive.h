@@ -17,6 +17,9 @@ namespace cpapdash::supervisor {
  *
  * macOS and Linux: the folder volumes are mounted in (/Volumes, /media/<user>,
  * /run/media/<user>) changes, which QFileSystemWatcher hears from the kernel.
+ * macOS also: DiskArbitration's volume path being set or a disk going, since
+ * the /Volumes change comes when the mount point is made, before the volume
+ * is mounted on it.
  * Windows: WM_DEVICECHANGE (a volume arrived or was removed), broadcast to
  * every top-level window. No clock: nothing is looked at between events.
  */
@@ -33,6 +36,7 @@ signals:
 
 private:
     QFileSystemWatcher watcher_;
+    void* da_session_ = nullptr;   ///< macOS: the DiskArbitration session (DASessionRef)
 };
 
 /// A mounted volume that holds a CPAP machine's card.

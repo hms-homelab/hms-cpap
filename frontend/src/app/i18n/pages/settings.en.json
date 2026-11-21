@@ -248,7 +248,9 @@
       "showTimesOn": "Show times on",
       "machine": "the machine's clock",
       "host": "this computer's clock",
-      "hint": "The machine's clock matches its own screen and OSCAR. Each machine's clock is set on its card on the Devices page."
+      "hint": "The machine's clock matches its own screen and OSCAR. Each machine's clock is set on its card on the Devices page.",
+      "usageTarget": "Nightly usage target (hours)",
+      "usageTargetHint": "A night with at least this many hours meets the target on the dashboard. 4 hours is the usual insurance compliance rule. 1 to 12."
     },
     "spo2": {
       "heading": "SpO2 Desaturations",

@@ -8,6 +8,8 @@
 #include "TestBroker.h"
 
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <map>
 #include <mutex>
 #include <regex>
@@ -85,6 +87,60 @@ TEST(DeviceIdConfig, PinAndPreviousSurviveASaveAndLoad) {
     ASSERT_EQ(AppConfig::loadFile(path, back), AppConfig::LoadStatus::Ok);
     EXPECT_TRUE(back.device_id_pinned);
     EXPECT_EQ(back.device_id_previous, "cpapdash");
+    std::filesystem::remove(path);
+}
+
+// ── #94 follow-up: an id this install never published is not its to clear ──
+
+// The desktop wizard's config.json had no device_id, so a fresh install loaded
+// as the old fixed id and moved off it; another install on the same broker may
+// still be on that id.
+TEST(DeviceIdPublished, AFreshMoveIsNotKnownToHavePublished) {
+    AppConfig c;
+    c.device_id = AppConfig::kLegacyDeviceId;
+    ASSERT_TRUE(beginDeviceIdBackfill(c));
+    EXPECT_FALSE(c.device_id_previous_published);
+}
+
+TEST(DeviceIdPublished, NoNightsUnderTheOldIdLeavesItsTopicsAlone) {
+    AppConfig c;
+    c.device_id = AppConfig::kLegacyDeviceId;
+    beginDeviceIdBackfill(c);
+    EXPECT_FALSE(noteDeviceIdMoved(c, 0));
+    EXPECT_FALSE(c.device_id_previous_published);
+}
+
+TEST(DeviceIdPublished, NightsUnderTheOldIdMakeItsTopicsThisInstalls) {
+    AppConfig c;
+    c.device_id = AppConfig::kLegacyDeviceId;
+    beginDeviceIdBackfill(c);
+    EXPECT_TRUE(noteDeviceIdMoved(c, 12)) << "changed: the caller saves it";
+    EXPECT_TRUE(c.device_id_previous_published);
+    EXPECT_FALSE(noteDeviceIdMoved(c, 12)) << "already known: nothing to save";
+}
+
+// A move an older build began wrote no flag; it keeps that build's meaning.
+TEST(DeviceIdPublished, AMoveAnOlderBuildBeganStillClears) {
+    const auto path = (std::filesystem::temp_directory_path() /
+                       ("sdd051_old_" + std::to_string(::getpid()) + ".json")).string();
+    std::ofstream(path) << R"({"device_id": "cpapdash_0badc0de", "device_id_previous": "cpapdash"})";
+    AppConfig c;
+    ASSERT_EQ(AppConfig::loadFile(path, c), AppConfig::LoadStatus::Ok);
+    EXPECT_TRUE(c.device_id_previous_published);
+    std::filesystem::remove(path);
+}
+
+TEST(DeviceIdPublished, TheFlagSurvivesARestartMidMove) {
+    const auto path = (std::filesystem::temp_directory_path() /
+                       ("sdd051_flag_" + std::to_string(::getpid()) + ".json")).string();
+    AppConfig c;
+    c.device_id = AppConfig::kLegacyDeviceId;
+    beginDeviceIdBackfill(c);
+    ASSERT_TRUE(c.save(path));
+    AppConfig back;
+    ASSERT_EQ(AppConfig::loadFile(path, back), AppConfig::LoadStatus::Ok);
+    EXPECT_EQ(back.device_id_previous, AppConfig::kLegacyDeviceId);
+    EXPECT_FALSE(back.device_id_previous_published);
     std::filesystem::remove(path);
 }
 

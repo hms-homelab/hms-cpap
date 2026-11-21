@@ -69,7 +69,10 @@ public:
     /// Run every check against this config. Performs no writes and leaves no
     /// artifacts: a probe that changed the thing it inspected would be a worse
     /// version of the bug this replaces.
-    static Report run(const AppConfig& cfg);
+    /// [web]: false for a command-line mode that serves no web page
+    /// (`--local-model-night`), which leaves the web port out: it runs beside
+    /// the service that holds that port.
+    static Report run(const AppConfig& cfg, bool web = true);
 
     /// Can something bind this TCP port on this address right now?
     ///

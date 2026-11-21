@@ -2,6 +2,7 @@ import { Component, Input } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { TranslatePipe } from '@ngx-translate/core';
 import { formatIndex } from '../../utils/format';
+import { usageColorFor, usageTargetHoursOf } from '../../pages/dashboard/card-data';
 
 export interface StrMetricsData {
   ahi: number;
@@ -11,6 +12,8 @@ export interface StrMetricsData {
   cai: number;
   hi: number;
   rin: number;
+  /** Settings' usage target, hours (4 when unset). */
+  usageTargetHours?: number;
 }
 
 @Component({
@@ -111,7 +114,7 @@ export class StrMetricsComponent {
   }
   get usageColor(): string {
     if (!this.data) return '#888';
-    return this.data.usageHours >= 4 ? '#4ade80' : this.data.usageHours >= 2 ? '#fb923c' : '#ef4444';
+    return usageColorFor(this.data.usageHours, usageTargetHoursOf(this.data.usageTargetHours));
   }
   get leakColor(): string {
     if (!this.data) return '#888';

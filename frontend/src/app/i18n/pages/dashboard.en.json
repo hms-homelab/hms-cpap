@@ -72,7 +72,7 @@
       "subtitle": "Last Session Performance",
       "ahiScore": "AHI Score",
       "usage": "Usage",
-      "targetMet": "4h+ target met",
+      "targetMet": "{{h}}h+ target met",
       "maskLeak": "Mask Leak",
       "totalEvents": "Total Events",
       "eventsPerHr": "{{v}} events/hr",

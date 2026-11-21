@@ -39,10 +39,12 @@ struct MachineIdentity {
 std::string readableModel(const std::string& product_name);
 
 /// The ResMed identification file in [card_root]. Identification.json wins
-/// when both are there, unless the two name different machines and the newest
-/// night's EDF header names the .tgt's: a card moved from one machine to
-/// another keeps the first one's file (#94: an AirSense 10's card put in an
-/// AirSense 11 holds both, each naming its own serial). With neither, the
+/// when both are there and name the same machine. When they name different
+/// machines, the one the machine writing the card names wins: the SRN in the
+/// newest night's EDF headers, else in STR.edf's, else the .tgt. A card moved
+/// from one machine to another keeps the first one's file (#94: an AirSense
+/// 10's card put in an AirSense 11 holds both, each naming its own serial).
+/// With neither, the
 /// serial from the header of an EDF in the newest DATALOG night (its recording
 /// field's SRN=), manufacturer ResMed and no model: a Sleep Bridge's rebuilt
 /// card has no identification file.

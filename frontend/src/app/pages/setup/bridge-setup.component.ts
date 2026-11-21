@@ -399,6 +399,7 @@ export class BridgeSetupComponent implements OnDestroy {
       this.streamState = f.stream?.state ?? '';
       return;
     }
+    if (f.t !== 'sleepbridge') return;   // a night (#96) or local model frame is another page's
     this.status = f.status ?? this.status;
     if (this.openedAt === null) {
       // The server's own clock, from the first snapshot: a bridge whose

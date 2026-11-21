@@ -399,6 +399,12 @@ void BurstCollectorService::initDataPublisher() {
     data_publisher_->initialize();
 }
 
+std::string BurstCollectorService::haDeviceName() const {
+    // #94 follow-up: the one name every publisher of this device gives it.
+    if (data_publisher_) return data_publisher_->deviceName();
+    return machineName(app_config_ ? app_config_->device_name : std::string(), {});
+}
+
 void BurstCollectorService::refreshCardIdentity() {
     if (!data_publisher_) return;
     data_publisher_->setIdentity(installIdentity(local_source_dir_, ConfigManager::get("CPAP_ARCHIVE_DIR", ""),
@@ -452,7 +458,7 @@ std::string BurstCollectorService::summaryPromptTemplate(const AppConfig* cfg, s
             // there, and let the data decide whether it may be characterised.
             "* The event index reported below, with its value, and an "
             "assessment ONLY if the data gives an AHI\n"
-            "* Usage hours and compliance vs 8h target\n"
+            "* Usage hours and compliance vs the usage target the data states\n"
             "* Leak control assessment\n\n"
             "**Events**\n"
             "* Breakdown of event types, using only the types the data reports\n"
@@ -2433,6 +2439,27 @@ void BurstCollectorService::clearStrDebtForParsedDays(
     }
 }
 
+bool BurstCollectorService::anyNightLive() {
+    if (!db_service_) return false;
+    const auto hours = nightHourStates(*db_service_, device_id_);
+    for (const auto& f : db_service_->listSyncFolders())
+        if (nightState(f, nightHourPassed(hours, f.date_folder)) == NightState::Live) return true;
+    return false;
+}
+
+void BurstCollectorService::tellLiveNight() {
+    std::vector<std::function<void(bool)>> to;
+    {
+        std::lock_guard<std::mutex> lk(night_closed_mu_);
+        if (live_night_.empty()) return;
+        to = live_night_;
+    }
+    const int live = anyNightLive() ? 1 : 0;
+    if (live == live_night_told_) return;
+    live_night_told_ = live;
+    for (const auto& f : to) f(live == 1);
+}
+
 bool BurstCollectorService::executeBurstCycle() {
     // SDD-074 D4: every machine time this burst parses is a label.
     cpapdash::parser::WallClockLabels labels;
@@ -2859,6 +2886,20 @@ bool BurstCollectorService::executeBurstCycle() {
         if (!machine_clock_loaded_ && db_service_) {
             machine_clock_ = loadMachineClock(*db_service_, device_id_);
             machine_clock_loaded_ = true;
+            // Issue #95: a learning from before 7.0.0 (no source recorded) on
+            // a Sleep Bridge's folder came from stamps this computer wrote,
+            // never the machine's: it is dropped, the setting kept. One that
+            // says where it came from was not learned here (a bridge folder
+            // teaches nothing now) and stays.
+            if (!data_source_->stampsAreTheMachines() && machine_clock_.zone_known &&
+                machine_clock_.from.empty() &&
+                forgetMachineClockLearning(*db_service_, device_id_)) {
+                std::cout << "CPAP: dropped the machine's clock learned from " << cpap_source_
+                          << " (drift " << machine_clock_.drift_s << " s, zone " << machine_clock_.zone_s
+                          << " s): its files are written by this computer, so their stamps are not "
+                             "the machine's" << std::endl;
+                machine_clock_ = MachineClock{};
+            }
         }
         if (!stored_listings_loaded_ && db_service_) {
             // D9: a folder with a stored listing has been looked at. Its
@@ -3159,19 +3200,28 @@ bool BurstCollectorService::executeBurstCycle() {
             if (p.reason == ListReason::Checkpoint) checkpoint_listed = true;
             const auto& files = listed_now->second;
 
-            // D3: a fresh listing (a stamp moved) teaches the machine's clock.
+            // D3: a fresh listing (a stamp moved) teaches the machine's clock,
+            // when the stamps are the machine's (issue #95: never a Sleep
+            // Bridge's folder, whose files this computer wrote).
             const auto prev_stamps = folder_stamps_.find(p.folder);
-            if (prev_stamps != folder_stamps_.end()) {
+            if (prev_stamps != folder_stamps_.end() && data_source_->stampsAreTheMachines()) {
                 if (auto learned = learnMachineClock(machine_clock_, prev_stamps->second, files, now_s)) {
-                    if (learned->drift_s != machine_clock_.drift_s ||
-                        learned->zone_s != machine_clock_.zone_s ||
-                        learned->zone_known != machine_clock_.zone_known) {
-                        std::cout << "CPAP: the machine's clock: drift " << learned->drift_s
-                                  << " s, zone " << (learned->zone_known
-                                                         ? std::to_string(learned->zone_s) + " s"
+                    const MachineClock noted =
+                        noteLearning(machine_clock_, *learned, machine_clock::kFromCardStamps, p.folder);
+                    const bool changed = noted.drift_s != machine_clock_.drift_s ||
+                                         noted.zone_s != machine_clock_.zone_s ||
+                                         noted.zone_known != machine_clock_.zone_known;
+                    if (changed)
+                        std::cout << "CPAP: the machine's clock: drift " << noted.drift_s
+                                  << " s, zone " << (noted.zone_known
+                                                         ? std::to_string(noted.zone_s) + " s"
                                                          : std::string("not known yet"))
                                   << " (learned from " << p.folder << ")" << std::endl;
-                        machine_clock_ = *learned;
+                    // Also stored when the same clock is learned on another
+                    // night: two nights agreeing is what offers "Use this".
+                    if (changed || noted.from != machine_clock_.from || noted.night != machine_clock_.night ||
+                        noted.nights != machine_clock_.nights) {
+                        machine_clock_ = noted;
                         if (db_service_) saveMachineClock(*db_service_, device_id_, machine_clock_, now_s);
                     }
                 }
@@ -3206,7 +3256,10 @@ bool BurstCollectorService::executeBurstCycle() {
         if (data_source_->takeMachineOffset(seen_offset) &&
             (!machine_clock_.zone_known ||
              machine_clock_.drift_s + machine_clock_.zone_s != seen_offset)) {
-            machine_clock_ = MachineClock{0, seen_offset, true};
+            MachineClock seen;
+            seen.zone_s = seen_offset;
+            seen.zone_known = true;
+            machine_clock_ = noteLearning(machine_clock_, seen, machine_clock::kFromBrpGrowth, tonight);
             std::cout << "CPAP: the machine's clock is " << seen_offset
                       << " s from UTC (learned from the BRP it is writing)" << std::endl;
             if (db_service_) saveMachineClock(*db_service_, device_id_, machine_clock_, now_s);
@@ -4624,6 +4677,12 @@ void BurstCollectorService::runLoop() {
         }
         cycle_in_flight_.store(false);
 
+        // Issue #96: a page open on the dashboard learns a night went live
+        // (or settled) from this burst, not from being reloaded.
+        try {
+            tellLiveNight();
+        } catch (...) {}
+
         // The card's mask off (no growth for long enough), and the live
         // state's own settling after a start. On the burst, no timer.
         cardMaskTick(nowSeconds());
@@ -4654,8 +4713,7 @@ void BurstCollectorService::runLoop() {
                 [this](const std::string& topic, const std::string& payload, bool retain) {
                     return mqtt_client_->publish(topic, payload, 1, retain);
                 },
-                device_id_,
-                app_config_ ? app_config_->device_name : std::string("CPAP"));
+                device_id_, haDeviceName());
             // A fresh publisher is built every cycle, so the crossing ledger MUST
             // be on disk — in-process state would make every cycle look like a
             // first sighting and re-fire the same "overdue" event forever.
@@ -4681,8 +4739,7 @@ void BurstCollectorService::runLoop() {
                 [this](const std::string& topic, const std::string& payload, bool retain) {
                     return mqtt_client_->publish(topic, payload, 1, retain);
                 },
-                device_id_,
-                app_config_ ? app_config_->device_name : std::string("CPAP"));
+                device_id_, haDeviceName());
             auto cr = cleaner.publishFromDatabase(
                 *db_service_, static_cast<long long>(std::time(nullptr)));
             if (cr.published && !cr.all_ok)

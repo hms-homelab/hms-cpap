@@ -39,6 +39,12 @@ public:
     /// says nothing until another BRP grows. 0 with false when none did.
     virtual bool takeMachineOffset(long long& /*offset_s*/) { return false; }
 
+    /// Issue #95: are the listing's stamps the machine's own (the FAT stamps
+    /// an AirSense writes)? False for a folder whose files hms-cpap wrote, a
+    /// Sleep Bridge's, whose stamps are this computer's write times: the
+    /// machine's clock is never learned from them (SDD-054 D3).
+    virtual bool stampsAreTheMachines() const { return true; }
+
     virtual bool supportsRange() const { return true; }
 
     /**

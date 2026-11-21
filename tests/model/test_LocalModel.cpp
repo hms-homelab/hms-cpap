@@ -136,6 +136,33 @@ TEST(LocalModelValidator, AcceptsFiguresFromTheBlockAndRejectsInventedTransposed
     EXPECT_NE(std::find(wrong_day.begin(), wrong_day.end(), "2099-07-02"), wrong_day.end());
 }
 
+// Item 8 (Albin 2026-11-21, "keep 8h in the summary"): the local narrator's
+// block keeps "% of 8h target", the line narrator-v1 was trained on (given a
+// 4h line it still judged against 8 h); the dashboard's usage target is its
+// own setting. A text that contradicts met / not met against the BLOCK's
+// target never passes, so the model's normal wording does.
+TEST(LocalModelValidator, TheBlockStatesEightHoursAndTheWordingMustAgreeWithIt) {
+    NightFacts n = aNight();
+    n.usage_hours = 4.5;
+    n.usage_percent = 56.25;
+    const auto block = factBlock(n);
+    EXPECT_NE(block.find("Usage: 4.50 hours (56.25% of 8h target)"), std::string::npos) << block;
+
+    EXPECT_TRUE(violations("You used it for 4.50 hours, well short of your target.", block).empty())
+        << "4.50 h is short of 8 h: the model's normal text passes";
+    EXPECT_TRUE(violations("You used it for 4.50 hours.", block).empty());
+    const auto met = violations("4.50 hours: target met.", block);
+    ASSERT_FALSE(met.empty()) << "4.50 h is under 8 h";
+    EXPECT_NE(met.back().find("8h target"), std::string::npos) << met.back();
+    EXPECT_FALSE(violations("You reached your target with 4.50 hours.", block).empty());
+
+    n.usage_hours = 8.35;
+    n.usage_percent = 104.38;
+    const auto over = factBlock(n);
+    EXPECT_TRUE(violations("8.35 hours, past your target.", over).empty());
+    EXPECT_FALSE(violations("8.35 hours, just short of your target.", over).empty()) << "8.35 h meets 8 h";
+}
+
 // KNOWN GAP, disabled until Albin decides (2026-11-21): the check asks only
 // whether a number appears somewhere in the block, not whether it is the
 // figure the sentence names. Seen from the narrator on a local-mode-like
@@ -406,6 +433,28 @@ TEST_F(LocalModelServiceTest, LoadingAModelFromAFileChecksItAndTurnsItOn) {
     EXPECT_TRUE(config_.local_model.enabled);
     EXPECT_EQ(svc_->status()["state"].asString(), "ready");
     EXPECT_EQ(downloads_, 0) << "an offline install needs no network";
+}
+
+// An open Settings page is told the outcome (it kept "Checking the model
+// file..." until a reload): once per loaded file, refused or put in place.
+TEST_F(LocalModelServiceTest, ALoadedFileTellsTheOutcomeToTheListener) {
+    make(testPin());
+    std::vector<Json::Value> told;
+    svc_->setStateListener([&told](const Json::Value& v) { told.push_back(v); });
+    const auto wrong = writeFile(fs::path(dir_) / "upload1.gguf", "not it");
+    ASSERT_EQ(svc_->installFile(wrong), "");
+    EXPECT_TRUE(told.empty()) << "nothing to say while it is being checked";
+    svc_->handle(LocalModelService::Event::InstallFile, wrong);
+    ASSERT_EQ(told.size(), 1u);
+    EXPECT_EQ(told[0]["state"].asString(), "error");
+    EXPECT_FALSE(told[0]["busy"].asBool());
+
+    const auto right = writeFile(fs::path(dir_) / "upload2.gguf", model_bytes_);
+    ASSERT_EQ(svc_->installFile(right), "");
+    svc_->handle(LocalModelService::Event::InstallFile, right);
+    ASSERT_EQ(told.size(), 2u);
+    EXPECT_NE(told[1]["state"].asString(), "installing");
+    EXPECT_EQ(told[1]["state"].asString(), svc_->status()["state"].asString());
 }
 
 TEST_F(LocalModelServiceTest, AClosedNightIsSummarizedWithSourceLocal) {

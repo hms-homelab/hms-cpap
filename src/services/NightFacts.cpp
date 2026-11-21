@@ -158,6 +158,10 @@ std::string renderNight(const NightFacts& n) {
     oss << std::fixed << std::setprecision(2);
 
     if (n.usage_hours) {
+        // Fixed at 8 h, not the dashboard's usage target (Albin 2026-11-21):
+        // narrator-v1 was trained only on this line and, given a 4 h one,
+        // still judged the night against 8 h. violations() holds the text to
+        // this line's own target.
         oss << "Usage: " << *n.usage_hours << " hours";
         if (n.usage_percent) oss << " (" << *n.usage_percent << "% of 8h target)";
         oss << "\n";
