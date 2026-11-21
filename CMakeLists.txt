@@ -551,6 +551,14 @@ target_link_libraries(hms_cpap_narrator_facts
     cpapdash_parser
     nlohmann_json::nlohmann_json
 )
+# IDatabase.h (through NarrationService.h) includes <json/json.h>, which is
+# only on the include path through jsoncpp's target (Debian and Ubuntu keep
+# it under /usr/include/jsoncpp).
+if(MSVC)
+    target_link_libraries(hms_cpap_narrator_facts JsonCpp::JsonCpp)
+else()
+    target_link_libraries(hms_cpap_narrator_facts jsoncpp_lib)
+endif()
 
 # Install target
 if(WIN32)
