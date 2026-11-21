@@ -247,6 +247,48 @@ void printConfiguration() {
 }
 
 /**
+ * SDD-013: run the local sleep model's nightly job for one night, now, and exit.
+ *
+ * Usage: hms_cpap --local-model-night YYYYMMDD
+ *
+ * The same events the service handles when a night closes (Startup, which
+ * checks the installed model, then NightClosed), on the configured database,
+ * with no collector, web server or MQTT. local_model must be on and the model
+ * installed, as for the nightly job. The night goes without its STR row, which
+ * only the collector holds.
+ */
+int runLocalModelNight(hms_cpap::AppConfig& config, const std::string& config_path,
+                       const std::string& folder) {
+    std::shared_ptr<hms_cpap::IDatabase> db = hms_cpap::makeDatabaseFromConfig();
+    if (!db->connect()) {
+        std::cerr << "Local model: database connection failed" << std::endl;
+        return 1;
+    }
+    hms_cpap::model::LocalModelService::Deps d;
+    d.db = db;
+    d.config = &config;
+    d.config_path = config_path;
+    d.device_id = hms_cpap::ConfigManager::get("CPAP_DEVICE_ID", hms_cpap::AppConfig::kDefaultDeviceId);
+    hms_cpap::model::LocalModelService svc(std::move(d));
+    using Event = hms_cpap::model::LocalModelService::Event;
+    svc.handle(Event::Startup);
+    if (const auto s = svc.status(); s["state"].asString() != "ready") {
+        std::cerr << "Local model: not ready (" << s["state"].asString() << "): " << s["message"].asString()
+                  << std::endl;
+        return 1;
+    }
+    const auto t0 = std::chrono::steady_clock::now();
+    svc.handle(Event::NightClosed, folder);
+    const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    const auto last = svc.status()["last"];
+    std::cout << "Local model: night " << last["night"].asString() << ", "
+              << (last["how"].asString().empty() ? "nothing written" : last["how"].asString()) << ", "
+              << std::fixed << std::setprecision(1) << secs << " s"
+              << (last["why"].asString().empty() ? "" : ", " + last["why"].asString()) << std::endl;
+    return last["how"].asString().empty() ? 1 : 0;
+}
+
+/**
  * Run STR.edf backfill: parse file and save ALL records to DB.
  *
  * Usage: hms_cpap --backfill /path/to/str.edf
@@ -937,6 +979,13 @@ int main(int argc, char** argv) {
                 return 1;
             }
             return runBackfill(argv[i + 1]);
+        }
+        if (std::strcmp(argv[i], "--local-model-night") == 0) {
+            if (i + 1 >= argc) {
+                std::cerr << "Usage: hms_cpap --local-model-night <YYYYMMDD>" << std::endl;
+                return 1;
+            }
+            return runLocalModelNight(config, config_path, argv[i + 1]);
         }
         if (std::strcmp(argv[i], "--reparse") == 0) {
             if (i + 1 >= argc) {
