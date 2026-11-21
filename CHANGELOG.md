@@ -351,6 +351,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every poll, which took the radio from the AirSense 11's stream on the same
   adapter. The link is checked before each read and made again only when the
   ring has let go; a request it does not answer drops it for the next poll.
+- **An O2Ring-S is read in the order its phone app uses** (#70, thanks @rccoleman): GET_INFO first, the file list before any close, a close only when the list hangs, and auth first only for a ring that needs it.
+- **An O2 Ring's file is asked for again after a session ends** (#71, thanks @rccoleman): the file is owed from the session's end and asked for on each poll with the ring off the finger, up to three times, with no wait, and an O2Ring-S file listed before it is whole is left for the next ask.
 
 ### Removed
 - Unused code (SDD-045): functions nothing calls and 26 translation keys nothing shows; no behaviour change.
