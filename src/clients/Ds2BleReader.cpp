@@ -307,11 +307,27 @@ Ds2BleReader::ReadResult Ds2BleReader::read() {
         ~Done() { b = false; }
     } done{busy_};
 
+    // #99: every failed read is the machine's last attempt, not only one that
+    // got as far as the machine's serial. A read that ends before the serial
+    // (not found, no connection, the link dropped early) is kept under the
+    // paired machine's serial from its earlier reads; before the first read
+    // there is no machine row to keep it under.
+    bool attempt_noted = false;
     auto fail = [&](const char* code, const std::string& why) {
         res.ok = false;
         res.code = code;
         res.error = why;
         std::cerr << kTag << "read: " << why << std::endl;
+        if (!attempt_noted) {
+            auto now = store_.load();
+            if (now.paired && !now.paired->serial.empty()) {
+                auto& m = now.machines[now.paired->serial];
+                m.serial = now.paired->serial;
+                m.last_attempt_at = nowEpoch();
+                m.last_error = why;
+                store_.save(now);
+            }
+        }
         return res;
     };
 
@@ -480,6 +496,7 @@ Ds2BleReader::ReadResult Ds2BleReader::read() {
             m.last_error = s.error();
         }
         store_.save(st);
+        attempt_noted = true;
         if (!s.identity().serial.empty()) store_.writeIdentity(s.identity());
     }
 

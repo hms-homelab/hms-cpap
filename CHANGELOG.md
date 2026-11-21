@@ -288,6 +288,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The AI agent's MQTT connection has no built-in user name.** With `MQTT_USER` unset it connects anonymously, as the collector does; a set `MQTT_USER`/`MQTT_PASSWORD` is used as before.
 
 ### Fixed
+- **A DreamStation 2 read over Bluetooth brings its events (#99).** A read
+  brought every session's summary but none of its detail: the machine answers
+  the events' first request with "nothing here" when it comes straight after
+  the summaries ended, so every session showed 0 events. The read now asks the
+  machine for its place before moving on, as the machine's own app does, and
+  the events and the second log arrive (cpapdash-ds2-ble). Sessions read
+  before this keep their summaries; the next read brings their events.
+- **A failed DreamStation 2 read shows as failed on the Devices page (#99).**
+  A read that ended before the machine answered (not in range, no connection,
+  the link dropped) left the last successful read on the page as if nothing
+  had happened. It is now the machine's last attempt, with its error.
 - **An AirSense 11 is no longer titled "ResMed AirSense 10" (#94).** The
   dashboard's title and the report cover used the configured device name, and
   the config.json the desktop setup wizard writes has none, which has always

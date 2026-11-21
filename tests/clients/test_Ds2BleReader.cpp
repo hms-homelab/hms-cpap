@@ -231,6 +231,52 @@ TEST_F(Ds2Reader, AReadCutShortKeepsWhatItStoredAndResumesAfterIt) {
     EXPECT_TRUE(r->store().load().machines.at("TEST0000000002").last_error.empty());
 }
 
+// #99: a read that ends before the machine's serial (here: the machine is not
+// advertising) is still the machine's last attempt, so the status says it
+// failed; the last good read stays as it was.
+TEST_F(Ds2Reader, AReadThatNeverReachesTheMachineIsStillItsLastAttempt) {
+    t_->machine->addNight(700, kT0, 3600);
+    auto r = reader();
+    pairOk(*r);
+    ASSERT_TRUE(r->read().ok);
+    const auto good = r->store().load().machines.at("TEST0000000002");
+    ASSERT_TRUE(good.last_error.empty());
+    ASSERT_GT(good.last_read_at, 0);
+
+    t_->advertising = false;
+    const auto res = r->read();
+    EXPECT_FALSE(res.ok);
+    EXPECT_EQ(res.code, "not_found");
+    const auto mc = r->store().load().machines.at("TEST0000000002");
+    EXPECT_EQ(mc.last_error, res.error);
+    EXPECT_GE(mc.last_attempt_at, good.last_attempt_at);
+    EXPECT_EQ(mc.last_read_at, good.last_read_at);
+    EXPECT_EQ(mc.last_records, good.last_records);
+    EXPECT_EQ(mc.bookmarks, good.bookmarks);
+
+    t_->advertising = true;
+    ASSERT_TRUE(r->read().ok);
+    EXPECT_TRUE(r->store().load().machines.at("TEST0000000002").last_error.empty());
+}
+
+// #99: the events (stream 2) come after the summaries' walk ends, on a machine
+// that answers status 06 to an open that follows an empty one directly.
+TEST_F(Ds2Reader, TheEventsComeAfterTheSummaries) {
+    ASSERT_TRUE(t_->machine->wants_bookmark_after_empty);
+    t_->machine->addNight(710, kT0, 3600, 2);
+    t_->machine->addNight(711, kT0 + 86400, 3600, 3);
+    auto r = reader();
+    pairOk(*r);
+    const auto res = r->read();
+    ASSERT_TRUE(res.ok) << res.error;
+    EXPECT_EQ(res.records, 4);
+    const fs::path p0 = dir_ / "ds2" / "TEST0000000002" / "P0";
+    int b02 = 0;
+    for (const auto& e : fs::directory_iterator(p0)) b02 += e.path().extension() == ".B02";
+    EXPECT_EQ(b02, 2);
+    EXPECT_EQ(r->store().load().machines.at("TEST0000000002").bookmarks.at(2), Machine::bookmarkFor(2, 1));
+}
+
 TEST_F(Ds2Reader, NightsBeforeTheImportDateAreWalkedPastNotKept) {
     // A used machine: two earlier nights, then one from the day picked.
     t_->machine->addNight(800, kT0, 3600);
