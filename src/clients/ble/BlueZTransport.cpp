@@ -289,20 +289,24 @@ public:
         std::string write_path, notify_path;
         uint16_t mtu = 0;
         try {
+            std::vector<std::string> paths, uuids;
+            std::vector<uint16_t> mtus;
             for (const auto& [path, ifaces] : objects()) {
                 const std::string p(path);
                 if (p.rfind(device.id + "/", 0) != 0) continue;
                 auto it = ifaces.find(kChar1);
                 if (it == ifaces.end()) continue;
-                const auto uuid = normalizeUuid(prop<std::string>(it->second, "UUID").value_or(""));
-                if (uuid == spec.write_uuid) {
-                    write_path = p;
-                    // BlueZ 5.62+ publishes the link's ATT MTU on the characteristic.
-                    if (auto m = prop<uint16_t>(it->second, "MTU")) mtu = *m;
-                } else if (uuid == spec.notify_uuid) {
-                    notify_path = p;
-                }
+                paths.push_back(p);
+                uuids.push_back(normalizeUuid(prop<std::string>(it->second, "UUID").value_or("")));
+                // BlueZ 5.62+ publishes the link's ATT MTU on the characteristic.
+                mtus.push_back(prop<uint16_t>(it->second, "MTU").value_or(0));
             }
+            const auto pick = pickCharacteristics(uuids, spec);
+            if (pick.write >= 0) {
+                write_path = paths[pick.write];
+                mtu = mtus[pick.write];
+            }
+            if (pick.notify >= 0) notify_path = paths[pick.notify];
         } catch (const std::exception& e) {
             disconnect();
             res.error = LinkError::NoCharacteristics;

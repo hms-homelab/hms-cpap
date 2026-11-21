@@ -374,13 +374,18 @@ public:
         __block CBCharacteristic* nc = nil;
         const std::string want_w = spec.write_uuid, want_n = spec.notify_uuid;
         s->run(^{
+            NSMutableArray<CBCharacteristic*>* all = [NSMutableArray array];
+            std::vector<std::string> uuids;
             for (CBService* svc in p.services) {
                 for (CBCharacteristic* c in svc.characteristics) {
-                    const std::string u = normalizeUuid(str(c.UUID.UUIDString));
-                    if (u == want_w && !wc) wc = c;
-                    else if (u == want_n && !nc) nc = c;
+                    [all addObject:c];
+                    uuids.push_back(normalizeUuid(str(c.UUID.UUIDString)));
                 }
             }
+            // One characteristic can be both (#87: the DreamStation 2's).
+            const auto pick = pickCharacteristics(uuids, GattSpec{want_w, want_n});
+            if (pick.write >= 0) wc = all[pick.write];
+            if (pick.notify >= 0) nc = all[pick.notify];
         });
         if (!wc || !nc) return fail(LinkError::NoCharacteristics, "the characteristics were not found");
         std::function<void()> ready;
