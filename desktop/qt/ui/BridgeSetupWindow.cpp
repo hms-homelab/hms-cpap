@@ -181,6 +181,12 @@ public:
         permission_ = words(w->t(Txt::CardPermission), this);
         permission_->setVisible(false);
         body_->addWidget(permission_);
+        // #89: the read needs the computer's permission (raw sectors), so it
+        // starts only when the user presses this, never on its own the moment
+        // a card appears: the prompt then answers the user's own click.
+        readBtn_ = new QPushButton(w->t(Txt::CardReadButton), this);
+        readBtn_->setVisible(false);
+        body_->addWidget(readBtn_, 0, Qt::AlignLeft);
         bar_ = new QProgressBar(this);
         bar_->setVisible(false);
         body_->addWidget(bar_);
@@ -192,6 +198,7 @@ public:
         body_->addLayout(row);
 
         connect(&drives_, &DriveWatch::changed, this, [this] { look(); });
+        connect(readBtn_, &QPushButton::clicked, this, [this] { read(); });
         connect(choose, &QPushButton::clicked, this, [this] {
             // Documents, where CpapDash Desktop's Export for HMS CPAP saves
             // the .cpapcard (#93). An empty folder meant the working folder,
@@ -213,7 +220,9 @@ public:
                 [this](bool ok, bool declined, const QString& error, const QJsonObject&) {
                     bar_->setVisible(false);
                     permission_->setVisible(false);
+                    readBtn_->setEnabled(true);
                     if (ok) {
+                        readBtn_->setVisible(false);
                         w_->pending_card = job_.outPath();
                         read_ = true;
                         state_->setText(w_->t(Txt::CardDone) + "\n" + w_->t(Txt::CardDoneNote));
@@ -231,24 +240,41 @@ public:
     bool validatePage() override { return true; }
 
 private:
-    /// A volume came or went: is a card there now?
+    /// A volume came or went: is a card there now? Finding one only offers
+    /// the read (#89); the permission prompt waits for the user's press.
     /// `opening`: the step is being shown; otherwise only while it is shown.
     void look(bool opening = false) {
         if (job_.running() || read_ || (!opening && wizard()->currentPage() != this)) return;
-        const CardVolume card = findCardVolume();
-        if (card.root.isEmpty()) return;
-        state_->setText(w_->t(Txt::CardFound).arg(card.name) + "  " + w_->t(Txt::CardReading));
+        card_ = findCardVolume();
+        if (card_.root.isEmpty()) {
+            readBtn_->setVisible(false);
+            state_->setText(w_->t(Txt::CardWaiting));
+            state_->setStyleSheet(QString());
+            return;
+        }
+        state_->setText(w_->t(Txt::CardFound).arg(card_.name));
         state_->setStyleSheet(QString());
         permission_->setVisible(true);
+        readBtn_->setVisible(true);
+    }
+
+    /// The user pressed Read card: now ask for the permission and read.
+    void read() {
+        if (job_.running() || read_ || card_.root.isEmpty()) return;
+        readBtn_->setEnabled(false);
+        state_->setText(w_->t(Txt::CardFound).arg(card_.name) + "  " + w_->t(Txt::CardReading));
+        state_->setStyleSheet(QString());
         bar_->setRange(0, 0);
         bar_->setVisible(true);
-        job_.start(card, w_->t(Txt::CardPermission));
+        job_.start(card_, w_->t(Txt::CardPermission));
     }
 
     DriveWatch    drives_;
     CardReadJob   job_;
+    CardVolume    card_;
     QLabel*       state_;
     QLabel*       permission_;
+    QPushButton*  readBtn_;
     QProgressBar* bar_;
     bool          read_ = false;
 };
