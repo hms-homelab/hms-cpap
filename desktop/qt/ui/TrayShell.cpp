@@ -34,6 +34,16 @@
 #include <nlohmann/json.hpp>
 #include <optional>
 
+#ifdef Q_OS_WIN
+#include <QImage>
+#include <QPixmap>
+#include <string>
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 namespace cpapdash::supervisor {
 
 namespace {
@@ -55,7 +65,38 @@ QString dataDir() {
 /// gets an invisible menu bar item they cannot click, which reads as "the app
 /// did not start". A wrong-looking icon is a bug report; an absent one is a
 /// support ticket about something that is actually running fine.
+#ifdef Q_OS_WIN
+/// #97: the state's .ico from the exe's own resources (TRAY_<STATE>,
+/// supervisor.rc), every size it carries, through Windows' own LoadImageW:
+/// the PNG QIcon showed as a blank light square in the Windows 11
+/// notification area, and an .ico read this way needs no Qt image plugin.
+QIcon windowsTrayIcon(const char* state) {
+    std::wstring name = L"TRAY_";
+    for (const char* c = state; *c; ++c)
+        name += static_cast<wchar_t>(*c >= 'a' && *c <= 'z' ? *c - 'a' + 'A' : *c);
+    QIcon icon;
+    const HINSTANCE self = GetModuleHandleW(nullptr);
+    for (const int px : {16, 20, 24, 32, 48}) {
+        const HICON h =
+            static_cast<HICON>(LoadImageW(self, name.c_str(), IMAGE_ICON, px, px, LR_DEFAULTCOLOR));
+        if (!h) continue;
+        const QImage img = QImage::fromHICON(h);
+        DestroyIcon(h);
+        if (!img.isNull()) icon.addPixmap(QPixmap::fromImage(img));
+    }
+    return icon;
+}
+#endif
+
 QIcon stateIcon(const char* state) {
+#ifdef Q_OS_WIN
+    {
+        const QIcon ico = windowsTrayIcon(state);
+        if (!ico.isNull()) return ico;
+        qWarning("HmsCpap: the tray .ico resources are missing from the exe; "
+                 "falling back to the PNG set");
+    }
+#endif
 #ifdef Q_OS_MACOS
     {
         QIcon mono(QStringLiteral(":/icons/mono-%1.png").arg(state));

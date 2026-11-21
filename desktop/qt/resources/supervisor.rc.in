@@ -12,6 +12,15 @@
 
 IDI_ICON1 ICON "@CMAKE_CURRENT_SOURCE_DIR@/resources/cpapdash.ico"
 
+// #97: the tray's four states, each an .ico with 16, 20, 24, 32 and 48 px
+// (scripts/make-icons.sh), loaded by TrayShell with LoadImageW at the size the
+// notification area asks for. Named, and named after IDI_ICON1 in the
+// alphabet, so IDI_ICON1 stays the first icon and the exe's face.
+TRAY_RUNNING  ICON "@CMAKE_CURRENT_SOURCE_DIR@/resources/tray-running.ico"
+TRAY_STARTING ICON "@CMAKE_CURRENT_SOURCE_DIR@/resources/tray-starting.ico"
+TRAY_STOPPED  ICON "@CMAKE_CURRENT_SOURCE_DIR@/resources/tray-stopped.ico"
+TRAY_PROBLEM  ICON "@CMAKE_CURRENT_SOURCE_DIR@/resources/tray-problem.ico"
+
 // Version information, so right-click -> Properties -> Details is populated and
 // the file can be identified from a support request without running it.
 // The version is substituted by CMake from the VERSION file, the single source
