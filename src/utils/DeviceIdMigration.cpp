@@ -28,7 +28,17 @@ bool beginDeviceIdBackfill(AppConfig& config) {
     if (!config.device_id_previous.empty()) return true;   // an earlier start's, unfinished
     if (config.device_id_pinned || !isOldDefaultDeviceId(config.device_id)) return false;
     config.device_id_previous = config.device_id;
+    // #94 follow-up: not known to have published under it until its nights
+    // are found there (noteDeviceIdMoved). A desktop wizard's first config had
+    // no id, so it loaded as the old fixed one; that install never ran as it.
+    config.device_id_previous_published = false;
     config.device_id = generateDeviceId();
+    return true;
+}
+
+bool noteDeviceIdMoved(AppConfig& config, int sessions_moved) {
+    if (sessions_moved <= 0 || config.device_id_previous_published) return false;
+    config.device_id_previous_published = true;
     return true;
 }
 

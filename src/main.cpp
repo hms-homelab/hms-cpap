@@ -67,6 +67,7 @@
 #include "utils/ConfigManager.h"
 #include "utils/AppConfig.h"
 #include "utils/DeviceIdMigration.h"
+#include "utils/MachineIdentity.h"
 #include "utils/CardResidue.h"
 #include "utils/CardImport.h"
 #include "utils/SessionEnd.h"
@@ -999,8 +1000,12 @@ int main(int argc, char** argv) {
         } else {
             std::cout << "Config: device id " << old_id << " -> " << config.device_id << ", "
                       << moved << " session(s) moved" << std::endl;
+            if (hms_cpap::noteDeviceIdMoved(config, moved)) config.save(config_path);
             bool cleared = true;
-            if (config.mqtt.enabled && !config.mqtt.broker.empty()) {
+            if (!config.device_id_previous_published) {
+                std::cout << "MQTT: this install never published as " << old_id
+                          << "; its Home Assistant topics are left to whoever did" << std::endl;
+            } else if (config.mqtt.enabled && !config.mqtt.broker.empty()) {
                 hms::MqttConfig mc;
                 mc.broker = config.mqtt.broker;
                 mc.port = config.mqtt.port;
@@ -1116,6 +1121,12 @@ int main(int argc, char** argv) {
         // by the bursts). mqtt/LiveState.h. Its own client, as the Sleep
         // Bridge's was: MQTT on but the client not connected, the message is
         // dropped and the log says so.
+        // #94 follow-up: the device's name in Home Assistant, by the rule the
+        // data publisher announces it with, so the two never disagree.
+        const std::string ha_device_name = hms_cpap::machineName(
+            config.device_name,
+            hms_cpap::installIdentity(config.legacySource() == "local" ? config.local_dir : "",
+                                      config.archive_dir, hms_cpap::AppConfig::dataDir()));
         std::shared_ptr<hms_cpap::LiveState> live_state;
         if (config.mqtt.enabled) {
             hms::MqttConfig live_cfg;
@@ -1135,7 +1146,7 @@ int main(int argc, char** argv) {
                     }
                     return live_mqtt->publish(topic, payload, qos, retain);
                 },
-                config.device_id, config.device_name);
+                config.device_id, ha_device_name);
             live_state->announce();
             burst_service->setLiveState(live_state);
         }
@@ -2187,11 +2198,11 @@ int main(int argc, char** argv) {
                                      bool retain) {
                                     return mq->isConnected() && mq->publish(topic, payload, qos, retain);
                                 },
-                                config.device_id, config.device_name);
+                                config.device_id, ha_device_name);
                             live->announce();
                         } else if (live_state) {
                             live = std::make_shared<hms_cpap::mule::LivePublisher>(
-                                nullptr, config.device_id, config.device_name);
+                                nullptr, config.device_id, ha_device_name);
                         }
                         if (live && live_state)
                             live->setState(live_state, hms_cpap::LiveState::kMuleBle);

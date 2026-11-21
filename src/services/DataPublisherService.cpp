@@ -53,7 +53,7 @@ bool DataPublisherService::initialize() {
 Json::Value DataPublisherService::deviceInfo() const {
     Json::Value device;
     device["identifiers"].append(device_id_);
-    device["name"] = device_name_;
+    device["name"] = deviceName();
     // SDD-050: only what the card said, and an empty string for what it did
     // not. Home Assistant's device registry KEEPS a value when the key is
     // absent, so leaving a field out would leave an upgraded install showing
@@ -65,6 +65,10 @@ Json::Value DataPublisherService::deviceInfo() const {
     device["serial_number"] = identity_.serial;
     device["sw_version"] = identity_.firmware;
     return device;
+}
+
+std::string DataPublisherService::deviceName() const {
+    return machineName(device_name_, identity_);
 }
 
 std::string DataPublisherService::createDeviceJson() const {

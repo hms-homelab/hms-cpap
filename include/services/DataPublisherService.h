@@ -126,6 +126,12 @@ public:
     /// The device block every discovery config carries. Public for tests.
     Json::Value deviceInfo() const;
 
+    /// #94 follow-up: Home Assistant's name for the device, by the dashboard
+    /// title's rule (machineName): the configured name when one was chosen,
+    /// else the machine's maker and model, else "CPAP". Every publisher that
+    /// announces this device uses it, so they never disagree.
+    std::string deviceName() const;
+
     /**
      * Publish STR daily summary to MQTT (daily/ namespace).
      *

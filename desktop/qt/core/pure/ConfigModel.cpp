@@ -1,6 +1,8 @@
 #include "ConfigModel.h"
 
 #include <algorithm>
+#include <cstdio>
+#include <random>
 #include <sstream>
 
 namespace cpapdash::supervisor {
@@ -36,6 +38,35 @@ void assign(nlohmann::json& doc, const std::string& path, const nlohmann::json& 
 }
 
 }  // namespace
+
+std::string newDeviceId() {
+    std::random_device rd;
+    std::uniform_int_distribution<unsigned> dist(0, 0xFFFFFFFFu);
+    char hex[9];
+    std::snprintf(hex, sizeof(hex), "%08x", dist(rd));
+    return std::string("cpapdash_") + hex;
+}
+
+nlohmann::json withInstallIdentity(nlohmann::json doc, const nlohmann::json& previous) {
+    if (!doc.is_object()) doc = nlohmann::json::object();
+    auto has = [](const nlohmann::json& j, const char* key) {
+        return j.is_object() && j.contains(key) && !j[key].is_null() &&
+               !(j[key].is_string() && j[key].get<std::string>().empty());
+    };
+    if (!has(doc, "device_id")) {
+        if (has(previous, "device_id") && previous["device_id"].is_string()) {
+            doc["device_id"] = previous["device_id"];
+            // The id's own bookkeeping travels with it: a chosen id stays
+            // pinned, and a move under way finishes.
+            for (const char* key : {"device_id_pinned", "device_id_previous", "device_id_previous_published"})
+                if (previous.contains(key) && !doc.contains(key)) doc[key] = previous[key];
+        } else {
+            doc["device_id"] = newDeviceId();
+        }
+    }
+    if (!has(doc, "device_name")) doc["device_name"] = "CPAP";
+    return doc;
+}
 
 const std::vector<std::string>& secretPaths() {
     // Exactly the fields CpapController redacts in toJson(). Kept in one place

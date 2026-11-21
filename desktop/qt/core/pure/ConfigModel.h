@@ -58,6 +58,22 @@ inline constexpr const char* kRedacted = "********";
 /// model and by the tests, so the two cannot drift.
 const std::vector<std::string>& secretPaths();
 
+/// "cpapdash_" + 8 lowercase hex characters: the shape the service's own first
+/// run gives an install (SDD-051, hms_cpap::generateDeviceId).
+std::string newDeviceId();
+
+/// #94 follow-up: [doc] as the setup wizard writes it to config.json, naming
+/// this install. The wizard asks neither question, and a config.json without
+/// device_id or device_name loads as the old fixed "cpap_resmed_23243570851"
+/// and "ResMed AirSense 10" that installs from before SDD-050 meant by them,
+/// so a fresh install started on another install's id and moved off it.
+/// Keys [doc] already has are kept. A missing id comes from [previous] (the
+/// config.json Start Over cleared, so the nights it keeps stay under their
+/// id), else is new; a missing name is "CPAP", which names the machine from
+/// its card.
+nlohmann::json withInstallIdentity(nlohmann::json doc,
+                                   const nlohmann::json& previous = nlohmann::json());
+
 class ConfigModel {
 public:
     ConfigModel() = default;

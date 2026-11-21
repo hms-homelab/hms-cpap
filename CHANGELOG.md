@@ -298,6 +298,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   model. A name chosen in Settings is kept. A card moved from one machine to
   another keeps the first one's identification file beside the second's; the
   machine whose serial the newest night's EDF header names is the one read.
+- **Home Assistant names the machine the same way (#94 follow-up).** The
+  device's name in Home Assistant was the configured device name, so it too
+  said "ResMed AirSense 10" on a desktop install. Every announcement of the
+  device (the readings, the live mask and events, supplies, cleaning) now
+  uses the dashboard title's rule: a name chosen in Settings, else the
+  machine's maker and model from its card, else "CPAP".
+- **A new desktop install starts on its own device id (#94 follow-up).** The
+  setup wizard wrote no device id, so a fresh install started on the old
+  fixed id `cpap_resmed_23243570851`, moved off it, and on the way emptied
+  that id's retained Home Assistant topics on the broker, which another
+  install on the same broker may still use. The wizard now writes a new id
+  (`cpapdash_` and 8 hex characters) and the name "CPAP"; Start Over with
+  "Settings only" keeps the id the kept nights are filed under. A move off
+  an old id now empties that id's retained topics only when this install
+  has nights under it, which says it published there. No existing install's
+  id changes.
 - **"Record each night for support" applies without a restart (ticket 179).**
   Turning it on or off in Settings did nothing until hms-cpap restarted: the
   setting was read once, when the Bluetooth client was made. It now reaches

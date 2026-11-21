@@ -1337,6 +1337,10 @@ private:
     /// file. Called at start, after a residue sweep, and after the publisher
     /// is rebuilt.
     void refreshCardIdentity();
+
+    /// #94 follow-up: the Home Assistant device name the supply and cleaning
+    /// publishers announce, the same as the data publisher's.
+    std::string haDeviceName() const;
 };
 
 } // namespace hms_cpap

@@ -341,6 +341,56 @@ TEST(DeviceBlock, CarriesWhatTheCardSaid) {
     EXPECT_EQ(d["sw_version"].asString(), "SW04600.18.8.7.0");
 }
 
+// #94 follow-up: Home Assistant's name for the device, by the dashboard
+// title's rule. CPAP_DEVICE_NAME is what the service bridges device_name into.
+namespace {
+class DeviceNameEnv {
+public:
+    explicit DeviceNameEnv(const char* value) {
+        if (const char* v = std::getenv("CPAP_DEVICE_NAME")) {
+            saved_ = v;
+            had_ = true;
+        }
+        set(value);
+    }
+    ~DeviceNameEnv() { set(had_ ? saved_.c_str() : nullptr); }
+
+private:
+    static void set(const char* v) {
+#ifdef _WIN32
+        _putenv_s("CPAP_DEVICE_NAME", v ? v : "");
+#else
+        if (v) setenv("CPAP_DEVICE_NAME", v, 1); else unsetenv("CPAP_DEVICE_NAME");
+#endif
+    }
+    std::string saved_;
+    bool had_ = false;
+};
+}  // namespace
+
+TEST(DeviceBlock, TheLegacyNameGivesWayToTheMachine) {
+    DeviceNameEnv env("ResMed AirSense 10");
+    DataPublisherService pub(nullptr, nullptr);
+    EXPECT_EQ(pub.deviceInfo()["name"].asString(), "CPAP") << "no model known: no machine named";
+    pub.setIdentity({"ResMed", "AirSense 11 AutoSet", "99990000009", ""});
+    EXPECT_EQ(pub.deviceInfo()["name"].asString(), "ResMed AirSense 11 AutoSet");
+    EXPECT_EQ(pub.deviceName(), "ResMed AirSense 11 AutoSet");
+}
+
+TEST(DeviceBlock, TheNewInstallNameGivesWayToTheMachine) {
+    DeviceNameEnv env("CPAP");
+    DataPublisherService pub(nullptr, nullptr);
+    pub.setIdentity({"ResMed", "AirCurve 11 VAuto", "", ""});
+    EXPECT_EQ(pub.deviceInfo()["name"].asString(), "ResMed AirCurve 11 VAuto");
+}
+
+TEST(DeviceBlock, ANameSomeoneChoseIsKept) {
+    DeviceNameEnv env("Bedroom AirSense");
+    DataPublisherService pub(nullptr, nullptr);
+    pub.setIdentity({"ResMed", "AirSense 11 AutoSet", "", ""});
+    EXPECT_EQ(pub.deviceInfo()["name"].asString(), "Bedroom AirSense");
+}
+
 TEST(DeviceBlock, AnEmptyIdentityDoesNotEraseAKnownOne) {
     DataPublisherService pub(nullptr, nullptr);
     pub.setIdentity({"ResMed", "AirSense 10 AutoSet", "", ""});

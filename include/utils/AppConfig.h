@@ -30,6 +30,12 @@ struct AppConfig {
     /// cleared once they and its Home Assistant topics have. A start that finds
     /// it finishes the move instead of minting a second id.
     std::string device_id_previous;
+    /// #94 follow-up: whether this install ever published under
+    /// device_id_previous, so its retained Home Assistant topics are its own to
+    /// clear. A move starts it false; nights found under the old id make it
+    /// true. A move an older build began has no key and keeps that build's
+    /// meaning: true. Written only while a move is under way.
+    bool device_id_previous_published = true;
 
     // ── Data source: TWO questions, not one (SDD-022) ───────────────────────
     //
@@ -691,6 +697,8 @@ struct AppConfig {
                 config.device_id_pinned = j["device_id_pinned"].get<bool>();
             if (j.contains("device_id_previous") && j["device_id_previous"].is_string())
                 config.device_id_previous = j["device_id_previous"].get<std::string>();
+            if (j.contains("device_id_previous_published") && j["device_id_previous_published"].is_boolean())
+                config.device_id_previous_published = j["device_id_previous_published"].get<bool>();
             if (j.contains("source"))       config.source = j["source"];
             // SDD-022. Read the new pair when present; migrate from `source`
             // when not. Rule 2: a config carrying BOTH -- written by an older
@@ -911,7 +919,10 @@ struct AppConfig {
             // SDD-051. Written only when set, so a config that never had them
             // does not grow keys nobody asked for.
             if (device_id_pinned) j["device_id_pinned"] = true;
-            if (!device_id_previous.empty()) j["device_id_previous"] = device_id_previous;
+            if (!device_id_previous.empty()) {
+                j["device_id_previous"] = device_id_previous;
+                j["device_id_previous_published"] = device_id_previous_published;
+            }
             j["transport"] = transport;
             j["format"]    = format;
             // SDD-022 migration rule 3: keep writing `source` for ONE release,

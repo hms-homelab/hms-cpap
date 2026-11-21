@@ -178,7 +178,9 @@ int main(int argc, char** argv) {
             return app.exec();
         }
 
-        if (!writeConfig(wizard.model().current())) {
+        // #94 follow-up: the wizard asks neither; written now, the service
+        // never starts on the old fixed id a config without them means.
+        if (!writeConfig(withInstallIdentity(wizard.model().current()))) {
             QMessageBox::critical(nullptr, "HmsCpap",
                 "Could not save your settings to " + configPath());
             return app.exec();

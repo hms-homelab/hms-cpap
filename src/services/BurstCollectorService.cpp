@@ -399,6 +399,12 @@ void BurstCollectorService::initDataPublisher() {
     data_publisher_->initialize();
 }
 
+std::string BurstCollectorService::haDeviceName() const {
+    // #94 follow-up: the one name every publisher of this device gives it.
+    if (data_publisher_) return data_publisher_->deviceName();
+    return machineName(app_config_ ? app_config_->device_name : std::string(), {});
+}
+
 void BurstCollectorService::refreshCardIdentity() {
     if (!data_publisher_) return;
     data_publisher_->setIdentity(installIdentity(local_source_dir_, ConfigManager::get("CPAP_ARCHIVE_DIR", ""),
@@ -4654,8 +4660,7 @@ void BurstCollectorService::runLoop() {
                 [this](const std::string& topic, const std::string& payload, bool retain) {
                     return mqtt_client_->publish(topic, payload, 1, retain);
                 },
-                device_id_,
-                app_config_ ? app_config_->device_name : std::string("CPAP"));
+                device_id_, haDeviceName());
             // A fresh publisher is built every cycle, so the crossing ledger MUST
             // be on disk — in-process state would make every cycle look like a
             // first sighting and re-fire the same "overdue" event forever.
@@ -4681,8 +4686,7 @@ void BurstCollectorService::runLoop() {
                 [this](const std::string& topic, const std::string& payload, bool retain) {
                     return mqtt_client_->publish(topic, payload, 1, retain);
                 },
-                device_id_,
-                app_config_ ? app_config_->device_name : std::string("CPAP"));
+                device_id_, haDeviceName());
             auto cr = cleaner.publishFromDatabase(
                 *db_service_, static_cast<long long>(std::time(nullptr)));
             if (cr.published && !cr.all_ok)

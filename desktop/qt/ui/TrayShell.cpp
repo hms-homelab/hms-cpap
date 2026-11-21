@@ -556,6 +556,16 @@ void TrayShell::startOver() {
     child_->stop();
 
     const QString dir = dataDir();
+    // #94 follow-up: "Settings only" keeps every night, and they are filed
+    // under this install's id, so the new settings keep the id.
+    nlohmann::json previous;
+    if (!wipe_data) {
+        QFile old(dir + "/config.json");
+        if (old.open(QIODevice::ReadOnly)) {
+            try { previous = nlohmann::json::parse(old.readAll().toStdString()); }
+            catch (const std::exception&) {}
+        }
+    }
     QFile::remove(dir + "/config.json");
 
     if (wipe_data) {
@@ -568,12 +578,12 @@ void TrayShell::startOver() {
     // Straight into setup. Clearing the configuration and then leaving someone
     // staring at a stopped service would be a worse place than they started;
     // "start over" means start over, so the wizard opens.
-    runWizard(/*wipe_first=*/false);
+    runWizard(/*wipe_first=*/false, previous);
 }
 
 /// Opens the configurator and, if it is completed, writes the result and starts
 /// the service. Shared by Start Over and by a first run.
-void TrayShell::runWizard(bool wipe_first) {
+void TrayShell::runWizard(bool wipe_first, const nlohmann::json& previous) {
     if (wipe_first) {
         child_->stop();
         QFile::remove(dataDir() + "/config.json");
@@ -606,7 +616,7 @@ void TrayShell::runWizard(bool wipe_first) {
             "Could not save your settings to " + out.fileName());
         return;
     }
-    out.write(QByteArray::fromStdString(wizard.model().current().dump(2)));
+    out.write(QByteArray::fromStdString(withInstallIdentity(wizard.model().current(), previous).dump(2)));
     out.close();
 
     // Finishing setup used to hand straight back to the menu bar while the
