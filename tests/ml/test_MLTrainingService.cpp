@@ -279,6 +279,7 @@ TEST(MLTrainingServiceTest, StatusIdleWhenEnabledButUntrained) {
     EXPECT_EQ(status["status"].asString(), "idle");
     EXPECT_TRUE(status["last_trained"].isNull());
     EXPECT_FALSE(status["models_loaded"].asBool());
+    EXPECT_EQ(status["model_count"].asInt(), 0);
     EXPECT_EQ(status["schedule"].asString(), "daily");
     EXPECT_EQ(status["min_days"].asInt(), 21);
     // No predictions yet.
@@ -835,6 +836,8 @@ TEST(MLTrainingServiceExtTest, EndToEndTrainPersistsModelsAndPopulatesStatus) {
     auto status = svc.getStatus();
     EXPECT_EQ(status["status"].asString(), "idle");
     EXPECT_TRUE(status["models_loaded"].asBool());
+    // The Settings panel prints this count ("4 loaded").
+    EXPECT_EQ(status["model_count"].asInt(), 4);
     EXPECT_FALSE(status["last_trained"].asString().empty());
     ASSERT_TRUE(status.isMember("models"));
     EXPECT_EQ(status["models"].size(), 4u);
