@@ -13,7 +13,7 @@ import {
   errorText, groupKeys, hostOf, latestCommand, latestConfigValues, recordingWarning, releaseLine, riskyGroups,
   switchView, groupCode, ds2PairView, ds2PairRunning, ds2RefusalKey, ds2Reads, ds2NextRead, isIsoDay,
   as11ResetRefusalKey, ClockChoice, ClockDraft, ClockView, Reread, clockChanged, clockDifference, clockDraftOf,
-  clockSettingOf, filterZones, fixedOffsets, hasDangerActions, learnedOffer, rereadLine,
+  clockSettingOf, filterZones, fixedOffsets, hasDangerActions, learnedOffer, rereadLine, cloudSwitchState, muleLimited,
 } from './devices-model';
 import {
   MuleDs2Pairing, muleDs2ErrorKey, muleDs2ModePayload, muleDs2On, muleDs2Pairing, muleDs2Reading, muleDs2RefusalKey,
@@ -108,6 +108,7 @@ export class DevicesComponent implements OnInit, OnDestroy {
   readonly clockChanged = clockChanged;
   readonly learnedOffer = learnedOffer;
   readonly hasDanger = hasDangerActions;
+  readonly limited = muleLimited;   // #100
   /** What the person changed and has not saved yet; absent shows the saved clock. */
   private clockEdits: Record<string, ClockDraft> = {};
   private clockShown: Record<string, { setting: string; draft: ClockDraft }> = {};
@@ -293,18 +294,11 @@ export class DevicesComponent implements OnInit, OnDestroy {
     this.confirms.ask(d.key, 'cloud', key, this.cloudPayload(d), { name: d.name });
   }
 
-  /**
-   * The switch to the cloud as the device answers it: switching while the
-   * command waits or is out; switched once it answered ok (or left);
-   * failed when it answered that it could not reach the cloud and stayed.
-   */
+  /** The switch to the cloud as the device answers it (cloudSwitchState). */
   cloudState(d: DeviceEntry): '' | 'switching' | 'switched' | 'failed' {
     const id = this.switching[d.key];
     if (!id) return '';
-    const c = this.commands(d).find((k) => k.req_id === id);
-    if (c && c.state === 'answered') return c.result?.ok === false ? 'failed' : 'switched';
-    if (d.present === 'no' && (!c || c.state === 'sent')) return 'switched';
-    return 'switching';
+    return cloudSwitchState(d.kind, d.present, this.commands(d).find((k) => k.req_id === id));
   }
 
   /** Try again after a switch the device could not make: the same, confirmed already. */
@@ -519,7 +513,7 @@ export class DevicesComponent implements OnInit, OnDestroy {
 
   /** The Firmware line asks for the unit's pairing code: none kept, nothing running. */
   needsFwCode(d: DeviceEntry): boolean {
-    return d.kind === 'mule' && !!d.detail?.firmware && !d.detail.firmware.pairing_set && !d.detail.ota;
+    return d.kind === 'mule' && !muleLimited(d) && !!d.detail?.firmware && !d.detail.firmware.pairing_set && !d.detail.ota;
   }
 
   /** Keeps the printed code once CpapDash says it is this unit's, then reads the release. */
@@ -1264,6 +1258,7 @@ export class DevicesComponent implements OnInit, OnDestroy {
     // (when the adapter is not stuck) are rarely used, so they live here too.
     if (d.kind === 'o2ring') return !d.detail?.through_bridge;
     if (d.kind === 'as11_ble') return !d.detail?.not_compiled && !d.detail?.bluetooth_stuck;
+    if (muleLimited(d)) return false;   // #100: logs, restate, pairing: the unit takes none of them from here
     return d.kind === 'mule' || d.kind === 'sleepbridge';
   }
 

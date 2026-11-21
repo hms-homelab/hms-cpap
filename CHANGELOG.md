@@ -317,6 +317,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   again, so "Found your machine's card" and Read card never appeared until
   the step was opened again. It now also hears macOS say the card finished
   mounting (and was removed).
+- **A Mule & Miner that reads a card can be switched to the cloud from here
+  (#100).** A unit pointed at hms-cpap with its miner reading the card (its
+  DreamStation 2 mode off) was refused before it counted as connected, so it
+  never showed on the Devices page and "Switch to the CpapDash cloud" could
+  not reach it: it kept trying this computer. It is now listed, with "This
+  unit reads the machine's card, so hms-cpap takes no nights from it here",
+  "Switch to the CpapDash cloud" and, once it is away, Forget this device.
+  Its stream is still refused (no night is taken from it over this link), and
+  it takes no other command or firmware update from hms-cpap. The switch
+  follows the unit's answer, also when a 6.0.0 unit closes the link to test
+  the cloud and opens it again to answer.
 - **The Windows tray icon is no longer a blank square (#97).** Each tray
   state is now an .ico with 16, 20, 24, 32 and 48 px images built into the
   program and loaded by Windows itself at the size the notification area

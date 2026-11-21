@@ -137,6 +137,7 @@
       "switchRefused": "elutasítva: {{error}}",
       "resetConfirm": "Az egység elfelejti a WiFi-jét és ennek a számítógépnek a címét, és visszatér a beállítási oldalára. Csak valaki a házban tudja újra beállítani. Visszaállítja?",
       "cloudConfirm": "{{name}} ezután nem erre a számítógépre, hanem a CpapDash felhőbe küldi az adatokat, és itt többé nem jelenik meg. A beállítási oldalán visszairányíthatja erre a számítógépre.",
+      "limited": "Ez az egység a készülék kártyáját olvassa, ezért a hms-cpap itt nem kapja meg az éjszakáit. Váltsa át a CpapDash felhőre, hogy oda küldje az éjszakáit.",
       "restateLabel": "Állapot újbóli lekérése",
       "pair": "Az AirSense 11 párosítása",
       "pairCode": "A készülék kijelzőjén látható kód",

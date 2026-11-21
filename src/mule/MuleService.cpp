@@ -229,6 +229,7 @@ MuleService::Brief MuleService::brief(const std::string& serial) const {
     b.hellos     = u.hellos;
     b.last_heard = u.last_heard;
     b.state      = u.state;
+    b.limited    = limitedUnit(u);
     for (const auto& c : u.commands)
         if (c.state == "queued" || (c.state == "sent" && c.conn == u.live))
             b.unanswered.push_back(c.cmd);
@@ -307,12 +308,20 @@ void MuleService::hello(uint64_t conn, const std::string& serial, const Json::Va
     // state carries ds2.enabled.
     const bool ds2 = mode == "ds2_ble" || (f["state"].isObject() && f["state"]["ds2"].isObject() &&
                                            f["state"]["ds2"].get("enabled", false).asBool());
-    if (mode == "card" && !ds2) {
-        send(conn, errorFrame("this unit reads a card: use Home network mode"));
-        std::cout << "[mule] " << serial << " is in card mode: refused" << std::endl;
-        return;
-    }
+    // #100: a unit that reads a card streams nothing here, but it is taken in
+    // a limited state, listed with its reason, so "Switch to the CpapDash
+    // cloud" can reach it: refused outright it never showed, and a unit left
+    // pointed here retried this address for good. The ack opens the session;
+    // the error frame after it is the refusal of the stream, which the unit
+    // only logs.
+    const bool limited = mode == "card" && !ds2;
     send(conn, compact(ack));
+    if (limited) {
+        send(conn, errorFrame("this unit reads a card: hms-cpap takes no nights from it. Switch it to the "
+                              "CpapDash cloud, or use Home network mode"));
+        std::cout << "[mule] " << serial << " is in card mode: listed, limited to the switch to the cloud"
+                  << std::endl;
+    }
     bool first = false;
     {
         std::lock_guard<std::mutex> lk(mu_);
@@ -373,12 +382,14 @@ void MuleService::stateOf(const std::string& serial, const Json::Value& state) {
     // that ran through one has no start to report.
     std::optional<bool> first_state;
     std::string machine;
+    bool limited = false;
     {
         std::lock_guard<std::mutex> lk(mu_);
         Unit& u      = unit(serial);
         u.last_heard = std::time(nullptr);
         u.state      = state;
         u.state.removeMember("resp_events");
+        limited = limitedUnit(u);
         bool dirty = false;
         if (state["tz"].isString() && state["tz"].asString() != u.tz) {
             u.tz  = state["tz"].asString();
@@ -392,7 +403,8 @@ void MuleService::stateOf(const std::string& serial, const Json::Value& state) {
             dirty      = true;
         }
         applyClock(serial, u);
-        const Json::Value& a = state["as11"];
+        // #100: a card-mode unit's state is shown, never read as a stream.
+        const Json::Value& a = limited ? Json::Value::nullSingleton() : state["as11"];
         if (a.isObject() && a["streaming"].isBool()) {
             const bool streaming = a["streaming"].asBool();
             const int64_t buffered = a["stream_buffered"].isNumeric() ? a["stream_buffered"].asInt64() : 0;
@@ -426,7 +438,7 @@ void MuleService::stateOf(const std::string& serial, const Json::Value& state) {
     // Therapy on and off, live, before the events the same frame carries.
     if (live_ && first_state) live_->therapy(serial, machine, *first_state, /*restated=*/true);
     if (live_ && went_on) live_->therapy(serial, machine, true);
-    if (state["resp_events"].isArray()) feedEvents(serial, state["resp_events"]);
+    if (!limited && state["resp_events"].isArray()) feedEvents(serial, state["resp_events"]);
     if (live_ && went_off) live_->therapy(serial, machine, false);
     if ((went_on || went_off) && night_changed_) night_changed_();
     if (landed) nightLanded(serial);
@@ -580,6 +592,18 @@ void MuleService::block(uint64_t conn, const std::string& serial, const FrameHea
     }
     if (start <= 0) {
         send(conn, errorFrame("a stream block is one CDS1 block"));
+        return;
+    }
+    bool limited = false;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        const auto it = units_.find(serial);
+        limited       = it != units_.end() && limitedUnit(it->second);
+    }
+    if (limited) {
+        // #100: nothing of a night is taken from a unit that reads a card; no
+        // ack, so the unit keeps the block.
+        send(conn, errorFrame("this unit reads a card: hms-cpap takes no nights from it"));
         return;
     }
 
@@ -1025,6 +1049,18 @@ CommandAnswer MuleService::queueCommand(const std::string& serial, const Json::V
         }
     }
 
+    // #100: a unit that reads a card is listed for one thing, its way back to
+    // the cloud: config {"hms_url": ""}. Nothing else goes to it from here.
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        const auto it = units_.find(serial);
+        const Json::Value& cfg = static_cast<const Json::Value&>(f)["config"];   // read without adding keys
+        const bool to_cloud = cmd == "config" && cfg.isObject() && cfg.size() == 1 && cfg["hms_url"].isString() &&
+                              cfg["hms_url"].asString().empty();
+        if (it != units_.end() && limitedUnit(it->second) && !to_cloud)
+            return refuse(409, std::string(kLimitedWhy) + ": hms-cpap only switches it to the CpapDash cloud");
+    }
+
     // What restarts the unit or its miner (the stream target, the Bluetooth
     // switches, a reboot, a reset) is warned while the machine records.
     const bool warned = cmd == "config" || cmd == "reboot" || cmd == "reset";
@@ -1107,6 +1143,9 @@ Json::Value MuleService::status() const {
         v["miner_fw"]      = u.miner_fw;
         v["ip"]            = u.ip;
         v["mode"]          = u.mode;
+        // #100: listed, but taken only for the switch to the cloud.
+        v["limited"]        = limitedUnit(u);
+        v["limited_reason"] = limitedUnit(u) ? kLimitedWhy : "";
         v["tz"]            = u.tz;
         v["summary_from"]  = u.summary_from;
         v["card_root"]     = u.machine.empty() ? std::string() : machineRoot(u.machine);
