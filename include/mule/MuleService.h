@@ -29,6 +29,12 @@
 // none is kept), its Summary and its settings history. The Summary makes
 // STR.edf, from the model's layout.
 //
+// A unit whose hello says "card" (its miner's DreamStation 2 mode off) is
+// taken in a limited state (#100): acked and listed, with an error frame
+// that refuses its stream; no block or event of it is kept, and the one
+// command it takes from here is config {"hms_url": ""}, its way back to the
+// cloud.
+//
 // No authentication on the LAN: a unit is named by X-Device-Serial and
 // nothing else.
 //
@@ -60,6 +66,8 @@ inline constexpr uint16_t    kKindDs2      = 7;                // SDD-065: a ds2
 inline constexpr size_t      kCommandsKept = 30;               // per unit, newest kept
 inline constexpr size_t      kPullMax      = 4 * 1024 * 1024;  // an as11_download's bytes
 inline constexpr std::time_t kInFlightSec  = 300;              // a command unanswered this long no longer blocks the next
+/// #100: why a unit is listed in the limited state (status()'s limited_reason).
+inline constexpr const char* kLimitedWhy   = "this unit reads a card";
 
 /// The commands a unit takes from a local hms-cpap.
 const std::vector<std::string>& localCommands();
@@ -126,6 +134,7 @@ public:
         uint64_t    hellos{0};           // sessions begun: rises when the unit comes back
         std::time_t last_heard{0};
         Json::Value state{Json::objectValue};   // its last state, as it sent it
+        bool        limited{false};      // #100: reads a card; only the switch to the cloud
         /// A command of each name not answered yet (queued or sent on the
         /// live session): SDD-065 never queues a second ds2_read beside one.
         std::vector<std::string> unanswered;
@@ -236,6 +245,10 @@ private:
         std::string ip;
         bool        session{false};      // its own hello came: not a test
     };
+
+    /// #100: its hello said "card" (its miner's DreamStation 2 mode off): no
+    /// night comes from it, and only config {"hms_url": ""} goes to it.
+    static bool limitedUnit(const Unit& u) { return u.mode == "card"; }
 
     Unit& unit(const std::string& serial);   // mu_ held; loads unit.json once
     void  save(const std::string& serial, const Unit& u) const;   // mu_ held

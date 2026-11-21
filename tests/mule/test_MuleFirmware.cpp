@@ -74,12 +74,13 @@ public:
         if (conn_) svc_.closed(conn_);
         conn_ = 0;
     }
-    void hello(const std::string& fw, const std::string& miner_fw, bool streaming = false) {
+    void hello(const std::string& fw, const std::string& miner_fw, bool streaming = false,
+               const std::string& mode = "as11_ble") {
         Json::Value h(Json::objectValue);
         h["t"]        = "hello";
         h["fw"]       = fw;
         h["miner_fw"] = miner_fw;
-        h["mode"]     = "as11_ble";
+        h["mode"]     = mode;
         h["state"]    = state(streaming, 0);
         svc_.onText(conn_, compact(h));
     }
@@ -571,6 +572,20 @@ TEST_F(MuleFirmwareTest, RefusedWhenTheUnitIsNotHere) {
     const auto a = up_->start(kUnit, "mule", "IMAGE");
     EXPECT_EQ(a.status, 409);
     EXPECT_NE(a.body["error"].asString().find("not connected"), std::string::npos);
+    EXPECT_TRUE(net_.posts.empty());
+}
+
+// #100: a unit that reads a card is listed only for its way back to the cloud.
+TEST_F(MuleFirmwareTest, RefusedForAUnitThatReadsACard) {
+    updater();
+    unit_->close();
+    unit_ = std::make_unique<FakeUnit>(*svc_);
+    unit_->hello("6.0.0", "6.0.0", false, "card");
+    ASSERT_TRUE(svc_->brief(kUnit).limited);
+    ASSERT_TRUE(svc_->brief(kUnit).online);
+    const auto a = up_->start(kUnit, "mule", "IMAGE");
+    EXPECT_EQ(a.status, 409);
+    EXPECT_NE(a.body["error"].asString().find("reads a card"), std::string::npos);
     EXPECT_TRUE(net_.posts.empty());
 }
 

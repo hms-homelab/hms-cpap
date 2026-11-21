@@ -694,13 +694,118 @@ TEST_F(MuleReceiverTest, ATestHelloIsAckedAndSavesNothing) {
     EXPECT_EQ(svc_->queueCommand(kUnit, cmd).status, 404);
 }
 
-TEST_F(MuleReceiverTest, ACardModeHelloIsRefusedWithItsReason) {
+// ── #100: a unit that reads a card, listed for its way back to the cloud ──
+
+TEST_F(MuleReceiverTest, ACardModeHelloIsListedLimitedWithItsReason) {
     FakeUnit unit(*svc_);
     unit.hello(false, "card");
+    // The session is taken (the ack first); the stream is refused (logged by the unit).
+    ASSERT_GE(unit.down.size(), 2u);
+    EXPECT_EQ(unit.down[0]["t"].asString(), "ack");
     ASSERT_EQ(unit.of("error").size(), 1u);
-    EXPECT_NE(unit.of("error")[0]["error"].asString().find("Home network mode"), std::string::npos);
-    EXPECT_TRUE(unit.of("ack").empty());
-    EXPECT_FALSE(fs::exists(dir_ / "mule"));
+    EXPECT_NE(unit.of("error")[0]["error"].asString().find("reads a card"), std::string::npos);
+    EXPECT_NE(unit.of("error")[0]["error"].asString().find("CpapDash cloud"), std::string::npos);
+
+    const Json::Value st = unitStatus();
+    ASSERT_TRUE(st.isObject()) << "listed";
+    EXPECT_TRUE(st["online"].asBool());
+    EXPECT_TRUE(st["limited"].asBool());
+    EXPECT_EQ(st["limited_reason"].asString(), kLimitedWhy);
+    EXPECT_EQ(st["mode"].asString(), "card");
+    EXPECT_TRUE(svc_->brief(kUnit).limited);
+    EXPECT_TRUE(svc_->brief(kUnit).connected);
+
+    // Listed again after a restart, still limited.
+    unit.close();
+    restart();
+    EXPECT_TRUE(unitStatus()["limited"].asBool());
+    EXPECT_FALSE(unitStatus()["online"].asBool());
+}
+
+TEST_F(MuleReceiverTest, ACardModeUnitGivesNoNightAndTakesOnlyTheSwitchToTheCloud) {
+    FakeUnit unit(*svc_);
+    unit.hello(false, "card");
+    // Nothing of a night: a block is refused unacked, a streaming state and
+    // its events are not read.
+    unit.block(tenSeconds(kT0));
+    EXPECT_TRUE(unit.of("block_ack").empty());
+    EXPECT_EQ(unit.of("error").size(), 2u);
+    EXPECT_FALSE(fs::exists(blockFile(kT0)));
+    Json::Value evs(Json::arrayValue);
+    evs.append(event(1, "CentralApneaEnd", kT0 + 5000, 10));
+    unit.sendState(true, 0, evs);
+    EXPECT_FALSE(unitStatus()["streaming"].asBool());
+    EXPECT_EQ(unitStatus()["events"].asUInt64(), 0u);
+    EXPECT_EQ(svc_->recording(kUnit).state, "no");
+
+    auto status = [&](const std::string& json) { return svc_->queueCommand(kUnit, parse(json)).status; };
+    EXPECT_EQ(status(R"({"cmd":"logs"})"), 409);
+    EXPECT_EQ(status(R"({"cmd":"restate"})"), 409);
+    EXPECT_EQ(status(R"({"cmd":"reboot","confirm":true})"), 409);
+    EXPECT_EQ(status(R"({"cmd":"reset","confirm":true})"), 409);
+    EXPECT_EQ(status(R"({"cmd":"config","as11_enabled":true,"confirm":true})"), 409);
+    EXPECT_EQ(status(R"({"cmd":"config","hms_url":"192.168.1.20","confirm":true})"), 409);
+    EXPECT_EQ(status(R"({"cmd":"config","hms_port":8895,"confirm":true})"), 409);
+    EXPECT_EQ(status(R"({"cmd":"config","config":{"hms_url":"","bogus":1}})"), 400) << "the shape is checked first";
+    EXPECT_TRUE(unit.of("cmd").empty());
+
+    // The page's "Switch to the CpapDash cloud", as it posts it.
+    const auto a = svc_->queueCommand(kUnit, parse(R"({"cmd":"config","hms_url":""})"));
+    ASSERT_EQ(a.status, 200) << compact(a.body);
+    ASSERT_EQ(unit.of("cmd").size(), 1u);
+    EXPECT_EQ(unit.of("cmd")[0]["cmd"].asString(), "config");
+    EXPECT_EQ(compact(unit.of("cmd")[0]["config"]), R"({"hms_url":""})");
+}
+
+// The unit answers the switch on this socket. A 6.0.0 unit first closes it
+// to test the cloud and opens it again (a card-mode hello) to answer; a
+// later one answers, then restarts into the cloud. Either way the answer
+// lands on the command.
+TEST_F(MuleReceiverTest, TheSwitchToTheCloudIsAnsweredAcrossTheTestsReconnect) {
+    auto unit = std::make_unique<FakeUnit>(*svc_);
+    unit->hello(false, "card");
+    const auto a = svc_->queueCommand(kUnit, parse(R"({"cmd":"config","hms_url":""})"));
+    ASSERT_EQ(a.status, 200) << compact(a.body);
+    const uint64_t req = a.body["req_id"].asUInt64();
+    ASSERT_EQ(unit->of("cmd").size(), 1u);
+
+    unit->close();   // the test of the cloud
+    EXPECT_FALSE(unitStatus()["online"].asBool());
+    EXPECT_EQ(unitStatus()["commands"][0]["state"].asString(), "sent");
+
+    unit = std::make_unique<FakeUnit>(*svc_);
+    unit->hello(false, "card");   // back to answer
+    EXPECT_TRUE(unit->of("cmd").empty()) << "a sent command is not sent again";
+    Json::Value r(Json::objectValue);
+    r["t"]                              = "result";
+    r["req_id"]                         = static_cast<Json::UInt64>(req);
+    r["ok"]                             = true;
+    r["result"]["ok"]                   = true;
+    r["result"]["hms_url"]["ok"]        = true;
+    r["result"]["hms_url"]["switched"]  = true;
+    r["result"]["hms_url"]["url"]       = "";
+    unit->text(r);
+    const Json::Value c = unitStatus()["commands"][0];
+    EXPECT_EQ(c["state"].asString(), "answered");
+    EXPECT_TRUE(c["result"]["result"]["hms_url"]["switched"].asBool());
+    unit->close();   // gone to the cloud
+    EXPECT_TRUE(unitStatus()["limited"].asBool()) << "listed, away, until forgotten";
+    EXPECT_EQ(svc_->forget(kUnit).status, 200);
+}
+
+TEST_F(MuleReceiverTest, ACardModeHelloFromADreamStation2MinerIsNotLimited) {
+    FakeUnit unit(*svc_);
+    Json::Value h(Json::objectValue);
+    h["t"]                        = "hello";
+    h["fw"]                       = "9.9.9";
+    h["miner_fw"]                 = "9.9.9";
+    h["mode"]                     = "card";
+    h["state"]["ds2"]["enabled"]  = true;
+    unit.text(h);
+    EXPECT_TRUE(unit.of("error").empty());
+    EXPECT_FALSE(unitStatus()["limited"].asBool());
+    EXPECT_EQ(unitStatus()["limited_reason"].asString(), "");
+    EXPECT_EQ(svc_->queueCommand(kUnit, parse(R"({"cmd":"logs"})")).status, 200);
 }
 
 TEST_F(MuleReceiverTest, EventsBeforeAnyBlockWaitForTheMachinesName) {

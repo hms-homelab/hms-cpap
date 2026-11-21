@@ -616,6 +616,8 @@ CommandAnswer FirmwareUpdater::start(const std::string& serial, const std::strin
 
     const MuleService::Brief b = units_.brief(serial);
     if (!b.known) return refuse(404, "no Mule & Miner \"" + serial + "\" has connected here");
+    if (b.limited)   // #100
+        return refuse(409, std::string(kLimitedWhy) + ": hms-cpap only switches it to the CpapDash cloud");
     if (!b.online || b.ip.empty()) return refuse(409, "the unit is not connected here right now");
 
     std::shared_ptr<Job> j;

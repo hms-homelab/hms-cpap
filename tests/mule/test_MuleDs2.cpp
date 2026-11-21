@@ -495,7 +495,7 @@ TEST_F(MuleDs2Test, PairingGoesAsTheUnitTakesIt) {
     EXPECT_EQ(v["import_from"].asString(), Ds2Store::localDate(std::time(nullptr)));
 }
 
-TEST_F(MuleDs2Test, AUnitInDreamStationModeIsTakenAndACardUnitIsNot) {
+TEST_F(MuleDs2Test, AUnitInDreamStationModeIsTakenAndACardUnitIsOnlyListed) {
     {
         FakeUnit unit(*svc_);
         unit.hello(true, true);
@@ -509,8 +509,12 @@ TEST_F(MuleDs2Test, AUnitInDreamStationModeIsTakenAndACardUnitIsNot) {
     FakeUnit card(other);
     card.hello(false, false);
     ASSERT_FALSE(card.down.empty());
+    // #100: listed in the limited state, its stream refused.
+    EXPECT_EQ(card.down.front()["t"].asString(), "ack");
     EXPECT_EQ(card.down.back()["t"].asString(), "error");
-    EXPECT_FALSE(other.brief(kUnit).online);
+    EXPECT_TRUE(other.brief(kUnit).online);
+    EXPECT_TRUE(other.brief(kUnit).limited);
+    EXPECT_FALSE(svc_->brief(kUnit).limited) << "the DreamStation 2 unit is not";
 }
 
 // ── a read ──────────────────────────────────────────────────────────────────

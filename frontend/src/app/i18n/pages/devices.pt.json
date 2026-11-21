@@ -137,6 +137,7 @@
       "switchRefused": "recusado: {{error}}",
       "resetConfirm": "A unidade esquece o WiFi e o endereço deste computador e volta para a página de configuração. Só alguém na casa pode configurá-la de novo. Redefinir?",
       "cloudConfirm": "{{name}} vai transmitir para a nuvem CpapDash em vez deste computador e deixa de aparecer aqui. Você pode apontá-lo de volta para este computador na página de configuração dele.",
+      "limited": "Esta unidade lê o cartão do aparelho, então o hms-cpap não recebe as noites dela aqui. Passe-a para a nuvem CpapDash para enviar as noites para lá.",
       "restateLabel": "Pedir o estado de novo",
       "pair": "Emparelhar o AirSense 11",
       "pairCode": "Código na tela do aparelho",

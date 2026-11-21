@@ -9,7 +9,7 @@ import {
   recordingWarning, releaseLine, riskyGroups, switchView,
   groupCode, ds2PairView, ds2PairRunning, ds2RefusalKey, ds2Reads, ds2NextRead, isIsoDay, as11ResetRefusalKey,
   offsetSetting, fixedOffsets, clockChoiceOf, clockDraftOf, clockSettingOf, clockChanged, filterZones, clockDifference,
-  hasDangerActions, learnedOffer, rereadLine,
+  hasDangerActions, learnedOffer, rereadLine, muleLimited, cloudSwitchState,
 } from './devices-model.ts';
 import type { ClockView, Reread } from './devices-model.ts';
 
@@ -363,6 +363,28 @@ test('item 10 layout B: the destructive group shows only where there is a destru
   assert.equal(hasDangerActions({ kind: 'ds2_ble', detail: { paired: false } }), false);
   assert.equal(hasDangerActions({ kind: 'as11_ble', detail: { paired: true, not_compiled: true } }), false);
   assert.equal(hasDangerActions({ kind: 'o2ring', detail: {} }), false);
+});
+
+test('issue #100: a Mule & Miner that reads a card is limited, as the server lists it', () => {
+  assert.equal(muleLimited({ kind: 'mule', detail: { limited: true, limited_reason: 'this unit reads a card' } }), true);
+  assert.equal(muleLimited({ kind: 'mule', detail: { limited: false } }), false);
+  assert.equal(muleLimited({ kind: 'mule', detail: {} }), false, 'an older hms-cpap never says it');
+  assert.equal(muleLimited({ kind: 'sleepbridge', detail: { limited: true } }), false);
+  assert.equal(hasDangerActions({ kind: 'mule', detail: { limited: true } }), true, 'Forget this device stays, at the right');
+});
+
+test('issue #100: the switch to the cloud follows the answer, across a Mule & Miner\'s test reconnect', () => {
+  const sent = { req_id: 7, cmd: 'config', state: 'sent' as const };
+  assert.equal(cloudSwitchState('mule', 'yes', sent), 'switching');
+  // A 6.0.0 unit closes the socket to test the cloud, then opens it again to answer.
+  assert.equal(cloudSwitchState('mule', 'no', sent), 'switching', 'away during the test is not switched yet');
+  assert.equal(cloudSwitchState('mule', 'no', null), 'switching');
+  assert.equal(cloudSwitchState('mule', 'yes', { ...sent, state: 'answered', result: { ok: true, result: { hms_url: { switched: true } } } }), 'switched');
+  assert.equal(cloudSwitchState('mule', 'no', { ...sent, state: 'answered', result: { ok: true } }), 'switched');
+  assert.equal(cloudSwitchState('mule', 'yes', { ...sent, state: 'answered', result: { ok: false, error: 'no ack to the hello in 10 s' } }), 'failed');
+  // A Sleep Bridge that leaves with the command out has switched, as before.
+  assert.equal(cloudSwitchState('sleepbridge', 'no', sent), 'switched');
+  assert.equal(cloudSwitchState('sleepbridge', 'yes', sent), 'switching');
 });
 
 test('issue #95: a learned clock the server does not offer is never a button', () => {

@@ -137,6 +137,7 @@
       "switchRefused": "refused: {{error}}",
       "resetConfirm": "The unit forgets its WiFi and this computer's address, and goes back to its setup page. Only someone in the house can bring it back. Reset it?",
       "cloudConfirm": "{{name}} will stream to the CpapDash cloud instead of this computer, and stops showing here. You can point it back to this computer from its setup page.",
+      "limited": "This unit reads the machine's card, so hms-cpap takes no nights from it here. Switch it to the CpapDash cloud to send its nights there.",
       "restateLabel": "Ask for its state again",
       "pair": "Pair the AirSense 11",
       "pairCode": "Code on the machine's screen",

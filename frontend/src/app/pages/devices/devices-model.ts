@@ -539,6 +539,31 @@ export function hasDangerActions(d: { kind: string; detail?: any }): boolean {
   return false;
 }
 
+/**
+ * #100: a Mule & Miner that reads a card is listed in a limited state: its
+ * reason, "Switch to the CpapDash cloud" and (once it is away) Forget, and
+ * nothing that needs its stream.
+ */
+export function muleLimited(d: { kind: string; detail?: any }): boolean {
+  return d.kind === 'mule' && d.detail?.limited === true;
+}
+
+/**
+ * The switch to the cloud as the device answers it: switching while the
+ * command waits or is out; switched once it answered ok; failed when it
+ * answered that it could not and stayed. A Sleep Bridge that goes away with
+ * the command out has switched. A Mule & Miner always answers on this socket
+ * before it moves (a 6.0.0 unit first closes it to test the cloud and opens
+ * it again to answer, #100), so while it is away it is still switching.
+ */
+export function cloudSwitchState(
+  kind: string, present: string, c: DeviceCommand | null | undefined,
+): 'switching' | 'switched' | 'failed' {
+  if (c && c.state === 'answered') return c.result?.ok === false ? 'failed' : 'switched';
+  if (kind !== 'mule' && present === 'no' && (!c || c.state === 'sent')) return 'switched';
+  return 'switching';
+}
+
 /** A "Re-read my nights" in progress on one card. */
 export interface Reread {
   backup: number;                // tables backed up before the re-read
