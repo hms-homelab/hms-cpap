@@ -46,6 +46,8 @@ const Row kRows[] = {
     {Txt::CardFound, {"Found your machine's card (%1).", "Tarjeta de tu máquina encontrada (%1).",
                       "Carte de votre appareil trouvée (%1).", "Megvan a készülék kártyája (%1).",
                       "Cartão da sua máquina encontrado (%1)."}},
+    {Txt::CardReadButton, {"Read card", "Leer la tarjeta", "Lire la carte", "Kártya olvasása",
+                           "Ler o cartão"}},
     {Txt::CardReading, {"Reading your card...", "Leyendo tu tarjeta...", "Lecture de votre carte...",
                         "A kártya olvasása...", "A ler o seu cartão..."}},
     {Txt::CardPermission, {"This computer asks for your permission once: reading the card's layout needs it.",

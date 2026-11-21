@@ -19,7 +19,7 @@ enum class Txt {
     WindowTitle, Skip, StepOf, Next, Back, Done, Close,
     Starting, ServiceDown,
     // D1
-    CardTitle, CardBody, CardWaiting, CardFound, CardReading, CardPermission, CardPhaseLayout, CardPhaseFiles,
+    CardTitle, CardBody, CardWaiting, CardFound, CardReadButton, CardReading, CardPermission, CardPhaseLayout, CardPhaseFiles,
     CardDone, CardDoneNote, CardFailed, CardFallback, CardFallbackButton, CardChosen, CardNotCard,
     // D2
     AssembleTitle, AssembleCard, AssembleExtender, AssemblePower, AssembleNotYet,
