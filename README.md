@@ -115,6 +115,10 @@ reference](docs/REFERENCE.md#philips-dreamstation-card-plain-files).
 - **SleepHQ export** (off by default): forward each finished night to SleepHQ
 - **ResMed myAir comparison** (off by default, read-only): put ResMed's own nightly score next to CpapDash's
 - **LLM night summaries** (off by default): plain-language write-ups via Ollama or any OpenAI-compatible endpoint
+- **Local sleep model** (off by default): each night's summary written on this machine, with no network, by a small model of its own (narrator-v1, 47 MB, built in through llama.cpp). Every number it writes is checked against the night's stored facts, and a plain template is used instead when the text does not pass. Under a second on a desktop, under a minute on a Pi Zero 2 W
+- **Machine clock per machine**: a machine kept on another time zone or a fixed offset has its nights stored and published on its own clock; the card on the Devices page offers the offset its files show
+- **Usage target** (Settings, 4 hours by default): the dashboard's usage goal, set to what your plan asks
+- **OSCAR helper on a home PC**: hms-cpap in Docker or the Home Assistant add-on gets a DreamStation 2 card read by the OSCAR on a Windows, macOS or Linux PC at home
 - **ML insights** (off by default): AHI prediction, compliance forecast, mask-fit risk, anomaly detection
 - **Any database**: SQLite (default, zero setup), PostgreSQL, or MySQL/MariaDB
 - **Runs on** Windows, macOS, Linux, Raspberry Pi, Docker, or as a Home Assistant add-on
@@ -404,12 +408,19 @@ and end goes to the broker as it arrives (see
 [The night, live, on MQTT](#the-night-live-on-mqtt) below), for
 automations during the night. When the night ends the unit is asked for the
 machine's identification, summary and settings history; the summary is what
-builds the folder's `STR.edf`. `GET /api/mule` lists the units seen. New in this version; the
+builds the folder's `STR.edf`. `GET /api/mule` lists the units seen. The
 protocol is in [docs/MULE_LOCAL_STREAM.md](docs/MULE_LOCAL_STREAM.md).
+
+A unit that reads a WiFi SD card (not Bluetooth) cannot stream to hms-cpap.
+If one is pointed here anyway, its card on the Devices page says so and
+offers only **Switch to the CpapDash cloud**, which sends it back to the
+cloud; nothing of its nights is taken here.
 
 **A DreamStation 2 through a Mule & Miner.** A unit whose firmware supports
 the DreamStation 2 reads one over its own Bluetooth instead of an AirSense
-11, set up the same way (the hms-cpap address and port on the unit). On the
+11, set up the same way (the hms-cpap address and port on the unit). Use
+miner firmware 6.0.2 or newer: earlier miners stop after the summaries and
+bring no events. On the
 unit's card on the **Devices** page, turn on **DreamStation 2 Bluetooth**
 (the miner restarts with it), then **Pair DreamStation 2**: the unit asks the
 machine to pair and the page shows the six digits it holds; check they match

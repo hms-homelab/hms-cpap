@@ -144,7 +144,10 @@ protected:
         fs::remove_all(root_);
         fs::create_directories(root_);
     }
-    void TearDown() override { fs::remove_all(root_); }
+    void TearDown() override {
+        std::error_code ec;
+        fs::remove_all(root_, ec);
+    }
 
     void writeData(const std::vector<Stretch>& night) {
         write(root_ / (std::string(kSerial) + ".000"), packets(night));

@@ -97,8 +97,9 @@ protected:
     }
     void TearDown() override {
         db_.reset();
-        fs::remove(path_);
-        fs::remove_all(root_);
+        std::error_code ec;
+        fs::remove(path_, ec);
+        fs::remove_all(root_, ec);
     }
 
     void put(const fs::path& rel, const std::string& bytes) {

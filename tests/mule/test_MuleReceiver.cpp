@@ -261,7 +261,8 @@ protected:
     }
     void TearDown() override {
         svc_.reset();
-        fs::remove_all(dir_);
+        std::error_code ec;
+        fs::remove_all(dir_, ec);
     }
     // A fresh receiver on the same disk: what an hms-cpap restart is.
     void restart() {

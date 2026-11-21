@@ -49,9 +49,10 @@ protected:
     }
 
     void TearDown() override {
-        fs::remove_all(tmp_dir);
-        fs::remove_all(fs::temp_directory_path() / "prisma_staged");
-        fs::remove_all(fs::temp_directory_path() / "prisma_cache");
+        std::error_code ec;
+        fs::remove_all(tmp_dir, ec);
+        fs::remove_all(fs::temp_directory_path() / "prisma_staged", ec);
+        fs::remove_all(fs::temp_directory_path() / "prisma_cache", ec);
     }
 
     void createRawTree() {

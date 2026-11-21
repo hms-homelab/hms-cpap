@@ -130,7 +130,10 @@ struct TempDir {
             ("livestate_" + std::to_string(Clock::now().time_since_epoch().count()));
         fs::create_directories(p);
     }
-    ~TempDir() { fs::remove_all(p); }
+    ~TempDir() {
+        std::error_code ec;   // a throw out of a destructor ends the run
+        fs::remove_all(p, ec);
+    }
 };
 
 }  // namespace

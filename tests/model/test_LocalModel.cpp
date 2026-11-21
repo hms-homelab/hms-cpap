@@ -339,7 +339,8 @@ protected:
     void TearDown() override {
         svc_.reset();
         db_.reset();
-        fs::remove_all(dir_);
+        std::error_code ec;
+        fs::remove_all(dir_, ec);
     }
 
     Pin testPin() const { return {"narrator-test-v1", "https://models.example/n.gguf", update::sha256File(ref_)}; }

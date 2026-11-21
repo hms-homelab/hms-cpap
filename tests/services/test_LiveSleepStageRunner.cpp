@@ -124,8 +124,8 @@ protected:
     }
 
     void TearDown() override {
-        if (std::filesystem::exists(temp_dir_))
-            std::filesystem::remove_all(temp_dir_);
+        std::error_code ec;
+        std::filesystem::remove_all(temp_dir_, ec);
     }
 
     bool writeClassifierBundle(const std::string& path,

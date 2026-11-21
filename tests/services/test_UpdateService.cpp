@@ -318,7 +318,11 @@ struct ApplyRig {
         svc->setHooks(std::move(hooks));
         svc->checkNow();
     }
-    ~ApplyRig() { svc.reset(); fs::remove_all(dir); }
+    ~ApplyRig() {
+        svc.reset();
+        std::error_code ec;   // a throw out of a destructor ends the run
+        fs::remove_all(dir, ec);
+    }
 };
 
 }  // namespace

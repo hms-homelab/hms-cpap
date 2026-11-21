@@ -24,7 +24,10 @@ protected:
         fs::create_directories(dir_);
         file_ = dir_ / "hms-cpap.log";
     }
-    void TearDown() override { fs::remove_all(dir_); }
+    void TearDown() override {
+        std::error_code ec;
+        fs::remove_all(dir_, ec);
+    }
 
     void write(const std::string& text, bool append = false) {
         std::ofstream out(file_, std::ios::binary | (append ? std::ios::app : std::ios::trunc));

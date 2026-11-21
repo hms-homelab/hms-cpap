@@ -46,7 +46,8 @@ protected:
     void TearDown() override {
         SleepHqExportService::getInstance().resetForTest();
         unsetenv("CPAP_ARCHIVE_DIR");
-        fs::remove_all(archive_);
+        std::error_code ec;
+        fs::remove_all(archive_, ec);
     }
 
     void writeFile(const std::string& name, size_t bytes) {

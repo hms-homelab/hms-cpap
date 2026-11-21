@@ -326,9 +326,20 @@ jobs:
             ${{ steps.vcpkg-key.outputs.prefix }}
             vcpkg-bin-win-x64-static-md-
 
+      # Up to three attempts: a port's download from GitHub can answer 503
+      # (runs 44732312307 and 44737205695 lost fmt's patch that way). A rerun
+      # starts from what the attempt before it built (the binary cache
+      # directory), so only the package that failed is fetched again.
       - name: Install vcpkg dependencies
+        id: vcpkg-install
         run: |
-          & "$env:VCPKG_ROOT\vcpkg.exe" install --triplet x64-windows-static-md
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            & "$env:VCPKG_ROOT\vcpkg.exe" install --triplet x64-windows-static-md
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            Write-Host "::warning::vcpkg install attempt $attempt failed (exit $LASTEXITCODE)"
+            if ($attempt -lt 3) { Start-Sleep -Seconds 30 }
+          }
+          exit 1
 
       # Saved straight after the install, not in a post step at the end of the
       # job: a cancelled or failed build later on (run 42058753942 was
@@ -350,12 +361,16 @@ jobs:
           $dead | Remove-Item -Force
           Write-Host "kept $($all.Count - $dead.Count) archives, pruned $($dead.Count), installed ABIs $($used.Count)"
 
+      # A failed install still saves what it built, but under a key of its own
+      # run: saved under the primary key, the next run would get an exact hit
+      # on the partial set and skip this save, never storing the whole one.
+      # The restore-keys prefix still finds the partial set.
       - name: Save vcpkg binary cache
         if: ${{ !cancelled() && steps.vcpkg-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
           path: vcpkg-bincache
-          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
+          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}${{ steps.vcpkg-install.outcome != 'success' && format('-partial-{0}-{1}', github.run_id, github.run_attempt) || '' }}
 
       # SDD-016: Qt on the BUILD MACHINE ONLY, to compile the supervisor -- the
       # same reason the step above installs Drogon and libpqxx, which no user

@@ -27,7 +27,8 @@ protected:
     }
 
     void TearDown() override {
-        std::filesystem::remove_all(test_dir);
+        std::error_code ec;
+        std::filesystem::remove_all(test_dir, ec);
     }
 
     // Helper: Create test file with known content

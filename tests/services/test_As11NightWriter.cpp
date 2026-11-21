@@ -38,7 +38,10 @@ protected:
                ("as11_night_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
         fs::create_directories(dir_);
     }
-    void TearDown() override { fs::remove_all(dir_); }
+    void TearDown() override {
+        std::error_code ec;
+        fs::remove_all(dir_, ec);
+    }
 
     As11NightWriter writer() { return As11NightWriter(dir_.string(), fixedOffsetClock(-300)); }
     fs::path night() const { return dir_ / "as11" / kSerial / "DATALOG" / "20261016"; }

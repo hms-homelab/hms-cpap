@@ -57,7 +57,8 @@ protected:
     }
     void TearDown() override {
         db_->disconnect();
-        fs::remove_all(dir_);
+        std::error_code ec;
+        fs::remove_all(dir_, ec);
     }
 
     /// One night of [secs] seconds streamed and completed, as the writer

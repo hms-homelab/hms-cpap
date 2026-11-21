@@ -44,7 +44,8 @@ protected:
     }
 
     void TearDown() override {
-        fs::remove_all(tmp_dir);
+        std::error_code ec;
+        fs::remove_all(tmp_dir, ec);
     }
 };
 
@@ -171,7 +172,8 @@ protected:
     }
 
     void TearDown() override {
-        fs::remove_all(tmp_dir);
+        std::error_code ec;
+        fs::remove_all(tmp_dir, ec);
     }
 };
 
@@ -255,7 +257,8 @@ protected:
     }
 
     void TearDown() override {
-        fs::remove_all(tmp_dir);
+        std::error_code ec;
+        fs::remove_all(tmp_dir, ec);
         unsetenv("SESSION_GAP_MINUTES");
     }
 };
@@ -784,7 +787,11 @@ protected:
         fs::create_directories(tmp_dir);
         setenv("SESSION_GAP_MINUTES", "60", 1);
     }
-    void TearDown() override { fs::remove_all(tmp_dir); unsetenv("SESSION_GAP_MINUTES"); }
+    void TearDown() override {
+        std::error_code ec;
+        fs::remove_all(tmp_dir, ec);
+        unsetenv("SESSION_GAP_MINUTES");
+    }
 };
 
 // The reporter's card: four blocks that merge into one session.
@@ -864,7 +871,11 @@ protected:
         fs::create_directories(tmp_dir);
         setenv("SESSION_GAP_MINUTES", "60", 1);
     }
-    void TearDown() override { fs::remove_all(tmp_dir); unsetenv("SESSION_GAP_MINUTES"); }
+    void TearDown() override {
+        std::error_code ec;
+        fs::remove_all(tmp_dir, ec);
+        unsetenv("SESSION_GAP_MINUTES");
+    }
 };
 
 TEST_F(TcvFiles, EachSessionTakesTheTcvOfItsOwnCheckpoints) {
@@ -1015,7 +1026,11 @@ protected:
         fs::create_directories(dir);
         setenv("SESSION_GAP_MINUTES", "60", 1);
     }
-    void TearDown() override { fs::remove_all(root); unsetenv("SESSION_GAP_MINUTES"); }
+    void TearDown() override {
+        std::error_code ec;
+        fs::remove_all(root, ec);
+        unsetenv("SESSION_GAP_MINUTES");
+    }
 };
 
 // The shape that showed it: the only EVE is named at a short afternoon
