@@ -136,6 +136,18 @@ TEST(LocalModelValidator, AcceptsFiguresFromTheBlockAndRejectsInventedTransposed
     EXPECT_NE(std::find(wrong_day.begin(), wrong_day.end(), "2099-07-02"), wrong_day.end());
 }
 
+// KNOWN GAP, disabled until Albin decides (2026-11-21): the check asks only
+// whether a number appears somewhere in the block, not whether it is the
+// figure the sentence names. Seen from the narrator on a local-mode-like
+// night: "1 central apnea" where the facts say 3, passed because a "1" is
+// elsewhere in the block. This test states the wanted behaviour and fails
+// today (run it with --gtest_also_run_disabled_tests).
+TEST(LocalModelValidator, DISABLED_ACountGivenToTheWrongEventTypeIsRejected) {
+    const std::string block = "Night: 2099-07-01\nCentral apneas: 3\nRERAs: 1\n";
+    EXPECT_FALSE(violations("You had 1 central apnea.", block).empty())
+        << "3 central apneas said as 1, the 1 being the RERA count";
+}
+
 // -- The generation contract ---------------------------------------------------
 
 TEST(LocalModelNarration, AGroundedFirstAnswerIsKept) {
