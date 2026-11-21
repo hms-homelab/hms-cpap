@@ -288,6 +288,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The AI agent's MQTT connection has no built-in user name.** With `MQTT_USER` unset it connects anonymously, as the collector does; a set `MQTT_USER`/`MQTT_PASSWORD` is used as before.
 
 ### Fixed
+- **An AirSense 11 is no longer titled "ResMed AirSense 10" (#94).** The
+  dashboard's title and the report cover used the configured device name, and
+  the config.json the desktop setup wizard writes has none, which has always
+  loaded as "ResMed AirSense 10" whatever the machine. When the name is that
+  one or "CPAP", both now name the machine from its card's identification
+  file (or what an AirSense 11 said over Bluetooth): "ResMed AirSense 11
+  AutoSet", "ResMed AirCurve 11 VAuto", and "CPAP" when the machine names no
+  model. A name chosen in Settings is kept. A card moved from one machine to
+  another keeps the first one's identification file beside the second's; the
+  machine whose serial the newest night's EDF header names is the one read.
 - **"Record each night for support" applies without a restart (ticket 179).**
   Turning it on or off in Settings did nothing until hms-cpap restarted: the
   setting was read once, when the Bluetooth client was made. It now reaches

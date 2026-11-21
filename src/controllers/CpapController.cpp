@@ -4,6 +4,7 @@
 #include "controllers/DevicesRoutes.h"
 #include "utils/AppConfig.h"
 #include "utils/MachineClocks.h"
+#include "utils/MachineIdentity.h"
 #include "services/SleepHqExportService.h"
 #include "services/CpapCard.h"
 #include "services/DeviceDiscoveryService.h"
@@ -368,6 +369,12 @@ void CpapController::getConfig(const drogon::HttpRequestPtr&,
     std::string errs;
     std::istringstream stream(resp_json.dump());
     Json::parseFromStream(builder, stream, &result, &errs);
+    // #94: what the dashboard's title names. device_name stays what is
+    // configured, for Settings to edit; this is the machine when none was chosen.
+    const auto identity =
+        installIdentity(config_->legacySource() == "local" ? config_->local_dir : "", config_->archive_dir,
+                        AppConfig::dataDir());
+    result["machine_name"] = machineName(config_->device_name, identity);
     cb(jsonResp(result));
 }
 

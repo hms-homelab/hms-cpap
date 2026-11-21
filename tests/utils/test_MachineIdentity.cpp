@@ -226,6 +226,39 @@ TEST(ReadIdentification, AnIdentificationFileWinsOverTheHeaders) {
     EXPECT_EQ(readIdentification(card.path()).serial, "99990000001");
 }
 
+// #94: an AirSense 10's card moved into an AirSense 11. The 10's
+// Identification.tgt stays on the card beside the 11's Identification.json,
+// each naming its own machine; the nights are the 11's.
+TEST(ReadIdentification, ACardMovedToAnAirSense11NamesThe11) {
+    CardRoot card;
+    card.write("Identification.tgt", kTgt);                       // AirSense 10, 99990000001
+    card.write("Identification.json", R"({"FlowGenerator":{"IdentificationProfiles":{
+        "Product":{"SerialNumber":"99990000008","ProductCode":"39485","ProductName":"AirSense 11 AutoSet"}}}})");
+    writeEdfHeader(card.path(), "20261120", "20261120_223000_BRP.edf",
+                   "Startdate 20-NOV-2026 X X X SRN=99990000008 MID=46");
+    const auto id = readIdentification(card.path());
+    EXPECT_EQ(id.model, "AirSense 11 AutoSet");
+    EXPECT_EQ(id.serial, "99990000008");
+}
+
+TEST(ReadIdentification, ACardMovedBackToAnAirSense10NamesThe10) {
+    CardRoot card;
+    card.write("Identification.tgt", kTgt);                       // AirSense 10, 99990000001
+    card.write("Identification.json", kJson);                     // AirCurve 11, 99990000002
+    writeEdfHeader(card.path(), "20261120", "20261120_223000_BRP.edf",
+                   "Startdate 20-NOV-2026 X X X SRN=99990000001 MID=36 VID=39");
+    const auto id = readIdentification(card.path());
+    EXPECT_EQ(id.model, "AirSense 10 AutoSet");
+    EXPECT_EQ(id.serial, "99990000001");
+}
+
+TEST(ReadIdentification, TwoMachinesAndNoNightsTheJsonWins) {
+    CardRoot card;
+    card.write("Identification.tgt", kTgt);
+    card.write("Identification.json", kJson);
+    EXPECT_EQ(readIdentification(card.path()).model, "AirCurve 11 VAuto");
+}
+
 TEST(ReadIdentification, AnEdfWithoutASerialGivesNothing) {
     CardRoot card;
     writeEdfHeader(card.path(), "20261117", "20261118_013236_BRP.edf", "Startdate 18-NOV-2026 X X X");
@@ -330,6 +363,81 @@ TEST(DeviceDefaults, AnExistingFileWithoutTheKeysKeepsWhatTheyMeant) {
     ASSERT_EQ(AppConfig::loadFile(dir.path() + "/config.json", c), AppConfig::LoadStatus::Ok);
     EXPECT_EQ(c.device_id, "cpap_resmed_23243570851");
     EXPECT_EQ(c.device_name, "ResMed AirSense 10");
+}
+
+// ── installIdentity ──────────────────────────────────────────────────────────
+
+namespace {
+const char* kAs11Json = R"({"FlowGenerator":{"IdentificationProfiles":{
+    "Product":{"SerialNumber":"99990000009","ProductCode":"39485","ProductName":"AirSense 11 AutoSet"}}}})";
+}
+
+// A Sleep Bridge's folder is a local source: its rebuilt card is the root.
+TEST(InstallIdentity, ALocalFolderIsTheCard) {
+    CardRoot local, archive, data;
+    local.write("Identification.json", kAs11Json);
+    archive.write("Identification.tgt", kTgt);
+    EXPECT_EQ(installIdentity(local.path(), archive.path(), data.path()).model, "AirSense 11 AutoSet");
+}
+
+// ez Share and FlashAir land the card's root files in the archive.
+TEST(InstallIdentity, NoLocalFolderReadsTheArchive) {
+    CardRoot archive, data;
+    archive.write("Identification.json", kJson);
+    EXPECT_EQ(installIdentity("", archive.path(), data.path()).model, "AirCurve 11 VAuto");
+}
+
+TEST(InstallIdentity, NoArchiveSetReadsTheDefaultArchive) {
+    CardRoot data;
+    fs::create_directories(fs::path(data.path()) / "cpap_data");
+    std::ofstream(fs::path(data.path()) / "cpap_data" / "Identification.json") << kAs11Json;
+    EXPECT_EQ(installIdentity("", "", data.path()).model, "AirSense 11 AutoSet");
+}
+
+TEST(InstallIdentity, NoCardFallsBackToBluetooth) {
+    CardRoot archive, data;
+    fs::create_directories(fs::path(data.path()) / "as11" / "99990000009");
+    std::ofstream(fs::path(data.path()) / "as11" / "99990000009" / "Identification.json") << kAs11Json;
+    EXPECT_EQ(installIdentity("", archive.path(), data.path()).model, "AirSense 11 AutoSet");
+}
+
+// ── machineName ──────────────────────────────────────────────────────────────
+
+// #94: the desktop wizard's config.json has no device_name, so it loads as
+// "ResMed AirSense 10", and an AirSense 11 install's dashboard said so.
+TEST(MachineName, TheLegacyDefaultGivesWayToTheMachine) {
+    EXPECT_EQ(machineName("ResMed AirSense 10", {"ResMed", "AirSense 11 AutoSet", "", ""}),
+              "ResMed AirSense 11 AutoSet");
+    EXPECT_EQ(machineName("ResMed AirSense 10", {"ResMed", "AirCurve 11 VAuto", "", ""}),
+              "ResMed AirCurve 11 VAuto");
+}
+
+TEST(MachineName, TheNewInstallDefaultGivesWayToTheMachine) {
+    EXPECT_EQ(machineName("CPAP", {"ResMed", "AirSense 11 AutoSet", "", ""}), "ResMed AirSense 11 AutoSet");
+    EXPECT_EQ(machineName("", {"Sefam", "S.Box AUTO", "", ""}), "Sefam S.Box AUTO");
+}
+
+TEST(MachineName, ANameSomeoneChoseIsKept) {
+    EXPECT_EQ(machineName("Bedroom AirSense", {"ResMed", "AirSense 11 AutoSet", "", ""}), "Bedroom AirSense");
+}
+
+TEST(MachineName, AMachineWithoutAModelNamesNoMachine) {
+    EXPECT_EQ(machineName("ResMed AirSense 10", {"ResMed", "", "99990000004", ""}), "CPAP");
+    EXPECT_EQ(machineName("ResMed AirSense 10", {}), "CPAP");
+    EXPECT_EQ(machineName("", {}), "CPAP");
+}
+
+// The whole #94 path: a config.json the desktop wizard wrote (no device_name)
+// and a Sleep Bridge folder rebuilt from an AirSense 11's card.
+TEST(MachineName, AWizardConfigAndAnAirSense11BridgeFolder) {
+    CardRoot dir, bridge;
+    dir.write("config.json", R"({"transport": "local", "format": "resmed", "setup_complete": true})");
+    bridge.write("Identification.json", kAs11Json);
+    AppConfig c;
+    ASSERT_EQ(AppConfig::loadFile(dir.path() + "/config.json", c), AppConfig::LoadStatus::Ok);
+    c.local_dir = bridge.path();
+    const auto id = installIdentity(c.legacySource() == "local" ? c.local_dir : "", c.archive_dir, dir.path());
+    EXPECT_EQ(machineName(c.device_name, id), "ResMed AirSense 11 AutoSet");
 }
 
 TEST(DeviceDefaults, AnExistingIdIsNeverRewritten) {

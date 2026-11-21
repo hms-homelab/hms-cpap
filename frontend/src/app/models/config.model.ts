@@ -1,6 +1,8 @@
 export interface AppConfig {
   device_id: string;
   device_name: string;
+  /** #94, read only: the name the dashboard's title gives the machine. */
+  machine_name?: string;
   /** SDD-022: WHERE files come from. ezshare | flashair | local */
   transport: string;
   /** SDD-022: WHAT wrote them. resmed | lowenstein | sefam | bmc | philips */

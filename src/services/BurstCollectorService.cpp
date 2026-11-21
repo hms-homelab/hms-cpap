@@ -401,18 +401,8 @@ void BurstCollectorService::initDataPublisher() {
 
 void BurstCollectorService::refreshCardIdentity() {
     if (!data_publisher_) return;
-    std::string card_root = local_source_dir_;
-    if (card_root.empty()) {
-        const std::string default_archive =
-            (std::filesystem::path(hms_cpap::AppConfig::dataDir()) / "cpap_data").string();
-        card_root = ConfigManager::get("CPAP_ARCHIVE_DIR", default_archive);
-    }
-    auto identity = readIdentification(card_root);
-    // No card to name the machine: an AirSense 11 read over its own Bluetooth
-    // (directly or through a Mule & Miner) named itself in its own folder.
-    // Without this a Bluetooth-only install announced "ResMed ?".
-    if (identity.empty()) identity = readBluetoothIdentification(hms_cpap::AppConfig::dataDir());
-    data_publisher_->setIdentity(identity);
+    data_publisher_->setIdentity(installIdentity(local_source_dir_, ConfigManager::get("CPAP_ARCHIVE_DIR", ""),
+                                                 hms_cpap::AppConfig::dataDir()));
 }
 
 void BurstCollectorService::initLlm() {
