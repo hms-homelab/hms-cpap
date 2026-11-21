@@ -157,6 +157,9 @@ set(TEST_SOURCES
     # SDD-013: the local sleep model's harness, no model file needed.
     model/test_LocalModel.cpp
     model/test_NightJson.cpp
+    # SDD-013: the runner on llama.cpp and the prompt contract; the real-model
+    # tests run only when HMS_CPAP_NARRATOR_MODEL names the model file.
+    model/test_GgufModel.cpp
     services/test_SummaryPrompt.cpp
     services/test_O2RingCsvParser.cpp
     services/test_O2RingCsvWriter.cpp
@@ -360,6 +363,9 @@ endif()
 if(BUILD_WITH_SLEEPBRIDGE)
     target_link_libraries(run_tests sleepbridge_component)
 endif()
+
+# SDD-013: the local sleep model's runtime, as hms_cpap links it.
+hms_link_local_model(run_tests)
 
 # Optional DB backends for tests
 if(BUILD_WITH_POSTGRESQL)

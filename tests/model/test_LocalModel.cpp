@@ -136,6 +136,18 @@ TEST(LocalModelValidator, AcceptsFiguresFromTheBlockAndRejectsInventedTransposed
     EXPECT_NE(std::find(wrong_day.begin(), wrong_day.end(), "2099-07-02"), wrong_day.end());
 }
 
+// KNOWN GAP, disabled until Albin decides (2026-11-21): the check asks only
+// whether a number appears somewhere in the block, not whether it is the
+// figure the sentence names. Seen from the narrator on a local-mode-like
+// night: "1 central apnea" where the facts say 3, passed because a "1" is
+// elsewhere in the block. This test states the wanted behaviour and fails
+// today (run it with --gtest_also_run_disabled_tests).
+TEST(LocalModelValidator, DISABLED_ACountGivenToTheWrongEventTypeIsRejected) {
+    const std::string block = "Night: 2099-07-01\nCentral apneas: 3\nRERAs: 1\n";
+    EXPECT_FALSE(violations("You had 1 central apnea.", block).empty())
+        << "3 central apneas said as 1, the 1 being the RERA count";
+}
+
 // -- The generation contract ---------------------------------------------------
 
 TEST(LocalModelNarration, AGroundedFirstAnswerIsKept) {
@@ -216,29 +228,24 @@ TEST(LocalModelNarration, TheTemplatePassesItsOwnCheckGradedAndUngraded) {
 
 // -- The runner ----------------------------------------------------------------
 
-TEST(LocalModelGguf, IsDisabledWithoutAFileAndWithoutARuntime) {
-    const auto dir = tempDir("gguf");
-    GgufModel none((fs::path(dir) / "absent.gguf").string());
-    EXPECT_FALSE(none.ready());
-    EXPECT_NE(none.whyNotReady().find("No model file"), std::string::npos);
-
-    GgufModel present(writeFile(fs::path(dir) / "model.gguf", "GGUF"));
-    EXPECT_FALSE(GgufModel::runtimeAvailable()) << "no GGUF runtime is linked in this build";
-    EXPECT_FALSE(present.ready());
-    EXPECT_NE(present.whyNotReady().find("runtime"), std::string::npos);
-    EXPECT_FALSE(present.generate("Night: 2099-07-01\n", {}).has_value());
-    fs::remove_all(dir);
-}
+// The runner itself, with and without a model file, is in test_GgufModel.cpp.
 
 // -- The model file --------------------------------------------------------------
 
-TEST(LocalModelFile, NoModelIsPublishedYetSoEnablingIsRefusedWithTheReason) {
-    EXPECT_STREQ(kNarratorModelUrl, "") << "set when a model is published";
-    EXPECT_STREQ(kNarratorModelSha256, "") << "set when a model is published";
-    EXPECT_STREQ(kNarratorModelVersion, "narrator-g270m-v1");
+TEST(LocalModelFile, ThePinIsThePublishedNarrator) {
+    EXPECT_STREQ(kNarratorModelVersion, "narrator-v1");
+    EXPECT_STREQ(kNarratorModelUrl,
+                 "https://github.com/hms-homelab/hms-cpap/releases/download/narrator-v1/narrator-v1-q4_k_m.gguf");
+    EXPECT_STREQ(kNarratorModelSha256, "a0d99c56137466735fa0371dd64e6bdb908b2e33cd250632670534734af48d00");
     const auto pin = pinnedModel();
-    EXPECT_NE(verifyRefusal(pin).find("No local sleep model has been published yet"), std::string::npos);
-    EXPECT_NE(downloadRefusal(pin).find("No local sleep model has been published yet"), std::string::npos);
+    EXPECT_EQ(verifyRefusal(pin), "");
+    EXPECT_EQ(downloadRefusal(pin), "");
+}
+
+TEST(LocalModelFile, WithNoModelPublishedEnablingIsRefusedWithTheReason) {
+    const Pin none{kNarratorModelVersion, "", ""};
+    EXPECT_NE(verifyRefusal(none).find("No local sleep model has been published yet"), std::string::npos);
+    EXPECT_NE(downloadRefusal(none).find("No local sleep model has been published yet"), std::string::npos);
 }
 
 TEST(LocalModelFile, AFileWithThePinnedHashIsPutInPlaceAndAnotherIsNot) {
@@ -361,7 +368,7 @@ protected:
 };
 
 TEST_F(LocalModelServiceTest, WithNoModelPublishedTheSwitchIsRefusedAndNothingChanges) {
-    make(pinnedModel());
+    make(Pin{kNarratorModelVersion, "", ""});
     const auto why = svc_->requestEnable();
     EXPECT_NE(why.find("No local sleep model has been published yet"), std::string::npos) << why;
     EXPECT_FALSE(config_.local_model.enabled);

@@ -86,7 +86,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stays closed until the computed index agrees with a reference on real
   nights: nothing is computed, stored or shown in this release, and no screen
   reads either.
-- **The local sleep model's harness (SDD-013), with no model yet.** A
+- **The local sleep model (SDD-013): each night's summary written on this
+  machine, with no network.** The model, narrator-v1 (about 62M parameters,
+  trained from scratch on synthetic nights, 47 MB), is the release asset of
+  the `narrator-v1` tag and is pinned by URL and SHA-256; with the pin filled,
+  the Settings section "Local Sleep Model" shows. It runs on llama.cpp, built
+  in through CMake FetchContent at a pinned commit (static, CPU only, on every
+  target: macOS, Windows, Linux amd64/arm64, and the 32-bit Pi build without
+  NEON); `-DBUILD_WITH_LOCAL_MODEL=OFF` builds without it. The prompt is the
+  night's fact block in the form the model was trained on, greedy at
+  temperature 0 and seeded otherwise, so one night gives one text. A new
+  one-shot mode, `hms_cpap --local-model-night YYYYMMDD`, runs the nightly
+  job for one night and exits. On a Pi Zero 2 W a night's summary takes
+  under a minute with about 105 MB of memory; on a desktop, under a second.
+- **The local sleep model's harness (SDD-013).** A
   Settings section, "Local Sleep Model", whose switch writes each night's
   summary on this machine from the stored data, with no network. The section
   stays hidden until a model is published. The job runs when a night closes (the SDD-046 quiet close),
@@ -96,9 +109,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   once more at a lower temperature, and a second rejection gives a plain
   template instead. Turning it on downloads the pinned model and checks its
   SHA-256; "Load model from file" does the same check for an install with no
-  network. No model is published yet, so turning it on is refused with that
-  reason, and this build has no GGUF runtime linked, so no local summary is
-  written yet. Summaries now carry a `source` (`llm` for the configured LLM,
+  network. With no model published, turning it on is refused with that
+  reason. Summaries now carry a `source` (`llm` for the configured LLM,
   `local` for the local model) on SQLite, MySQL and PostgreSQL, and
   `/api/summaries` returns it. New routes: `GET /api/local-model/status`,
   `POST /api/local-model/enable`, `/disable` and `/file`.
@@ -111,6 +123,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tokenizer and a Colab notebook that trains the ~64M model from scratch and
   exports GGUF Q4. A new build tool, `hms_cpap_narrator_facts` (not
   installed), runs the fact block and the check for it with no database.
+  The teacher is Claude Haiku 5.5 by default (`--teacher-provider anthropic`,
+  live or Message Batches, the instruction cached as the system prompt);
+  `--teacher-provider gemini` keeps the Gemini path. The teacher instruction
+  names AHI bands in words only, never their limits, writes no number the
+  facts do not give, and skips zero counts.
 - **Each file sent to CpapDash says its source, and oximetry goes too
   (SDD-079, platform SDD-061).** Every `file_ready` now carries `source`:
   `card` for the machine's own card (ez Share, a local folder, a ZIP, a Sleep
