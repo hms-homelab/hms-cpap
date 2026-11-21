@@ -115,7 +115,7 @@ reference](docs/REFERENCE.md#philips-dreamstation-card-plain-files).
 - **SleepHQ export** (off by default): forward each finished night to SleepHQ
 - **ResMed myAir comparison** (off by default, read-only): put ResMed's own nightly score next to CpapDash's
 - **LLM night summaries** (off by default): plain-language write-ups via Ollama or any OpenAI-compatible endpoint
-- **Local sleep model** (off by default): each night's summary written on this machine, with no network, by a small model of its own (narrator-v1, 47 MB, built in through llama.cpp). Every number it writes is checked against the night's stored facts, and a plain template is used instead when the text does not pass. Under a second on a desktop, under a minute on a Pi Zero 2 W
+- **Local sleep model** (on by default, can be switched off in Settings): each night's summary written on this machine, with no network, by a small model of its own (narrator-v1, 47 MB, included in every package and built in through llama.cpp). Every night that lands gets one, from the bridge, Bluetooth, a card upload or a re-read. Every number it writes is checked against the night's stored facts, and a plain template is used instead when the text does not pass. Under a second on a desktop, under a minute on a Pi Zero 2 W
 - **Machine clock per machine**: a machine kept on another time zone or a fixed offset has its nights stored and published on its own clock; the card on the Devices page offers the offset its files show
 - **Usage target** (Settings, 4 hours by default): the dashboard's usage goal, set to what your plan asks
 - **OSCAR helper on a home PC**: hms-cpap in Docker or the Home Assistant add-on gets a DreamStation 2 card read by the OSCAR on a Windows, macOS or Linux PC at home
