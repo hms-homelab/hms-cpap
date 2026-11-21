@@ -284,6 +284,10 @@ FetchContent_Declare(hms_shared
 )
 FetchContent_Populate(hms_shared)
 
+# SDD-013: the local sleep model's runtime (llama.cpp, pinned), unless
+# BUILD_WITH_LOCAL_MODEL=OFF.
+include(cmake/LocalModel.cmake)
+
 # LLM module (nlohmann_json + curl only)
 add_library(hms_llm STATIC
     ${hms_shared_SOURCE_DIR}/llm/src/llm_client.cpp
@@ -440,6 +444,8 @@ endif()
 if(BUILD_WITH_WEB)
     target_link_libraries(${PROJECT_NAME} Drogon::Drogon)
 endif()
+
+hms_link_local_model(${PROJECT_NAME})
 
 if(BUILD_WITH_SLEEPBRIDGE)
     target_link_libraries(${PROJECT_NAME} sleepbridge_component)

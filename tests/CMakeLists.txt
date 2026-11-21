@@ -342,6 +342,9 @@ if(BUILD_WITH_SLEEPBRIDGE)
     target_link_libraries(run_tests sleepbridge_component)
 endif()
 
+# SDD-013: the local sleep model's runtime, as hms_cpap links it.
+hms_link_local_model(run_tests)
+
 # Optional DB backends for tests
 if(BUILD_WITH_POSTGRESQL)
     if(MSVC)
