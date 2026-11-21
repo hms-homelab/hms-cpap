@@ -386,10 +386,13 @@ export class DashboardComponent implements OnInit, AfterViewInit {
 
     // Load device name from config so the title reflects the actual machine
     // (e.g. "ResMed AirSense 11 AutoSet Sleep Therapy" instead of hardcoded model).
+    // #94: machine_name is the machine's own model when no name was chosen;
+    // device_name alone said "ResMed AirSense 10" on a desktop install.
     this.api.getConfig().subscribe({
       next: (cfg) => {
-        if (cfg?.device_name) {
-          this.deviceName = cfg.device_name;
+        const name = cfg?.machine_name || cfg?.device_name;
+        if (name) {
+          this.deviceName = name;
         }
       },
       error: () => {},

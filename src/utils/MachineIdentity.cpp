@@ -1,4 +1,5 @@
 #include "utils/MachineIdentity.h"
+#include "utils/AppConfig.h"
 
 #include <nlohmann/json.hpp>
 
@@ -156,13 +157,43 @@ MachineIdentity readIdentification(const std::string& card_root) {
     const std::filesystem::path root(card_root);
     std::error_code ec;
     const auto json = root / "Identification.json";
-    if (std::filesystem::is_regular_file(json, ec)) {
-        auto id = fromJson(json);
-        if (!id.empty()) return id;
-    }
     const auto tgt = root / "Identification.tgt";
-    if (std::filesystem::is_regular_file(tgt, ec)) return fromTgt(tgt);
+    MachineIdentity from_json;
+    if (std::filesystem::is_regular_file(json, ec)) from_json = fromJson(json);
+    MachineIdentity from_tgt;
+    if (std::filesystem::is_regular_file(tgt, ec)) from_tgt = fromTgt(tgt);
+    if (!from_json.empty() && !from_tgt.empty() && !from_json.serial.empty() &&
+        !from_tgt.serial.empty() && from_json.serial != from_tgt.serial) {
+        // #94: one card, two machines. The machine writing the card now names
+        // itself in every EDF header it writes.
+        if (fromEdfHeader(root).serial == from_tgt.serial) return from_tgt;
+        return from_json;
+    }
+    if (!from_json.empty()) return from_json;
+    if (!from_tgt.empty()) return from_tgt;
     return fromEdfHeader(root);
+}
+
+MachineIdentity installIdentity(const std::string& local_dir, const std::string& archive_dir,
+                                const std::string& data_dir) {
+    std::string card_root = local_dir;
+    if (card_root.empty()) card_root = archive_dir;
+    if (card_root.empty() && !data_dir.empty())
+        card_root = (std::filesystem::path(data_dir) / "cpap_data").string();
+    auto identity = readIdentification(card_root);
+    // No card to name the machine: an AirSense 11 read over its own Bluetooth
+    // (directly or through a Mule & Miner) named itself in its own folder.
+    // Without this a Bluetooth-only install announced "ResMed ?".
+    if (identity.empty()) identity = readBluetoothIdentification(data_dir);
+    return identity;
+}
+
+std::string machineName(const std::string& configured, const MachineIdentity& id) {
+    const std::string name = trim(configured);
+    if (!name.empty() && name != AppConfig::kDefaultDeviceName && name != AppConfig::kLegacyDeviceName)
+        return name;
+    if (!id.model.empty()) return id.manufacturer.empty() ? id.model : id.manufacturer + " " + id.model;
+    return AppConfig::kDefaultDeviceName;
 }
 
 MachineIdentity readBluetoothIdentification(const std::string& data_dir) {

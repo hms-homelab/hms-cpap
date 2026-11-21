@@ -1,4 +1,5 @@
 #include "services/reports/BaseReportGenerator.h"
+#include "utils/MachineIdentity.h"
 #include "utils/MachineZone.h"
 #include "utils/OximetryDevice.h"
 #include "utils/TherapyPressure.h"
@@ -237,10 +238,14 @@ void BaseReportGenerator::generate(int report_id,
     // The configured machine, not a hardcoded one. This is the cover of a
     // document a user hands to a clinician, and it named every report "ResMed
     // AirSense 10" regardless of what produced the data -- so a Sefam S.Box
-    // report was attributed to a machine the patient does not own. The default
-    // is the same string the rest of the service falls back to.
+    // report was attributed to a machine the patient does not own. #94: and
+    // when the configured name is one the service filled in itself, the
+    // machine's own model, as the dashboard's title names it.
+    const auto identity = installIdentity(
+        ConfigManager::get("CPAP_SOURCE", "") == "local" ? ConfigManager::get("CPAP_LOCAL_DIR", "") : "",
+        ConfigManager::get("CPAP_ARCHIVE_DIR", ""), AppConfig::dataDir());
     pdf.addCoverPage(title(), subtitle(period),
-                     ConfigManager::get("CPAP_DEVICE_NAME", AppConfig::kDefaultDeviceName),
+                     machineName(ConfigManager::get("CPAP_DEVICE_NAME", AppConfig::kDefaultDeviceName), identity),
                      period, nowStr(), logo_path_);
 
     addSummarySection (pdf, st, start, end, nights);
