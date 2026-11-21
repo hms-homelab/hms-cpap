@@ -152,9 +152,9 @@ struct AppConfig {
     /// (the default: what the machine's own screen shows, as stored) or
     /// "host" (this computer's clock).
     std::string display_clock = "machine";
-    /// The nightly usage target, in hours: the dashboard's "Xh+ target met"
-    /// and the night summary's fact block ("% of Xh target") both read it.
-    /// 4 h by default, the usual insurance compliance rule; 1 to 12.
+    /// The nightly usage target, in hours: the dashboard's "Xh+ target met".
+    /// 4 h by default, the usual insurance compliance rule; 1 to 12. The local
+    /// narrator's fact block keeps "% of 8h target" (what it was trained on).
     int usage_target_hours = kDefaultUsageTargetHours;
     static constexpr int kDefaultUsageTargetHours = 4;
     static constexpr int kMinUsageTargetHours = 1;

@@ -250,7 +250,7 @@
       "host": "l'horloge de cet ordinateur",
       "hint": "L'horloge de l'appareil correspond à son propre écran et à OSCAR. L'horloge de chaque appareil se règle sur sa carte, page Appareils.",
       "usageTarget": "Objectif d'utilisation par nuit (heures)",
-      "usageTargetHint": "Une nuit d'au moins ce nombre d'heures atteint l'objectif, sur le tableau de bord et dans le résumé de la nuit. 4 heures est la règle d'observance habituelle des assurances. De 1 à 12."
+      "usageTargetHint": "Une nuit d'au moins ce nombre d'heures atteint l'objectif sur le tableau de bord. 4 heures est la règle d'observance habituelle des assurances. De 1 à 12."
     },
     "spo2": {
       "heading": "Désaturations SpO2",

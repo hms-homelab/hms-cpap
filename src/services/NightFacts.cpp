@@ -1,11 +1,9 @@
 #include "services/NightFacts.h"
 
 #include "services/BilevelSensors.h"
-#include "utils/AppConfig.h"
 #include "utils/OximetryDevice.h"
 
 #include <algorithm>
-#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -145,13 +143,6 @@ NightFacts NightFacts::from(const SessionMetrics& m, const STRDailyRecord* str,
 
 namespace night_facts {
 
-namespace {
-std::atomic<int> g_usage_target_hours{AppConfig::kDefaultUsageTargetHours};
-}
-
-void setUsageTargetHours(int hours) { g_usage_target_hours = AppConfig::usageTargetHoursOf(hours); }
-int usageTargetHours() { return g_usage_target_hours.load(); }
-
 std::vector<std::string> rules(const std::vector<NightFacts>& nights) {
     bool any_graded = false, any_ungraded = false;
     for (const auto& n : nights) (n.graded ? any_graded : any_ungraded) = true;
@@ -167,13 +158,12 @@ std::string renderNight(const NightFacts& n) {
     oss << std::fixed << std::setprecision(2);
 
     if (n.usage_hours) {
-        // The dashboard's target, so the summary and the dashboard agree on
-        // whether it was met (a 4.50 h night was "well short" of the 8 h this
-        // line used to state while the dashboard said "4h+ target met").
-        const int target = usageTargetHours();
+        // Fixed at 8 h, not the dashboard's usage target (Albin 2026-11-21):
+        // narrator-v1 was trained only on this line and, given a 4 h one,
+        // still judged the night against 8 h. violations() holds the text to
+        // this line's own target.
         oss << "Usage: " << *n.usage_hours << " hours";
-        if (n.usage_percent)
-            oss << " (" << (*n.usage_hours * 100.0 / target) << "% of " << target << "h target)";
+        if (n.usage_percent) oss << " (" << *n.usage_percent << "% of 8h target)";
         oss << "\n";
     } else {
         oss << "Usage: not recorded\n";

@@ -250,7 +250,7 @@
       "host": "relógio deste computador",
       "hint": "O relógio do aparelho coincide com a tela dele e com o OSCAR. O relógio de cada aparelho é ajustado no cartão dele na página Dispositivos.",
       "usageTarget": "Meta de uso por noite (horas)",
-      "usageTargetHint": "Uma noite com pelo menos estas horas atinge a meta, no painel e no resumo da noite. 4 horas é a regra habitual de adesão dos planos de saúde. De 1 a 12."
+      "usageTargetHint": "Uma noite com pelo menos estas horas atinge a meta no painel. 4 horas é a regra habitual de adesão dos planos de saúde. De 1 a 12."
     },
     "spo2": {
       "heading": "Dessaturações de SpO2",
