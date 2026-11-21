@@ -271,6 +271,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is, and a signed-out visit comes back to that tab after sign-in. The web
   wizard's words name Settings > Sharing instead of a "Settings > hms-cpap"
   that does not exist.
+- **The Sleep Bridge setup's "Choose a .cpapcard file..." opens in Documents
+  (#93),** where CpapDash Desktop's Export for HMS CPAP saves it. On Windows
+  it opened in the program folder.
 - **Windows: the installer, its title and both programs say the release's
   version (#91).** The installer reads the VERSION file itself instead of
   taking a version only from the build, and stamps it into its title, its own

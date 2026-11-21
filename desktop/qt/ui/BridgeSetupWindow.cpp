@@ -26,6 +26,7 @@
 #include <QPixmap>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QStandardPaths>
 #include <QUdpSocket>
 #include <QUrlQuery>
 #include <QVBoxLayout>
@@ -192,7 +193,11 @@ public:
 
         connect(&drives_, &DriveWatch::changed, this, [this] { look(); });
         connect(choose, &QPushButton::clicked, this, [this] {
-            const QString f = QFileDialog::getOpenFileName(this, w_->t(Txt::CardFallbackButton), QString(),
+            // Documents, where CpapDash Desktop's Export for HMS CPAP saves
+            // the .cpapcard (#93). An empty folder meant the working folder,
+            // which for the installed app is the program folder.
+            const QString f = QFileDialog::getOpenFileName(this, w_->t(Txt::CardFallbackButton),
+                                                           QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation),
                                                            "CpapDash card (*.cpapcard)");
             if (f.isEmpty()) return;
             w_->pending_card = f;
