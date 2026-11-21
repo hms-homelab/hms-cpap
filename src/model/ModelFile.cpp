@@ -11,10 +11,14 @@ namespace fs = std::filesystem;
 
 namespace hms_cpap::model {
 
-// SDD-013: set both when a model is published. Until then enabling refuses.
-const char* const kNarratorModelVersion = "narrator-g270m-v1";
-const char* const kNarratorModelUrl = "";
-const char* const kNarratorModelSha256 = "";
+// SDD-013: narrator-v1, the release asset of hms-homelab/hms-cpap tag
+// narrator-v1 (47,175,872 bytes, Q4_K_M, llama.cpp 919794500475862f). The
+// runtime's prompt contract (model/LocalModel.h) is this file's; a new model
+// moves all three together.
+const char* const kNarratorModelVersion = "narrator-v1";
+const char* const kNarratorModelUrl =
+    "https://github.com/hms-homelab/hms-cpap/releases/download/narrator-v1/narrator-v1-q4_k_m.gguf";
+const char* const kNarratorModelSha256 = "a0d99c56137466735fa0371dd64e6bdb908b2e33cd250632670534734af48d00";
 
 namespace {
 

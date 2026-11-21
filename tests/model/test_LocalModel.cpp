@@ -232,13 +232,20 @@ TEST(LocalModelGguf, IsDisabledWithoutAFileAndWithoutARuntime) {
 
 // -- The model file --------------------------------------------------------------
 
-TEST(LocalModelFile, NoModelIsPublishedYetSoEnablingIsRefusedWithTheReason) {
-    EXPECT_STREQ(kNarratorModelUrl, "") << "set when a model is published";
-    EXPECT_STREQ(kNarratorModelSha256, "") << "set when a model is published";
-    EXPECT_STREQ(kNarratorModelVersion, "narrator-g270m-v1");
+TEST(LocalModelFile, ThePinIsThePublishedNarrator) {
+    EXPECT_STREQ(kNarratorModelVersion, "narrator-v1");
+    EXPECT_STREQ(kNarratorModelUrl,
+                 "https://github.com/hms-homelab/hms-cpap/releases/download/narrator-v1/narrator-v1-q4_k_m.gguf");
+    EXPECT_STREQ(kNarratorModelSha256, "a0d99c56137466735fa0371dd64e6bdb908b2e33cd250632670534734af48d00");
     const auto pin = pinnedModel();
-    EXPECT_NE(verifyRefusal(pin).find("No local sleep model has been published yet"), std::string::npos);
-    EXPECT_NE(downloadRefusal(pin).find("No local sleep model has been published yet"), std::string::npos);
+    EXPECT_EQ(verifyRefusal(pin), "");
+    EXPECT_EQ(downloadRefusal(pin), "");
+}
+
+TEST(LocalModelFile, WithNoModelPublishedEnablingIsRefusedWithTheReason) {
+    const Pin none{kNarratorModelVersion, "", ""};
+    EXPECT_NE(verifyRefusal(none).find("No local sleep model has been published yet"), std::string::npos);
+    EXPECT_NE(downloadRefusal(none).find("No local sleep model has been published yet"), std::string::npos);
 }
 
 TEST(LocalModelFile, AFileWithThePinnedHashIsPutInPlaceAndAnotherIsNot) {
@@ -361,7 +368,7 @@ protected:
 };
 
 TEST_F(LocalModelServiceTest, WithNoModelPublishedTheSwitchIsRefusedAndNothingChanges) {
-    make(pinnedModel());
+    make(Pin{kNarratorModelVersion, "", ""});
     const auto why = svc_->requestEnable();
     EXPECT_NE(why.find("No local sleep model has been published yet"), std::string::npos) << why;
     EXPECT_FALSE(config_.local_model.enabled);

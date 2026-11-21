@@ -8,8 +8,9 @@
 // The file lands in the model directory under its version, the convention
 // shhs-rf-v1 uses: <model_dir>/<version>/model.gguf.
 //
-// No model is published yet. The pinned URL and hash are empty until one is,
-// and enabling refuses, saying so, while they are.
+// The pin is narrator-v1, a release asset of hms-homelab/hms-cpap (tag
+// narrator-v1). A pin with an empty URL and hash means no model is published,
+// and enabling refuses, saying so.
 //
 #include <functional>
 #include <string>
@@ -18,9 +19,9 @@ namespace hms_cpap::model {
 
 /// The pinned model's version string (the model_dir convention).
 extern const char* const kNarratorModelVersion;
-/// Where the pinned model is downloaded from. EMPTY until a model is published.
+/// Where the pinned model is downloaded from (https).
 extern const char* const kNarratorModelUrl;
-/// The pinned model's SHA-256, lower-case hex. EMPTY until a model is published.
+/// The pinned model's SHA-256, lower-case hex.
 extern const char* const kNarratorModelSha256;
 
 /// What a model file is checked against.
