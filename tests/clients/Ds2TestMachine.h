@@ -107,6 +107,11 @@ struct Machine {
     std::map<uint8_t, std::vector<Item>> streams;
     std::string serial = "TEST0000000002";
     bool status06_at_end = true;
+    // #99, as a real DS2 does: after an open answers the all-zero header, the
+    // next open gets status 06, records or not, unless a bookmark request
+    // came in between.
+    bool wants_bookmark_after_empty = true;
+    bool after_empty = false;
     std::optional<size_t> stop_after;   // stop answering after this many requests
     size_t requests = 0;
     int bare_opens = 0;
@@ -161,6 +166,12 @@ struct Machine {
         }
         if (f.sub == ds2::kCurOpen) {
             cur_stream = f.data[0];
+            if (after_empty && wants_bookmark_after_empty) {
+                after_empty = false;
+                cur = -1;
+                return reply(f.cmd, f.sub, ds2::kStatusNoNext);
+            }
+            after_empty = false;
             const Bytes bm(f.data.begin() + 1, f.data.end());
             auto& recs = streams[cur_stream];
             size_t next = 0;
@@ -173,6 +184,7 @@ struct Machine {
             if (next >= recs.size()) {
                 cur = -1;
                 if (status06_at_end && !bm.empty()) return reply(f.cmd, f.sub, ds2::kStatusNoNext);
+                after_empty = cur_stream != 0;
                 return reply(f.cmd, f.sub, 0, Bytes(12, 0));
             }
             cur = static_cast<long>(next);
@@ -190,6 +202,7 @@ struct Machine {
             return reply(f.cmd, f.sub, 0, Bytes(body.begin() + static_cast<long>(from), body.begin() + static_cast<long>(to)));
         }
         if (f.sub == ds2::kCurBookmark) {
+            after_empty = false;
             if (cur_stream == 0 || cur < 0) return reply(f.cmd, f.sub, 0, bookmarkFor(cur_stream, 0));
             return reply(f.cmd, f.sub, 0, bookmarkFor(cur_stream, static_cast<size_t>(cur)));
         }
