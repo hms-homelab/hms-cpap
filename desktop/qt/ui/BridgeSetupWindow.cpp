@@ -248,6 +248,7 @@ private:
         card_ = findCardVolume();
         if (card_.root.isEmpty()) {
             readBtn_->setVisible(false);
+            permission_->setVisible(false);
             state_->setText(w_->t(Txt::CardWaiting));
             state_->setStyleSheet(QString());
             return;
