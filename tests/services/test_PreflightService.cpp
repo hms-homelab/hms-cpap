@@ -434,4 +434,34 @@ TEST(PreflightServiceTest, AFullRunCoversTheThingsThatCanBeKnownLocally) {
     }
 }
 
+// `hms_cpap --local-model-night` serves no web page and runs while the
+// service holds web_port: a port in use must not refuse it.
+TEST(PreflightServiceTest, AModeWithoutTheWebPageIsNotRefusedForABusyWebPort) {
+    AppConfig cfg;
+    cfg.database.type = "sqlite";
+    cfg.database.sqlite_path =
+        (std::filesystem::temp_directory_path() /
+         ("hms_pf_noweb_" + std::to_string(::getpid()) + ".db")).string();
+    cfg.source = "ezshare";
+
+    // The service, holding the port.
+    const int holder = ::socket(AF_INET, SOCK_STREAM, 0);
+    ASSERT_GE(holder, 0);
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port = 0;
+    ASSERT_EQ(::bind(holder, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)), 0);
+    ASSERT_EQ(::listen(holder, 1), 0);
+    socklen_t len = sizeof(addr);
+    ::getsockname(holder, reinterpret_cast<sockaddr*>(&addr), &len);
+    cfg.web_port = ntohs(addr.sin_port);
+
+    EXPECT_FALSE(PreflightService::run(cfg).ok()) << "the service itself is refused";
+    const auto r = PreflightService::run(cfg, /*web=*/false);
+    EXPECT_TRUE(r.ok()) << r.render();
+    for (const auto& c : r.checks) EXPECT_NE(c.name, "web_port");
+    closeSocket(holder);
+}
+
 }  // namespace

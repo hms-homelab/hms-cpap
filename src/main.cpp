@@ -806,7 +806,12 @@ int main(int argc, char** argv) {
     // restart loop hides the cause and tells the user a guess. Fail here, name
     // the problem, and say what to change.
     {
-        const auto report = hms_cpap::PreflightService::run(config);
+        // --local-model-night serves no web page and runs beside the service
+        // that holds web_port: that port being in use is no problem for it.
+        bool serves_web = true;
+        for (int a = 1; a < argc; ++a)
+            if (std::strcmp(argv[a], "--local-model-night") == 0) serves_web = false;
+        const auto report = hms_cpap::PreflightService::run(config, serves_web);
         if (preflight_only) {
             std::cout << "Preflight checks:\n" << report.render();
             std::cout << (report.ok() ? "OK: configuration looks usable.\n"
@@ -1467,6 +1472,10 @@ int main(int argc, char** argv) {
                 ld.device_id   = hms_cpap::ConfigManager::get(
                     "CPAP_DEVICE_ID", hms_cpap::AppConfig::kDefaultDeviceId);
                 local_model = std::make_shared<hms_cpap::model::LocalModelService>(std::move(ld));
+                // An open Settings page hears the model put in place (or
+                // refused) on the watch socket.
+                local_model->setStateListener(
+                    [](const Json::Value& st) { hms_cpap::SetupWatch::localModelEvent(st); });
                 local_model->start();
                 hms_cpap::model::installRoutes(local_model.get());
                 // The night's STR row goes with it, read here on the burst's

@@ -295,10 +295,10 @@ PreflightService::Check PreflightService::checkArchiveDir(const AppConfig& cfg) 
     return checkWritableDir("archive_dir", cfg.archive_dir);
 }
 
-PreflightService::Report PreflightService::run(const AppConfig& cfg) {
+PreflightService::Report PreflightService::run(const AppConfig& cfg, bool web) {
     Report r;
     r.checks.push_back(checkWritableDir("data_dir", AppConfig::dataDir()));
-    r.checks.push_back(checkPort("0.0.0.0", cfg.web_port));
+    if (web) r.checks.push_back(checkPort("0.0.0.0", cfg.web_port));
     r.checks.push_back(checkDatabase(cfg));
     r.checks.push_back(checkSource(cfg));
     // Always pushed. Skipping this when archive_dir was empty made the ONE

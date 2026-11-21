@@ -7,7 +7,7 @@ import { switchMap, takeUntil, takeWhile, tap } from 'rxjs/operators';
 import { RouterLink } from '@angular/router';
 import { CpapApiService, CpapDashStreamStatus, SleepBridge, UpdateStatus } from '../../services/cpap-api.service';
 import { SleepBridgeWatch } from '../../services/sleepbridge-watch';
-import { streamOfFrame } from '../setup/bridge-setup';
+import { localModelOfFrame, streamOfFrame } from '../setup/bridge-setup';
 import { BridgeSourceComponent } from '../../components/bridge-source/bridge-source.component';
 import { bridgeInUse } from '../../components/bridge-source/bridge-source-model';
 import { UpdateFlowService } from '../../services/update-flow.service';
@@ -1842,6 +1842,12 @@ export class SettingsComponent implements OnInit, OnDestroy {
       // "off" -> "connecting" -> "connected"), not only as it was read.
       const stream = streamOfFrame<CpapDashStreamStatus>(f);
       if (stream) this.streamStatus = stream;
+      // The model loaded from a file (or downloaded) is in place, or refused.
+      const model = localModelOfFrame(f);
+      if (model) {
+        this.localModel = model;
+        if (model.state === 'error' && typeof model['message'] === 'string') this.localModelError = model['message'] as string;
+      }
     }, () => { this.bridgesWatchClosed = true; });
   }
 

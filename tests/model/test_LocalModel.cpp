@@ -408,6 +408,28 @@ TEST_F(LocalModelServiceTest, LoadingAModelFromAFileChecksItAndTurnsItOn) {
     EXPECT_EQ(downloads_, 0) << "an offline install needs no network";
 }
 
+// An open Settings page is told the outcome (it kept "Checking the model
+// file..." until a reload): once per loaded file, refused or put in place.
+TEST_F(LocalModelServiceTest, ALoadedFileTellsTheOutcomeToTheListener) {
+    make(testPin());
+    std::vector<Json::Value> told;
+    svc_->setStateListener([&told](const Json::Value& v) { told.push_back(v); });
+    const auto wrong = writeFile(fs::path(dir_) / "upload1.gguf", "not it");
+    ASSERT_EQ(svc_->installFile(wrong), "");
+    EXPECT_TRUE(told.empty()) << "nothing to say while it is being checked";
+    svc_->handle(LocalModelService::Event::InstallFile, wrong);
+    ASSERT_EQ(told.size(), 1u);
+    EXPECT_EQ(told[0]["state"].asString(), "error");
+    EXPECT_FALSE(told[0]["busy"].asBool());
+
+    const auto right = writeFile(fs::path(dir_) / "upload2.gguf", model_bytes_);
+    ASSERT_EQ(svc_->installFile(right), "");
+    svc_->handle(LocalModelService::Event::InstallFile, right);
+    ASSERT_EQ(told.size(), 2u);
+    EXPECT_NE(told[1]["state"].asString(), "installing");
+    EXPECT_EQ(told[1]["state"].asString(), svc_->status()["state"].asString());
+}
+
 TEST_F(LocalModelServiceTest, AClosedNightIsSummarizedWithSourceLocal) {
     NightSpec n;
     n.hypopneas = 6;   // 6 events over 6 hours: AHI 1.00

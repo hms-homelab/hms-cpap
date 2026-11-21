@@ -73,14 +73,15 @@ export interface WatchedStatus {
 export type WatchFrame =
   | { t: 'sleepbridge'; event: string; sender?: string; status?: WatchedStatus }
   | { t: 'cpapdash'; event: string; stream?: { state?: string; [k: string]: unknown } }
-  | { t: 'night'; event: 'live' | 'settled' | string };
+  | { t: 'night'; event: 'live' | 'settled' | string }
+  | { t: 'localmodel'; event: string; status?: { state?: string; [k: string]: unknown } };
 
 /** A text frame, read; null for anything that is not one of ours. */
 export function parseWatchFrame(text: string): WatchFrame | null {
   try {
     const v = JSON.parse(text);
     if (!v || typeof v !== 'object') return null;
-    if (v.t === 'sleepbridge' || v.t === 'cpapdash' || v.t === 'night') return v as WatchFrame;
+    if (v.t === 'sleepbridge' || v.t === 'cpapdash' || v.t === 'night' || v.t === 'localmodel') return v as WatchFrame;
     return null;
   } catch {
     return null;
@@ -230,6 +231,15 @@ export function streamStateKey(state: string | undefined, savedOff: boolean | nu
  */
 export function streamOfFrame<T = { state?: string; [k: string]: unknown }>(f: WatchFrame): T | null {
   return f.t === 'cpapdash' && f.stream && typeof f.stream.state === 'string' ? (f.stream as unknown as T) : null;
+}
+
+/**
+ * The local sleep model's status a watch frame carries when its download or
+ * a loaded file finished, for Settings (no more "Checking the model file..."
+ * until a reload); null for any other frame.
+ */
+export function localModelOfFrame(f: WatchFrame): { state?: string; [k: string]: unknown } | null {
+  return f.t === 'localmodel' && f.status && typeof f.status.state === 'string' ? f.status : null;
 }
 
 /** One dark module of a QR code, as an SVG rect. */

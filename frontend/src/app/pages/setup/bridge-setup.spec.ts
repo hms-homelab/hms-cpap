@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import {
   BRIDGE_ANIMATIONS, BRIDGE_PICTURES, BRIDGE_STEPS, cardOutcome, cardOutcomeKey, findBridge, formatChanged, helloBridge,
   nextBridgeStep, onlineBridges, parseWatchFrame, portNote, prefillAddress, previousBridgeStep, qrRects,
-  realtimeFrame, snapshotMark, streamOfFrame, streamStateKey, validBridgeAddress, watchUrl,
+  localModelOfFrame, realtimeFrame, snapshotMark, streamOfFrame, streamStateKey, validBridgeAddress, watchUrl,
 } from './bridge-setup.ts';
 import type { WatchFrame } from './bridge-setup.ts';
 
@@ -53,6 +53,14 @@ test('issue #98: Settings takes the stream state from the watch frames', () => {
   assert.equal(streamOfFrame(parseWatchFrame('{"t":"cpapdash","event":"snapshot","stream":{"state":"off"}}')!)?.state, 'off');
   assert.equal(streamOfFrame({ t: 'sleepbridge', event: 'hello' }), null);
   assert.equal(streamOfFrame({ t: 'cpapdash', event: 'state' }), null, 'no stream, nothing to show');
+});
+
+test('Settings takes the local model\'s state from its watch frame', () => {
+  const f = parseWatchFrame('{"t":"localmodel","event":"state","status":{"state":"ready","enabled":true}}')!;
+  assert.equal(f.t, 'localmodel');
+  assert.deepEqual(localModelOfFrame(f), { state: 'ready', enabled: true });
+  assert.equal(localModelOfFrame({ t: 'night', event: 'live' }), null);
+  assert.equal(localModelOfFrame({ t: 'localmodel', event: 'state' }), null);
 });
 
 test('issue #96: the dashboard reads the live state again on a night frame and on the socket opening', () => {

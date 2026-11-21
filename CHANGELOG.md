@@ -288,6 +288,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The AI agent's MQTT connection has no built-in user name.** With `MQTT_USER` unset it connects anonymously, as the collector does; a set `MQTT_USER`/`MQTT_PASSWORD` is used as before.
 
 ### Fixed
+- **Settings follows "Load model from file" to the end.** The Local Sleep
+  Model section stayed on "Checking the model file..." until the page was
+  reloaded. The server now says when the file is in place (or why it was
+  refused), and the section shows it; a download is followed the same way.
+- **`hms_cpap --local-model-night` runs beside the service.** It refused to
+  start because the service held web_port, though that mode serves no web
+  page; it no longer checks that port.
 - **Sleep Bridge setup notices a card put in after its first step opened
   (macOS).** The step heard /Volumes change when the card's folder was made,
   before the card was mounted on it, looked too early and was never told

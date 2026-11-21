@@ -38,6 +38,10 @@ public:
     /// dashboard asks /api/realtime again instead of waiting for a reload.
     static void nightEvent(bool live);
     static std::string nightFrame(bool live);
+    /// The local sleep model's download or loaded file finished:
+    /// {"t":"localmodel","event":"state","status":{GET /api/local-model/status}}.
+    static void localModelEvent(const Json::Value& status);
+    static std::string localModelFrame(const Json::Value& status);
 
     void handleNewMessage(const drogon::WebSocketConnectionPtr&, std::string&&,
                           const drogon::WebSocketMessageType&) override {}
