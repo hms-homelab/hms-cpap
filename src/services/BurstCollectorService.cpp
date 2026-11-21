@@ -2886,11 +2886,13 @@ bool BurstCollectorService::executeBurstCycle() {
         if (!machine_clock_loaded_ && db_service_) {
             machine_clock_ = loadMachineClock(*db_service_, device_id_);
             machine_clock_loaded_ = true;
-            // Issue #95: a learning from before 7.0.0 on a Sleep Bridge's
-            // folder came from stamps this computer wrote, never the
-            // machine's: it is dropped, the setting kept.
+            // Issue #95: a learning from before 7.0.0 (no source recorded) on
+            // a Sleep Bridge's folder came from stamps this computer wrote,
+            // never the machine's: it is dropped, the setting kept. One that
+            // says where it came from was not learned here (a bridge folder
+            // teaches nothing now) and stays.
             if (!data_source_->stampsAreTheMachines() && machine_clock_.zone_known &&
-                machine_clock_.from != machine_clock::kFromBrpGrowth &&
+                machine_clock_.from.empty() &&
                 forgetMachineClockLearning(*db_service_, device_id_)) {
                 std::cout << "CPAP: dropped the machine's clock learned from " << cpap_source_
                           << " (drift " << machine_clock_.drift_s << " s, zone " << machine_clock_.zone_s
