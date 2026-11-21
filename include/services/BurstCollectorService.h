@@ -299,6 +299,10 @@ public:
     /// Apply a pending config change synchronously. Test-only — drives the same
     /// reloadConfig() path the worker thread runs when markConfigDirty() fires.
     void reloadConfigForTest() { reloadConfig(); }
+    void setAirSense11PairingForTest(std::shared_ptr<IAirSense11Pairing> p) {
+        std::lock_guard<std::mutex> lk(airsense11_mtx_);
+        airsense11_pairing_ = std::move(p);
+    }
 
     /// The run loop's SDD-048 step, synchronously. Test-only.
     void runRequestedRepublishForTest() { runRequestedRepublish(); }
@@ -1303,6 +1307,7 @@ private:
         int airsense11_pull_hours = 6;
         bool airsense11_ble_enabled = false;
         std::string airsense11_ble_address;
+        bool airsense11_ble_capture = false;   // SDD-071, applied live
         bool ds2_ble_enabled = false;
         std::string ds2_ble_address;
     };
@@ -1323,6 +1328,8 @@ private:
     void initLlm();
     void initO2Ring();
     void initAirSense11();
+    /// SDD-071: the capture setting onto the running Bluetooth client.
+    void applyAirSense11Capture(bool on);
 
     /// SDD-050: hand the publisher what the card's identification file says
     /// the machine is. The card root is the local folder when the card is

@@ -2,6 +2,7 @@
 
 #include "clients/As11Stream.h"
 
+#include <algorithm>
 #include <cmath>
 
 using namespace hms_cpap::as11;
@@ -138,4 +139,49 @@ TEST(As11Stream, KeysAndIds) {
     EXPECT_EQ(channelOfKey("_RR2"), kRespRate);
     EXPECT_EQ(channelOfKey("Something"), 0);
     EXPECT_EQ(streamIds().size(), 13u);
+}
+
+// Ticket 179: an ASV streams its target ventilation as "_TGT" (L/min, five
+// samples a report like _MV2). Every night asks for it; the capture night's
+// candidates come after it.
+TEST(As11Stream, EveryNightAsksForTargetVentilation) {
+    EXPECT_EQ(channelOfKey("_TGT"), kTargetVent2s);
+    const auto& night = nightStreamIds();
+    ASSERT_EQ(night.size(), 14u);
+    EXPECT_TRUE(std::equal(streamIds().begin(), streamIds().end(), night.begin()));
+    EXPECT_EQ(night.back(), "_TGT");
+    const auto& cap = captureStreamIds();
+    ASSERT_EQ(cap.size(), 17u);
+    EXPECT_TRUE(std::equal(night.begin(), night.end(), cap.begin()));
+    EXPECT_EQ(std::count(cap.begin(), cap.end(), "_TGT"), 1) << "asked once";
+    EXPECT_EQ(quantise(kTargetVent2s, 6.25), 625);   // 0.01 L/min
+    EXPECT_DOUBLE_EQ(physical(kTargetVent2s, 625), 6.25);
+}
+
+TEST(As11Stream, TargetVentilationIsASlowChannelOfItsSecond) {
+    std::vector<StreamBlock> out;
+    SecondAssembler a([&](StreamBlock&& b) { out.push_back(std::move(b)); });
+    for (int i = 0; i < 5; i++) {
+        json r = report(kT0 + i * 200, 5);
+        r["data"].push_back({{"_TGT", json::array({5.5, 5.5, 5.5, 5.5, 5.6 + i * 0.1})}});
+        a.onStreamData(r);
+    }
+    ASSERT_EQ(out.size(), 1u);
+    const auto* tgt = out[0].channel(kTargetVent2s);
+    ASSERT_NE(tgt, nullptr);
+    EXPECT_EQ(tgt->cadence, 1);
+    EXPECT_EQ(tgt->values, (std::vector<int16_t>{600}));   // the second's latest
+    // And it survives the block's bytes, the form the night is kept in.
+    const auto back = decodeCds1(encodeCds1(out[0]));
+    ASSERT_TRUE(back.has_value());
+    ASSERT_NE(back->channel(kTargetVent2s), nullptr);
+    EXPECT_EQ(back->channel(kTargetVent2s)->values, (std::vector<int16_t>{600}));
+}
+
+TEST(As11Stream, AMachineWithoutTargetVentilationHasNoSuchChannel) {
+    std::vector<StreamBlock> out;
+    SecondAssembler a([&](StreamBlock&& b) { out.push_back(std::move(b)); });
+    for (int i = 0; i < 5; i++) a.onStreamData(report(kT0 + i * 200, 5));
+    ASSERT_EQ(out.size(), 1u);
+    EXPECT_EQ(out[0].channel(kTargetVent2s), nullptr);
 }

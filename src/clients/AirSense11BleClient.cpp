@@ -698,27 +698,33 @@ bool AirSense11BleClient::streamOnce() {
     // SDD-071: a capture night records from here, once the session is open
     // (nothing of the pairing or the session's opening is ever seen). A new
     // connect is a new file; one that never reached a stream leaves none.
+    // The setting is read here and again before StartStream (Settings set it
+    // live, ticket 179): a change while the machine waits for therapy counts
+    // for this night.
     bool streamed = false;
-    const bool capturing =
-        capture_on_ && capture_.open(as11::As11Capture::pathFor(data_dir_, serial, std::time(nullptr)));
-    if (capture_on_ && !capturing) note("capture: could not open a capture file");
-    struct EndCapture {
-        AirSense11BleClient* c;
-        bool on;
-        const bool* streamed;
-        ~EndCapture() {
-            if (!on) return;
-            c->session_.setCaptureTap({});
-            c->capture_.close(*streamed);
-        }
-    } end_capture{this, capturing, &streamed};
-    if (capturing) {
+    bool capturing = false;
+    auto beginCapture = [&] {
+        capturing = capture_.open(as11::As11Capture::pathFor(data_dir_, serial, std::time(nullptr)));
+        if (!capturing) { note("capture: could not open a capture file"); return; }
         session_.setCaptureTap([this](const char* dir, const std::string& text) {
             capture_.record(dir, text);
         });
         std::string ident;   // the machine's Identification, once per file (D3)
         session_.getIdentification(&ident);
-    }
+    };
+    struct EndCapture {
+        AirSense11BleClient* c;
+        bool* on;
+        const bool* streamed;
+        void now(bool keep) {
+            if (!*on) return;
+            c->session_.setCaptureTap({});
+            c->capture_.close(keep);
+            *on = false;
+        }
+        ~EndCapture() { now(*streamed); }
+    } end_capture{this, &capturing, &streamed};
+    if (capture_on_) beginCapture();
     if (std::string ident; !std::filesystem::exists(std::filesystem::path(writer_->rootFor(serial)) / "Identification.json") &&
                            session_.getIdentification(&ident) == as11::Result::Ok)
         writeIdentification(writer_->rootFor(serial), ident);
@@ -774,6 +780,11 @@ bool AirSense11BleClient::streamOnce() {
         return true;
     }
 
+    // Settings may have switched the recording while the machine waited.
+    // Switched off: the file has no stream yet, so it is not kept.
+    if (capture_on_ && !capturing) beginCapture();
+    else if (!capture_on_ && capturing) end_capture.now(false);
+
     streaming_ = true;
     as11::Result started = as11::Result::Protocol;
     if (capturing) {
@@ -789,7 +800,15 @@ bool AirSense11BleClient::streamOnce() {
             started = session_.startStream();
         }
     } else {
-        started = session_.startStream();
+        // The 13 and _TGT (an ASV's target ventilation, kept in the PLD as
+        // the card's TgtVent.2s). A machine that refuses the call over _TGT
+        // is asked again with the 13.
+        started = session_.startStream(as11::nightStreamIds());
+        if (started != as11::Result::Ok) {
+            note(std::string("the stream with target ventilation failed (") + session_.lastError() +
+                 "), asking for the usual 13");
+            started = session_.startStream();
+        }
     }
     if (started != as11::Result::Ok) {
         note(std::string("stream refused: ") + session_.lastError());

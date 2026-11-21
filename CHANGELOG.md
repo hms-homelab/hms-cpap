@@ -227,6 +227,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   size; a BRP the card never lets reach its end leaves the night partial
   after its hour of quiet, until a later burst gets the rest. Shown on
   synthetic tests only: no live night on this card has been logged yet.
+- **An AirCurve ASV's target ventilation is kept from Bluetooth (ticket 179).**
+  Every Bluetooth night now asks the machine for its target ventilation
+  (`_TGT`) and, when the machine sends it, writes it into the night's PLD as
+  the card has it: `TgtVent.2s`, L/min, one value every 2 s, between
+  `MinVent.2s` and `Snore.2s`. Charts and the parser read it as a card
+  night's. A machine without it streams as before, and one that refuses the
+  call over it is asked again without it. Reported and tested by Jason.
 
 ### Changed
 - **A Garmin SpO2 reading counts without a pulse (SDD-078, decided
@@ -264,6 +271,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The AI agent's MQTT connection has no built-in user name.** With `MQTT_USER` unset it connects anonymously, as the collector does; a set `MQTT_USER`/`MQTT_PASSWORD` is used as before.
 
 ### Fixed
+- **"Record each night for support" applies without a restart (ticket 179).**
+  Turning it on or off in Settings did nothing until hms-cpap restarted: the
+  setting was read once, when the Bluetooth client was made. It now reaches
+  the running client and counts from the next stream, including a night whose
+  machine is already connected and waiting for therapy. A stream already
+  running is not cut and keeps the file it has. Reported and tested by Jason.
 - **A stop during a re-parse no longer loses the night.** With the web UI,
   a SIGTERM (docker stop, a service restart) ends the server through Drogon's
   own handler, and the backfill worker was left running until a static

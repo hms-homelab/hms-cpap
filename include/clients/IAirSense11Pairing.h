@@ -46,6 +46,10 @@ public:
     /// pairing is not removed under it.
     virtual bool busy() const { return pairPending(); }
 
+    /// SDD-071: "Record each night for support" (airsense11_ble.capture),
+    /// set live when Settings change it. Applies from the next stream.
+    virtual void setCapture(bool /*on*/) {}
+
     /// #67: the pairing was removed here: drop the OS's object for the
     /// machine too, so nothing it cached outlives the pairing.
     virtual void forgetMachine() {}

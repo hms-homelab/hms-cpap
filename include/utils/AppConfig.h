@@ -259,6 +259,7 @@ struct AppConfig {
         std::string address;            // empty: the first AirSense 11 the scan finds
         // SDD-071: record every message of each night's stream, as the machine
         // sent it, to <data_dir>/as11/<serial>/capture/. Off: nothing changes.
+        // Applies live from the next stream, no restart.
         bool capture = false;
     } airsense11_ble;
 

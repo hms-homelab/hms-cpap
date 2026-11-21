@@ -44,7 +44,10 @@ enum Channel : uint8_t {
     kFlowLimitation = 11,     // 0.001
     kSpO2 = 12,               // 0.1 %
     kHeartRate = 13,          // bpm
+    kTargetVent2s = 14,       // 0.01 L/min, an ASV's target ventilation (_TGT)
 };
+/// The highest channel id; a slow channel is 3..kLastChannel.
+constexpr uint8_t kLastChannel = kTargetVent2s;
 
 constexpr int16_t kNull = std::numeric_limits<int16_t>::min();
 constexpr int kIntervalMs = 40;      // the fast channels: 25 Hz
@@ -79,8 +82,8 @@ inline std::optional<StreamBlock> decodeCds1(const std::vector<uint8_t>& v) {
 /// to the channel's integer; kNull for NaN; clamped to +-32767.
 int16_t quantise(Channel ch, double v);
 /// The exact inverse of quantise: the integer back to the machine's units
-/// (flow and leak L/s, pressures cmH2O, tidal volume L, minute ventilation
-/// L/min, resp rate /min, SpO2 %, heart rate bpm). NaN for kNull.
+/// (flow and leak L/s, pressures cmH2O, tidal volume L, minute and target
+/// ventilation L/min, resp rate /min, SpO2 %, heart rate bpm). NaN for kNull.
 double physical(Channel ch, int16_t v);
 
 /// "2026-10-17T14:02:33.656Z" to UTC milliseconds; 0 when it does not parse.
@@ -99,10 +102,14 @@ struct RespEvent {
 /// The channel a StreamData key names, 0 for one not kept.
 uint8_t channelOfKey(const std::string& key);
 
-/// The stream ids StartStream asks for (the set the bridge was proven with).
+/// The stream ids the bridge was proven with (13).
 const std::vector<std::string>& streamIds();
-/// SDD-071: streamIds() plus the candidates a capture night also asks for
-/// (_TGT _IE2 _BYV _INT). They reach only the capture file: channelOfKey
+/// What every night asks for: streamIds() plus _TGT, an ASV's target
+/// ventilation. A machine without it answers it valid false and streams the
+/// 13; one that refuses the call over it is asked again with streamIds().
+const std::vector<std::string>& nightStreamIds();
+/// SDD-071: nightStreamIds() plus the candidates a capture night also asks
+/// for (_IE2 _BYV _INT). Those reach only the capture file: channelOfKey
 /// knows none of them, so the night's blocks are what they are without them.
 const std::vector<std::string>& captureStreamIds();
 
@@ -133,8 +140,8 @@ private:
     int64_t start_ms_ = 0;
     int interval_ms_ = kIntervalMs;
     std::vector<int16_t> flow_, press_;
-    int16_t slow_[14] = {};
-    bool slow_set_[14] = {};
+    int16_t slow_[kLastChannel + 1] = {};
+    bool slow_set_[kLastChannel + 1] = {};
     void resetSecond();
 };
 

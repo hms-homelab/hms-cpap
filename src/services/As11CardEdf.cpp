@@ -213,7 +213,8 @@ std::vector<uint8_t> writeStoredBRP(const WallClock& start, const std::string& s
     return sealed(writeEDF(spec));
 }
 
-std::vector<uint8_t> writeCardPLD(const StreamedPLD& pld, int model_id, int vid) {
+std::vector<uint8_t> writeCardPLD(const StreamedPLD& pld, int model_id, int vid,
+                                  const std::vector<double>& target_vent_lpm) {
     struct Chan {
         const char*                label;
         const char*                dim;
@@ -221,7 +222,8 @@ std::vector<uint8_t> writeCardPLD(const StreamedPLD& pld, int model_id, int vid)
         int                        dig_hi;
         const std::vector<double>* v;
     };
-    // The card's own ranges, all from zero.
+    // The card's own ranges, all from zero, in the card's order (an ASV's
+    // card has TgtVent.2s between MinVent.2s and Snore.2s).
     const Chan chans[] = {
         {"MaskPress.2s", "cmH2O", 40.0, 2000, &pld.mask_press_cmh2o},
         {"Press.2s", "cmH2O", 50.0, 2500, &pld.press_cmh2o},
@@ -230,6 +232,7 @@ std::vector<uint8_t> writeCardPLD(const StreamedPLD& pld, int model_id, int vid)
         {"RespRate.2s", "bpm", 90.0, 450, &pld.resp_rate},
         {"TidVol.2s", "L", 4.0, 200, &pld.tidal_volume_l},
         {"MinVent.2s", "L/min", 30.0, 240, &pld.minute_vent_lpm},
+        {"TgtVent.2s", "L/min", 30.0, 240, &target_vent_lpm},
         {"Snore.2s", "", 5.0, 250, &pld.snore},
         {"FlowLim.2s", "", 1.0, 100, &pld.flow_limitation},
     };

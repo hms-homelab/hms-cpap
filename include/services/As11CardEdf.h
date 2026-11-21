@@ -57,7 +57,12 @@ inline constexpr const char* kStoredBrpNote = "STORED=6.25Hz";
 std::vector<uint8_t> writeStoredBRP(const cpapdash::parser::WallClock& start, const std::string& serial,
                                     const std::vector<double>& flow_lps,
                                     const std::vector<double>& mask_cmh2o, int model_id = 0, int vid = 0);
-std::vector<uint8_t> writeCardPLD(const cpapdash::parser::StreamedPLD& pld, int model_id = 0, int vid = 0);
+/// `target_vent_lpm`: an ASV's target ventilation (L/min), one value per 2 s
+/// like the other channels, written as the card's TgtVent.2s (L/min, 0..30
+/// over 0..240) between MinVent.2s and Snore.2s. Empty (a machine that sent
+/// none): no TgtVent.2s signal, as on a CPAP's card.
+std::vector<uint8_t> writeCardPLD(const cpapdash::parser::StreamedPLD& pld, int model_id = 0, int vid = 0,
+                                  const std::vector<double>& target_vent_lpm = {});
 std::vector<uint8_t> writeCardSAD(const cpapdash::parser::StreamedSAD& sad, int model_id = 0, int vid = 0);
 
 /// CRC-16/CCITT-FALSE.

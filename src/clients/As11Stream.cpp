@@ -24,7 +24,7 @@ double scaleOf(Channel ch) {
     switch (ch) {
     case kFlow: case kLeak: case kTidalVolume: case kFlowLimitation: return 1000.0;
     case kMaskPressure: case kMaskPressure2s: case kInspPressure2s: case kExpPressure2s:
-    case kMinuteVent: case kSnore: return 100.0;
+    case kMinuteVent: case kTargetVent2s: case kSnore: return 100.0;
     case kRespRate: case kSpO2: return 10.0;
     case kHeartRate: return 1.0;
     }
@@ -138,6 +138,7 @@ uint8_t channelOfKey(const std::string& k) {
     if (k == "FlowLimitation") return kFlowLimitation;
     if (k == "SpO2") return kSpO2;
     if (k == "HeartRate") return kHeartRate;
+    if (k == "_TGT") return kTargetVent2s;
     return 0;
 }
 
@@ -148,12 +149,22 @@ const std::vector<std::string>& streamIds() {
     return ids;
 }
 
-const std::vector<std::string>& captureStreamIds() {
+const std::vector<std::string>& nightStreamIds() {
+    // _TGT is target minute ventilation, sent by an ASV (ticket 179: an
+    // AirCurve 11 ASV answers it valid and streams it as "_TGT", L/min).
     static const std::vector<std::string> ids = [] {
         auto v = streamIds();
-        // SDD-071 D2: the candidates, protocol facts by name only. _TGT is
-        // target minute ventilation, sent by an ASV.
-        for (const char* k : {"_TGT", "_IE2", "_BYV", "_INT"}) v.emplace_back(k);
+        v.emplace_back("_TGT");
+        return v;
+    }();
+    return ids;
+}
+
+const std::vector<std::string>& captureStreamIds() {
+    static const std::vector<std::string> ids = [] {
+        auto v = nightStreamIds();
+        // SDD-071 D2: the candidates, protocol facts by name only.
+        for (const char* k : {"_IE2", "_BYV", "_INT"}) v.emplace_back(k);
         return v;
     }();
     return ids;
@@ -165,7 +176,7 @@ void SecondAssembler::resetSecond() {
     start_ms_ = 0;
     flow_.clear();
     press_.clear();
-    for (int i = 0; i < 14; i++) { slow_[i] = kNull; slow_set_[i] = false; }
+    for (int i = 0; i <= kLastChannel; i++) { slow_[i] = kNull; slow_set_[i] = false; }
 }
 
 void SecondAssembler::emit() {
@@ -176,7 +187,7 @@ void SecondAssembler::emit() {
     b.serial = serial_;
     b.channels.push_back({kFlow, 0, flow_});
     b.channels.push_back({kMaskPressure, 0, press_});
-    for (uint8_t id = 3; id <= 13; id++)
+    for (uint8_t id = 3; id <= kLastChannel; id++)
         if (slow_set_[id]) b.channels.push_back({id, 1, {slow_[id]}});
     resetSecond();
     if (sink_) sink_(std::move(b));
@@ -195,7 +206,7 @@ void SecondAssembler::onStreamData(const nlohmann::json& params) {
     if (start == 0 || interval <= 0) return;
 
     std::vector<double> flow, press;
-    double slow[14];
+    double slow[kLastChannel + 1];
     for (double& v : slow) v = std::nan("");
     for (const auto& obj : *arr) {
         if (!obj.is_object()) continue;
@@ -232,7 +243,7 @@ void SecondAssembler::onStreamData(const nlohmann::json& params) {
         press_.push_back(quantise(kMaskPressure, press[i]));
         if (static_cast<int>(flow_.size()) == kFastPerSecond) {
             // Slow values belong to the second they arrived in.
-            for (uint8_t id = 3; id <= 13; id++)
+            for (uint8_t id = 3; id <= kLastChannel; id++)
                 if (!std::isnan(slow[id])) { slow_[id] = quantise(static_cast<Channel>(id), slow[id]); slow_set_[id] = true; }
             for (double& v : slow) v = std::nan("");
             emit();
@@ -241,7 +252,7 @@ void SecondAssembler::onStreamData(const nlohmann::json& params) {
         }
     }
     if (flow_.empty()) { start_ms_ = 0; return; }
-    for (uint8_t id = 3; id <= 13; id++)
+    for (uint8_t id = 3; id <= kLastChannel; id++)
         if (!std::isnan(slow[id])) { slow_[id] = quantise(static_cast<Channel>(id), slow[id]); slow_set_[id] = true; }
 }
 

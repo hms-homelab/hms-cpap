@@ -3941,6 +3941,53 @@ TEST(BurstConfigReloadTest, ADeviceIdChangeWaitsForARestart) {
         << "the name is a label and still applies live";
 }
 
+// Ticket 179: "Record each night for support" took effect only after a
+// restart. The reload never compared it, so the client kept the value it was
+// made with. It now reaches the running client, which is not remade (a night
+// streaming is not cut).
+namespace {
+struct CaptureSpyPairing : IAirSense11Pairing {
+    as11::Result pairStart() override { return as11::Result::Ok; }
+    as11::Result pairConfirm(const std::string&) override { return as11::Result::Ok; }
+    void pairCancel() override {}
+    bool pairPending() const override { return false; }
+    bool paired() const override { return true; }
+    std::string lastError() const override { return {}; }
+    void setCapture(bool on) override { calls.push_back(on); }
+    std::vector<bool> calls;
+};
+}  // namespace
+
+TEST(BurstConfigReloadTest, TheCaptureSettingReachesTheRunningClientWithoutARestart) {
+    BurstCollectorService svc(300);
+    AppConfig cfg;
+    cfg.airsense11_ble.enabled = true;
+    cfg.airsense11_ble.capture = false;
+    svc.setAppConfig(&cfg);
+    svc.markConfigDirty();
+    svc.reloadConfigForTest();   // every field settled: the running config
+    auto spy = std::make_shared<CaptureSpyPairing>();
+    svc.setAirSense11PairingForTest(spy);
+
+    cfg.airsense11_ble.capture = true;
+    svc.markConfigDirty();
+    svc.reloadConfigForTest();
+    ASSERT_EQ(spy->calls, std::vector<bool>({true}));
+    EXPECT_EQ(svc.getAirSense11Pairing(), spy) << "the same client, not a new one";
+
+    // A save that changes something else leaves it alone.
+    cfg.device_name = "Bedroom";
+    svc.markConfigDirty();
+    svc.reloadConfigForTest();
+    EXPECT_EQ(spy->calls, std::vector<bool>({true}));
+
+    cfg.airsense11_ble.capture = false;
+    svc.markConfigDirty();
+    svc.reloadConfigForTest();
+    EXPECT_EQ(spy->calls, std::vector<bool>({true, false}));
+    EXPECT_EQ(svc.getAirSense11Pairing(), spy);
+}
+
 // ============================================================================
 // LLM PROMPT FORMATTER TESTS (SDD-002 coverage backfill)
 // buildMetricsString / buildRangeMetricsString are pure string builders over the

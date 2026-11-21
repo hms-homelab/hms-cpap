@@ -4,10 +4,13 @@
 #include "services/As11NightWriter.h"
 #include "services/As11StrWriter.h"
 
+#include <cpapdash/parser/EDFFile.h>
+
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <string>
 #include <vector>
@@ -153,6 +156,40 @@ TEST_F(NightTest, SlowChannelsMakeAPldAndTheRingAnSa2) {
     EXPECT_EQ(records(night() / "20261016_220000_PLD.edf"), 10);   // 2 s records
     EXPECT_EQ(records(night() / "20261016_220000_SA2.edf"), 20);   // 1 s records
     EXPECT_FALSE(fs::exists(night() / "20261016_220000_SAD.edf"));
+}
+
+// Ticket 179: an ASV's streamed target ventilation is in the night's PLD as
+// its card has it, TgtVent.2s in L/min, read back by the library's reader.
+TEST_F(NightTest, AnAsvsTargetVentilationIsThePldsTgtVent) {
+    auto w = writer();
+    for (int i = 0; i < 20; i++)
+        w.onBlock(second(kT0 + i * 1000, {{kMinuteVent, 650}, {kTargetVent2s, static_cast<int16_t>(500 + i * 10)}}));
+    w.onStreamEnd(kSerial);
+    const auto path = night() / "20261016_220000_PLD.edf";
+    ASSERT_EQ(records(path), 10);
+    std::ifstream in(path, std::ios::binary);
+    const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    cpapdash::parser::EDFFile edf;
+    ASSERT_TRUE(edf.open(bytes.data(), bytes.size()));
+    std::vector<double> tgt, mv;
+    ASSERT_EQ(edf.readSignal(edf.findSignal("TgtVent"), tgt), 10);
+    ASSERT_EQ(edf.readSignal(edf.findSignal("MinVent"), mv), 10);
+    // Each 2 s slot holds the last value that arrived in it (seconds 1, 3, ...).
+    for (size_t k = 0; k < 10; k++) EXPECT_NEAR(tgt[k], (500 + (2 * k + 1) * 10) / 100.0, 0.13) << k;
+    EXPECT_NEAR(mv[0], 6.5, 0.13);
+}
+
+TEST_F(NightTest, AMachineThatSentNoTargetVentilationHasNoTgtVent) {
+    auto w = writer();
+    for (int i = 0; i < 20; i++) w.onBlock(second(kT0 + i * 1000, {{kMinuteVent, 650}}));
+    w.onStreamEnd(kSerial);
+    const auto path = night() / "20261016_220000_PLD.edf";
+    std::ifstream in(path, std::ios::binary);
+    const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    cpapdash::parser::EDFFile edf;
+    ASSERT_TRUE(edf.open(bytes.data(), bytes.size()));
+    EXPECT_LT(edf.findSignal("TgtVent"), 0);
+    EXPECT_GE(edf.findSignal("MinVent"), 0);
 }
 
 TEST_F(NightTest, AnOlderSadOfTheSameRecordingIsRemovedWhenTheSa2IsWritten) {

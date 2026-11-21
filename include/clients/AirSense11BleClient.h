@@ -101,8 +101,13 @@ public:
     void setLiveHooks(LiveHooks hooks) { live_ = std::move(hooks); }
 
     /// SDD-071: record each night's stream to a capture file
-    /// (airsense11_ble.capture). Read at the start of each night's connect.
-    void setCapture(bool on) { capture_on_ = on; }
+    /// (airsense11_ble.capture). Set live from Settings; read when a connect
+    /// opens its session and again just before StartStream, so a change
+    /// made while the machine waits for therapy applies to that night. A
+    /// stream already running keeps the file it has (or has none) until it
+    /// ends: a capture is a whole stream from its StartStream on.
+    void setCapture(bool on) override { capture_on_ = on; }
+    bool captureOn() const { return capture_on_; }
     /// The capture file being written, or the last one kept, and its size.
     std::string capturePath() const { return capture_.path(); }
     long long captureBytes() const { return capture_.bytes(); }

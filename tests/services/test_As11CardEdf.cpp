@@ -189,6 +189,37 @@ TEST(As11CardEdf, PldRangesAreTheCards) {
     }
 }
 
+// Ticket 179: an ASV's target ventilation goes where its card has it,
+// TgtVent.2s between MinVent.2s and Snore.2s, with the card's range.
+TEST(As11CardEdf, TargetVentilationIsTheAsvCardsTgtVent) {
+    const std::vector<double> tgt(10, 6.5);
+    const auto file = writeCardPLD(pld(10), 0, 0, tgt);
+    const auto sigs = decode(file);
+    ASSERT_EQ(sigs.size(), 11u);   // ten channels and the closing Crc16
+    EXPECT_EQ(sigs[6].label, "MinVent.2s");
+    EXPECT_EQ(sigs[7].label, "TgtVent.2s");
+    EXPECT_EQ(sigs[7].dim, "L/min");
+    EXPECT_EQ(sigs[7].pmin, 0.0);
+    EXPECT_EQ(sigs[7].pmax, 30.0);
+    EXPECT_EQ(sigs[7].dmin, 0);
+    EXPECT_EQ(sigs[7].dmax, 240);
+    EXPECT_EQ(sigs[7].spr, 1);
+    EXPECT_EQ(sigs[8].label, "Snore.2s");
+    EXPECT_EQ(sigs[10].label, "Crc16");
+    for (size_t i = 0; i < sigs[7].samples.size(); i++) EXPECT_NEAR(sigs[7].noOffset(i), 6.5, 0.13);
+    expectCardChecksums(file);
+
+    EDFFile edf;
+    ASSERT_TRUE(edf.open(file.data(), file.size()));
+    std::vector<double> v;
+    ASSERT_EQ(edf.readSignal(edf.findSignal("TgtVent"), v), 10);
+    EXPECT_NEAR(v[0], 6.5, 0.13);
+}
+
+TEST(As11CardEdf, NoTargetVentilationNoTgtVentSignal) {
+    for (const auto& s : decode(writeCardPLD(pld(10), 0, 0, {}))) EXPECT_NE(s.label, "TgtVent.2s");
+}
+
 TEST(As11CardEdf, ARespiratoryRateOf16IsReadAs16ByAReaderWithoutAnOffset) {
     // The case OSCAR logged: 16 bpm came out as -14 with the library's range.
     const auto sigs = decode(writeCardPLD(pld(10)));

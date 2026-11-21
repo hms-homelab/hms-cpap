@@ -1009,6 +1009,18 @@ void BurstCollectorService::cardMaskTick(long long now_s) {
     live->tick(LiveState::Clock::time_point(std::chrono::seconds(now_s)));
 }
 
+void BurstCollectorService::applyAirSense11Capture(bool on) {
+    std::shared_ptr<IAirSense11Pairing> client;
+    {
+        std::lock_guard<std::mutex> lk(airsense11_mtx_);
+        client = airsense11_pairing_;
+    }
+    if (!client) return;
+    client->setCapture(on);
+    std::cout << "Config reload: AirSense11 recording each night for support -> "
+              << (on ? "on, from the next stream" : "off, from the next stream") << std::endl;
+}
+
 void BurstCollectorService::initAirSense11() {
     {
         std::lock_guard<std::mutex> lk(airsense11_mtx_);
@@ -5075,6 +5087,7 @@ void BurstCollectorService::snapshotConfig(ConfigSnapshot& snap) {
     snap.airsense11_pull_hours = app_config_->airsense11.pull_hours;
     snap.airsense11_ble_enabled = app_config_->airsense11_ble.enabled;
     snap.airsense11_ble_address = app_config_->airsense11_ble.address;
+    snap.airsense11_ble_capture = app_config_->airsense11_ble.capture;
     snap.ds2_ble_enabled = app_config_->ds2_ble.enabled;
     snap.ds2_ble_address = app_config_->ds2_ble.address;
 }
@@ -5363,6 +5376,12 @@ void BurstCollectorService::reloadConfig() {
             }
             std::cout << "Config reload: AirSense11 -> disabled" << std::endl;
         }
+    } else if (nc.airsense11_ble_capture != last_config_.airsense11_ble_capture) {
+        // SDD-071: "Record each night for support" is the client's own flag,
+        // so it is set on the client that is there, not by remaking it (a
+        // night streaming now is not cut). It applies from the next stream
+        // (AirSense11BleClient::streamOnce reads it before StartStream).
+        applyAirSense11Capture(nc.airsense11_ble_capture);
     }
 
     // SDD-064: the DreamStation 2 reader is remade when it is switched or its

@@ -550,7 +550,7 @@ void As11NightWriter::writeSegment(const std::string& serial, const Segment& seg
                 const int64_t t = b.start_ms + static_cast<int64_t>(i) * as11::kSlowCadenceMs;
                 const double v = as11::physical(static_cast<as11::Channel>(c.id), c.values[i]);
                 if (std::isnan(v) || t < t0) continue;
-                if (c.id >= 3 && c.id <= 11) {
+                if ((c.id >= 3 && c.id <= 11) || c.id == as11::kTargetVent2s) {
                     auto& col = pld[c.id];
                     if (col.empty()) col.assign(slots2, NAN);
                     const size_t k = static_cast<size_t>((t - t0) / 2000);
@@ -578,7 +578,10 @@ void As11NightWriter::writeSegment(const std::string& serial, const Segment& seg
         p.minute_vent_lpm = col(as11::kMinuteVent);
         p.snore = col(as11::kSnore);
         p.flow_limitation = col(as11::kFlowLimitation);
-        writeCardFile(rootFor(serial), dir / resmedFileName(wc, "PLD"), writeCardPLD(p, mid, vid), serial);
+        // An ASV's target ventilation, as its card's TgtVent.2s; only when
+        // the machine sent it.
+        writeCardFile(rootFor(serial), dir / resmedFileName(wc, "PLD"),
+                      writeCardPLD(p, mid, vid, col(as11::kTargetVent2s)), serial);
     }
     if (have_sad) {
         StreamedSAD s;

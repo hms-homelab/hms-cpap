@@ -169,8 +169,8 @@ public:
     /// in ONE call: each SubscribeEvent replaces the set.
     Result subscribe();
     /// StartStream with the channels the bridge was proven with, every 40 ms,
-    /// reported every 200 ms. A capture night (SDD-071) passes
-    /// captureStreamIds() instead.
+    /// reported every 200 ms. A night passes nightStreamIds() (the 13 and
+    /// _TGT), a capture night (SDD-071) captureStreamIds().
     Result startStream(const std::vector<std::string>& ids = streamIds());
 
     /// SDD-071: sees every message the machine sends from now on ("in", the
