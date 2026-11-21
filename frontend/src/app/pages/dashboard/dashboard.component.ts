@@ -23,7 +23,7 @@ import { UpdateBannerComponent } from '../../components/dashboard/update-banner.
 import { detectDesaturations, odiPerHour, inferSampleSec } from '../../utils/signal-analysis';
 import { isGradableAhi } from '../../utils/index-kind';
 import { summaryRefreshOutcome } from './summary-refresh';
-import { hasCardData, CARD_FIELDS } from './card-data';
+import { hasCardData, CARD_FIELDS, DEFAULT_USAGE_TARGET_HOURS, usageTargetHoursOf } from './card-data';
 import { SleepBridgeWatch } from '../../services/sleepbridge-watch';
 import { realtimeFrame } from '../setup/bridge-setup';
 import Chart from 'chart.js/auto';
@@ -290,6 +290,8 @@ export class DashboardComponent implements OnInit, AfterViewInit, OnDestroy {
   isCpapMode = true;
   private charts: Chart[] = [];
   private liveCharts: Chart[] = [];
+  /** Settings' usage target, hours (config usage_target_hours). */
+  usageTarget = DEFAULT_USAGE_TARGET_HOURS;
   /** Issue #96: the watch socket; a night frame re-reads /api/realtime. */
   private watch: SleepBridgeWatch | null = null;
 
@@ -398,6 +400,10 @@ export class DashboardComponent implements OnInit, AfterViewInit, OnDestroy {
         if (name) {
           this.deviceName = name;
         }
+        // Settings' usage target, the one the night summary states too.
+        this.usageTarget = usageTargetHoursOf(cfg?.usage_target_hours);
+        if (this.keyMetrics) this.keyMetrics = { ...this.keyMetrics, usageTargetHours: this.usageTarget };
+        if (this.strMetrics) this.strMetrics = { ...this.strMetrics, usageTargetHours: this.usageTarget };
       },
       error: () => {},
     });
@@ -432,6 +438,7 @@ export class DashboardComponent implements OnInit, AfterViewInit, OnDestroy {
         compliancePct: parseFloat(d.latest_night.compliance_pct) || 0,
         sessionActive: !!this.liveSession,
         mode: this.modeName,
+        usageTargetHours: this.usageTarget,
       };
 
       // The newest session, for its event count. SDD-026: the AHI and the
@@ -490,6 +497,7 @@ export class DashboardComponent implements OnInit, AfterViewInit, OnDestroy {
                 cai: parseFloat(r.cai_str) || 0,
                 hi: parseFloat(r.hi_str) || 0,
                 rin: parseFloat(r.rin_str) || 0,
+                usageTargetHours: this.usageTarget,
               } : null;
 
               const oa = Math.round((parseFloat(r.oai) || 0) * (parseFloat(r.duration_minutes) || 0) / 60);
@@ -896,7 +904,7 @@ export class DashboardComponent implements OnInit, AfterViewInit, OnDestroy {
         labels,
         datasets: [{
           label: this.t.instant('dashboard.chart.usageAxis'), data: this.data.usage_trend.map(p => +p.value),
-          backgroundColor: this.data.usage_trend.map(p => +p.value >= 4 ? 'rgba(76,175,80,0.7)' : 'rgba(255,152,0,0.7)'),
+          backgroundColor: this.data.usage_trend.map(p => +p.value >= this.usageTarget ? 'rgba(76,175,80,0.7)' : 'rgba(255,152,0,0.7)'),
           borderRadius: 4,
         }]
       },

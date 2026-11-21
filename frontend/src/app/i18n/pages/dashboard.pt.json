@@ -72,7 +72,7 @@
       "subtitle": "Desempenho da última sessão",
       "ahiScore": "Pontuação do IAH",
       "usage": "Uso",
-      "targetMet": "meta de 4h+ atingida",
+      "targetMet": "meta de {{h}}h+ atingida",
       "maskLeak": "Fuga pela máscara",
       "totalEvents": "Total de eventos",
       "eventsPerHr": "{{v}} eventos/h",

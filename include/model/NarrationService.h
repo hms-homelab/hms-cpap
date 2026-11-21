@@ -37,9 +37,16 @@ extern const char* const kLocalSummarySource;   // "local"
 std::string factBlock(const NightFacts& night);
 
 /// What is wrong with [text] against [block]: each number the block does not
-/// have and each date that is not the block's own, as written. Empty: it
-/// passes.
+/// have and each date that is not the block's own, as written, and a usage
+/// judgement that contradicts the block's target (usageWordingProblem).
+/// Empty: it passes.
 std::vector<std::string> violations(const std::string& text, const std::string& block);
+
+/// The block's "Usage: X hours (Y% of Th target)" against what [text] says
+/// of it: X >= T must not be "short of" / "below" / "missed" the target, and
+/// X < T must not be "target met" / "reached" / "achieved". "" when it agrees
+/// (or the block has no target line); else the phrase and why.
+std::string usageWordingProblem(const std::string& text, const std::string& block);
 
 /// The deterministic summary for [night], every figure from its fact block.
 std::string templateSummary(const NightFacts& night);

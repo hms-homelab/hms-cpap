@@ -8,6 +8,7 @@ import { RouterLink } from '@angular/router';
 import { CpapApiService, CpapDashStreamStatus, SleepBridge, UpdateStatus } from '../../services/cpap-api.service';
 import { SleepBridgeWatch } from '../../services/sleepbridge-watch';
 import { localModelOfFrame, streamOfFrame } from '../setup/bridge-setup';
+import { usageTargetHoursOf } from '../dashboard/card-data';
 import { BridgeSourceComponent } from '../../components/bridge-source/bridge-source.component';
 import { bridgeInUse } from '../../components/bridge-source/bridge-source-model';
 import { UpdateFlowService } from '../../services/update-flow.service';
@@ -806,6 +807,14 @@ import { showLocalModelSection } from './local-model';
 {{ 'settings.display.hint' | translate }}
               </small>
             </label>
+            <!-- The usage target the dashboard's "Xh+ target met" and the night summary share. -->
+            <label>
+              {{ 'settings.display.usageTarget' | translate }}
+              <input type="number" min="1" max="12" step="1" name="usage_target_hours"
+                     [ngModel]="config.usage_target_hours ?? 4"
+                     (ngModelChange)="config.usage_target_hours = usageTargetHoursOf($event)" />
+              <small class="hint">{{ 'settings.display.usageTargetHint' | translate }}</small>
+            </label>
           </div>
         </div>
 
@@ -1545,6 +1554,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
   localModelBusy = false;
   localModelError = '';
   readonly showLocalModelSection = showLocalModelSection;
+  readonly usageTargetHoursOf = usageTargetHoursOf;
 
   // Backfill state
   backfillStart = '';

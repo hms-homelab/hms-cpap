@@ -71,3 +71,16 @@ export const CARD_FIELDS = {
   csrTrend: ['csr'],
   eprTrend: ['epr_level'],
 } as const;
+
+/** The nightly usage target, hours: config usage_target_hours, 4 by default, 1 to 12. */
+export const DEFAULT_USAGE_TARGET_HOURS = 4;
+export function usageTargetHoursOf(v: unknown): number {
+  const n = Math.round(Number(v));
+  if (!Number.isFinite(n) || v === null || v === undefined || v === '') return DEFAULT_USAGE_TARGET_HOURS;
+  return Math.min(12, Math.max(1, n));
+}
+
+/** The usage card's colour: target met green, half of it amber, less red. */
+export function usageColorFor(hours: number, target: number): string {
+  return hours >= target ? '#4ade80' : hours >= target / 2 ? '#fb923c' : '#ef4444';
+}

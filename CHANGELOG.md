@@ -288,6 +288,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The AI agent's MQTT connection has no built-in user name.** With `MQTT_USER` unset it connects anonymously, as the collector does; a set `MQTT_USER`/`MQTT_PASSWORD` is used as before.
 
 ### Fixed
+- **The night summary and the dashboard agree on the usage target.** The
+  summary's facts said "% of 8h target" while the dashboard said "4h+ target
+  met", so a 4.50 hour night was "well short of your target" in one and met
+  in the other. Settings > Display has "Nightly usage target (hours)", 4 by
+  default (the usual insurance compliance rule), 1 to 12; the dashboard's
+  "Xh+ target met", its usage colours and the summary's facts all use it. A
+  local model summary that calls a met target short (or the reverse) is not
+  stored; the plain summary is written instead.
 - **Settings follows "Load model from file" to the end.** The Local Sleep
   Model section stayed on "Checking the model file..." until the page was
   reloaded. The server now says when the file is in place (or why it was

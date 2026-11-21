@@ -5,6 +5,7 @@
 #include "utils/AppConfig.h"
 #include "utils/MachineClocks.h"
 #include "utils/MachineIdentity.h"
+#include "services/NightFacts.h"
 #include "services/SleepHqExportService.h"
 #include "services/CpapCard.h"
 #include "services/DeviceDiscoveryService.h"
@@ -428,6 +429,11 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
     if (j.isMember("display_clock") && j["display_clock"].isString()) {
         config_->display_clock = j["display_clock"].asString() == "host" ? "host" : "machine";
         machine_clocks::setDisplayHost(config_->display_clock == "host");
+    }
+    // The usage target the dashboard and the night summary share.
+    if (j.isMember("usage_target_hours") && j["usage_target_hours"].isNumeric()) {
+        config_->usage_target_hours = AppConfig::usageTargetHoursOf(j["usage_target_hours"].asInt64());
+        night_facts::setUsageTargetHours(config_->usage_target_hours);
     }
     if (j.isMember("flashair_url"))  config_->flashair_url = j["flashair_url"].asString();
     if (j.isMember("auto_update"))   config_->auto_update = j["auto_update"].asBool();

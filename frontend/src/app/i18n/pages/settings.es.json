@@ -248,7 +248,9 @@
       "showTimesOn": "Mostrar las horas en",
       "machine": "el reloj del equipo",
       "host": "el reloj de este ordenador",
-      "hint": "El reloj del equipo coincide con su propia pantalla y con OSCAR. El reloj de cada equipo se ajusta en su tarjeta de la página Dispositivos."
+      "hint": "El reloj del equipo coincide con su propia pantalla y con OSCAR. El reloj de cada equipo se ajusta en su tarjeta de la página Dispositivos.",
+      "usageTarget": "Objetivo de uso por noche (horas)",
+      "usageTargetHint": "Una noche con al menos estas horas cumple el objetivo, en el panel y en el resumen de la noche. 4 horas es la regla habitual de cumplimiento de los seguros. De 1 a 12."
     },
     "spo2": {
       "heading": "Desaturaciones de SpO2",

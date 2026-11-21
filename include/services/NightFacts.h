@@ -105,7 +105,14 @@ extern const char* const kNoGapRule;
 /// SDD-024 rule when any is not, and the no-gap rule always.
 std::vector<std::string> rules(const std::vector<NightFacts>& nights);
 
-/// The daily summary's facts block (the {metrics} of the prompt).
+/// The nightly usage target the fact block states ("% of 4h target"), the
+/// same setting the dashboard's "Xh+ target met" reads (config
+/// usage_target_hours, 4 h by default). Set at startup and on a save.
+void setUsageTargetHours(int hours);
+int usageTargetHours();
+
+/// The daily summary's facts block (the {metrics} of the prompt). The usage
+/// percent is the night's hours against usageTargetHours().
 std::string renderNight(const NightFacts& night);
 
 /// The weekly / monthly facts block. [label] is "Weekly" or "Monthly".

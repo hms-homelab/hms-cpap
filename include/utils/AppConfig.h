@@ -152,6 +152,18 @@ struct AppConfig {
     /// (the default: what the machine's own screen shows, as stored) or
     /// "host" (this computer's clock).
     std::string display_clock = "machine";
+    /// The nightly usage target, in hours: the dashboard's "Xh+ target met"
+    /// and the night summary's fact block ("% of Xh target") both read it.
+    /// 4 h by default, the usual insurance compliance rule; 1 to 12.
+    int usage_target_hours = kDefaultUsageTargetHours;
+    static constexpr int kDefaultUsageTargetHours = 4;
+    static constexpr int kMinUsageTargetHours = 1;
+    static constexpr int kMaxUsageTargetHours = 12;
+    static int usageTargetHoursOf(long long v) {
+        if (v < kMinUsageTargetHours) return kMinUsageTargetHours;
+        if (v > kMaxUsageTargetHours) return kMaxUsageTargetHours;
+        return static_cast<int>(v);
+    }
     /// SDD-056: a FlashAir on the home WiFi (APPMODE=5) answers by mDNS.
     std::string flashair_url = "http://flashair.local";
     /// SDD-041 D1: apply a newer release without asking, once the collector is
@@ -721,6 +733,8 @@ struct AppConfig {
             if (j.contains("ezshare_range")) config.ezshare_range = j["ezshare_range"];
             if (j.contains("display_clock") && j["display_clock"].is_string())
                 config.display_clock = j["display_clock"] == "host" ? "host" : "machine";
+            if (j.contains("usage_target_hours") && j["usage_target_hours"].is_number())
+                config.usage_target_hours = usageTargetHoursOf(j["usage_target_hours"].get<long long>());
             if (j.contains("flashair_url"))  config.flashair_url = j["flashair_url"];
             if (j.contains("auto_update"))   config.auto_update = j["auto_update"];
             if (j.contains("local_dir"))     config.local_dir = j["local_dir"];
@@ -932,6 +946,7 @@ struct AppConfig {
             j["ezshare_url"] = ezshare_url;
             j["ezshare_range"] = ezshare_range;
             j["display_clock"] = display_clock;
+            j["usage_target_hours"] = usage_target_hours;
             j["flashair_url"] = flashair_url;
             j["auto_update"] = auto_update;
             j["local_dir"] = local_dir;
@@ -1090,6 +1105,7 @@ struct AppConfig {
         j["ezshare_url"] = ezshare_url;
         j["ezshare_range"] = ezshare_range;
         j["display_clock"] = display_clock;
+        j["usage_target_hours"] = usage_target_hours;
         j["flashair_url"] = flashair_url;
         j["auto_update"] = auto_update;
         j["local_dir"] = local_dir;

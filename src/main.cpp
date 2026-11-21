@@ -50,6 +50,7 @@
 #include "database/IDatabase.h"
 #include "database/SQLiteDatabase.h"
 #include "database/DatabaseFactory.h"
+#include "services/NightFacts.h"
 #include "services/PreflightService.h"
 #ifdef WITH_POSTGRESQL
 #include "database/DatabaseService.h"
@@ -952,6 +953,8 @@ int main(int argc, char** argv) {
     hms_cpap::machine_clocks::setPrimaryDevice(config.device_id);
     hms_cpap::machine_clocks::loadAll(*db);
     hms_cpap::machine_clocks::setDisplayHost(config.display_clock == "host");
+    // The usage target the night summary's facts state, the dashboard's own.
+    hms_cpap::night_facts::setUsageTargetHours(config.usage_target_hours);
     {
         const auto clocks = hms_cpap::machine_clocks::all();
         if (clocks.empty())

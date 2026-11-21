@@ -458,7 +458,7 @@ std::string BurstCollectorService::summaryPromptTemplate(const AppConfig* cfg, s
             // there, and let the data decide whether it may be characterised.
             "* The event index reported below, with its value, and an "
             "assessment ONLY if the data gives an AHI\n"
-            "* Usage hours and compliance vs 8h target\n"
+            "* Usage hours and compliance vs the usage target the data states\n"
             "* Leak control assessment\n\n"
             "**Events**\n"
             "* Breakdown of event types, using only the types the data reports\n"

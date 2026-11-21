@@ -2,6 +2,7 @@
 
 #include "services/AiGrounding.h"
 
+#include <cstdlib>
 #include <functional>
 #include <iomanip>
 #include <iostream>
@@ -25,7 +26,37 @@ std::vector<std::string> violations(const std::string& text, const std::string& 
          ++it) {
         if (block.find(it->str()) == std::string::npos) out.push_back(it->str());
     }
+    const auto usage = usageWordingProblem(text, block);
+    if (!usage.empty()) out.push_back(usage);
     return out;
+}
+
+std::string usageWordingProblem(const std::string& text, const std::string& block) {
+    static const std::regex kUsage(R"(Usage: ([0-9]+(?:\.[0-9]+)?) hours \([0-9.]+% of ([0-9]+)h target\))");
+    std::smatch m;
+    if (!std::regex_search(block, m, kUsage)) return "";
+    const double hours = std::atof(m[1].str().c_str());
+    const int target = std::atoi(m[2].str().c_str());
+    if (target <= 0) return "";
+    // Measured on narrator-v1 (2026-11-21): the corpus only ever said 8h, and
+    // with a 4h target the model still wrote "well short of your target" for
+    // 4 to 8 h nights. A text that contradicts met / not met is not stored.
+    static const std::regex kShort(
+        R"(\b(short of|fell short|falls short|below (the |your |its )?(\d+ ?h(ours?)? )?target|)"
+        R"(under (the |your )?(\d+ ?h(ours?)? )?target|missed (the |your )?target|did not (meet|reach)|)"
+        R"(didn't (meet|reach)|not (meet|reach)(ing)? (the |your )?target)\b)",
+        std::regex::icase);
+    static const std::regex kMet(
+        R"(\b((target|goal) (was |is )?(met|reached|achieved|exceeded)|)"
+        R"((met|reached|achieved|exceeded|hit) (the |your )?(\d+ ?h(ours?)? )?(usage )?(target|goal))\b)",
+        std::regex::icase);
+    const bool met = hours >= target;
+    std::smatch w;
+    if (met && std::regex_search(text, w, kShort))
+        return "usage: \"" + w.str() + "\" but " + m[1].str() + " hours meets the " + m[2].str() + "h target";
+    if (!met && std::regex_search(text, w, kMet))
+        return "usage: \"" + w.str() + "\" but " + m[1].str() + " hours is under the " + m[2].str() + "h target";
+    return "";
 }
 
 std::string templateSummary(const NightFacts& n) {
@@ -102,7 +133,7 @@ Narration narrate(const NightFacts& night, ILocalModel& model) {
             r.how = "model";
             return r;
         }
-        why = "the model stated figures not in the facts:";
+        why = "the model's text failed the facts check:";
         for (const auto& b : bad) why += " " + b;
     }
     r.written = true;

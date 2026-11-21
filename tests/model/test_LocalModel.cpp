@@ -136,6 +136,38 @@ TEST(LocalModelValidator, AcceptsFiguresFromTheBlockAndRejectsInventedTransposed
     EXPECT_NE(std::find(wrong_day.begin(), wrong_day.end(), "2099-07-02"), wrong_day.end());
 }
 
+// Item 8 (Albin 2026-11-21): the fact block states the dashboard's usage
+// target, 4 h by default and configurable, and a text that contradicts
+// met / not met never passes. narrator-v1 was trained only on "of 8h target"
+// and was measured writing "well short of your target" for 4 to 8 h nights.
+TEST(LocalModelValidator, TheBlockStatesTheConfiguredTargetAndTheWordingMustAgree) {
+    struct Reset { ~Reset() { night_facts::setUsageTargetHours(AppConfig::kDefaultUsageTargetHours); } } reset;
+    EXPECT_EQ(night_facts::usageTargetHours(), 4) << "4 h by default";
+    NightFacts n = aNight();
+    n.usage_hours = 4.5;
+    n.usage_percent = 56.25;   // the database's own 8 h percent, no longer stated
+    const auto block = factBlock(n);
+    EXPECT_NE(block.find("Usage: 4.50 hours (112.50% of 4h target)"), std::string::npos) << block;
+
+    const auto bad = violations("You used it for 4.50 hours, well short of your target.", block);
+    ASSERT_FALSE(bad.empty()) << "4.50 h meets a 4 h target";
+    EXPECT_NE(bad.back().find("short of"), std::string::npos) << bad.back();
+    EXPECT_TRUE(violations("You used it for 4.50 hours, past your target.", block).empty());
+    EXPECT_TRUE(violations("You used it for 4.50 hours.", block).empty());
+
+    night_facts::setUsageTargetHours(8);
+    const auto block8 = factBlock(n);
+    EXPECT_NE(block8.find("(56.25% of 8h target)"), std::string::npos) << block8;
+    EXPECT_TRUE(violations("You used it for 4.50 hours, well short of your target.", block8).empty());
+    EXPECT_FALSE(violations("4.50 hours: target met.", block8).empty()) << "4.50 h is under 8 h";
+    EXPECT_FALSE(violations("You reached your target with 4.50 hours.", block8).empty());
+
+    night_facts::setUsageTargetHours(40);
+    EXPECT_EQ(night_facts::usageTargetHours(), 12) << "bounded to 1..12";
+    night_facts::setUsageTargetHours(0);
+    EXPECT_EQ(night_facts::usageTargetHours(), 1);
+}
+
 // KNOWN GAP, disabled until Albin decides (2026-11-21): the check asks only
 // whether a number appears somewhere in the block, not whether it is the
 // figure the sentence names. Seen from the narrator on a local-mode-like

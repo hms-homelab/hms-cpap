@@ -83,6 +83,29 @@ TEST_F(AppConfigTest, ADesatThresholdOutOfRangeIsNotTaken) {
     EXPECT_DOUBLE_EQ(config.desat_drop_pct, 3.0);
 }
 
+// Item 8: the usage target the dashboard and the night summary share.
+TEST_F(AppConfigTest, UsageTargetDefaultsToFourRoundTripsAndIsBounded) {
+    AppConfig fresh;
+    EXPECT_EQ(fresh.usage_target_hours, 4);
+
+    AppConfig original;
+    original.usage_target_hours = 6;
+    original.save(config_path_);
+    AppConfig loaded;
+    ASSERT_TRUE(AppConfig::load(config_path_, loaded));
+    EXPECT_EQ(loaded.usage_target_hours, 6);
+    EXPECT_EQ(loaded.toJson()["usage_target_hours"].get<int>(), 6) << "the Settings page reads it from the API";
+
+    writeConfig(R"({"usage_target_hours": 30})");
+    AppConfig high;
+    AppConfig::load(config_path_, high);
+    EXPECT_EQ(high.usage_target_hours, 12);
+    writeConfig(R"({"usage_target_hours": 0})");
+    AppConfig low;
+    AppConfig::load(config_path_, low);
+    EXPECT_EQ(low.usage_target_hours, 1);
+}
+
 TEST_F(AppConfigTest, DefaultDbType) {
     AppConfig config;
     EXPECT_EQ(config.database.type, "sqlite");
