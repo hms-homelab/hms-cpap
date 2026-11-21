@@ -1445,6 +1445,11 @@ int main(int argc, char** argv) {
                         [g = garmin](const std::string& folder) { g->onNightClosed(folder); });
             }
 
+            // Issue #96: an open dashboard hears a night go live (or settle)
+            // from the burst that saw it, on the watch socket.
+            if (burst_service)
+                burst_service->addLiveNightListener([](bool live) { hms_cpap::SetupWatch::nightEvent(live); });
+
             // SDD-013: the local sleep model's nightly job. Built even when it
             // is off, so the Settings switch needs no restart. It runs only on
             // a night's close (the SDD-046 announce), never on a clock.

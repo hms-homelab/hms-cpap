@@ -5251,6 +5251,18 @@ TEST_F(BurstOrchestrationTest, Sdd069_TheBrpTheCardIsWritingTeachesTheMachineClo
     EXPECT_EQ(src_raw->folder_lists["20261015"], 1) << "tonight is the machine's day now";
 }
 
+// Issue #96: the dashboard's push. The first burst always tells, and a burst
+// that leaves the answer as it was tells nobody.
+TEST_F(BurstOrchestrationTest, Issue96_TheLiveNightIsToldOnceAndOnlyWhenItChanges) {
+    auto svc = makeService([](FakeDataSource&) {});
+    std::vector<bool> told;
+    svc->addLiveNightListener([&told](bool live) { told.push_back(live); });
+    svc->tellLiveNight();
+    svc->tellLiveNight();
+    ASSERT_EQ(told.size(), 1u);
+    EXPECT_EQ(told[0], svc->anyNightLive());
+}
+
 // Issue #95: the same moving stamps teach the clock on a card and nothing on
 // a Sleep Bridge's folder, whose files this computer wrote.
 TEST_F(BurstOrchestrationTest, Issue95_ABridgeFolderNeverTeachesTheMachineClock) {

@@ -2439,6 +2439,27 @@ void BurstCollectorService::clearStrDebtForParsedDays(
     }
 }
 
+bool BurstCollectorService::anyNightLive() {
+    if (!db_service_) return false;
+    const auto hours = nightHourStates(*db_service_, device_id_);
+    for (const auto& f : db_service_->listSyncFolders())
+        if (nightState(f, nightHourPassed(hours, f.date_folder)) == NightState::Live) return true;
+    return false;
+}
+
+void BurstCollectorService::tellLiveNight() {
+    std::vector<std::function<void(bool)>> to;
+    {
+        std::lock_guard<std::mutex> lk(night_closed_mu_);
+        if (live_night_.empty()) return;
+        to = live_night_;
+    }
+    const int live = anyNightLive() ? 1 : 0;
+    if (live == live_night_told_) return;
+    live_night_told_ = live;
+    for (const auto& f : to) f(live == 1);
+}
+
 bool BurstCollectorService::executeBurstCycle() {
     // SDD-074 D4: every machine time this burst parses is a label.
     cpapdash::parser::WallClockLabels labels;
@@ -4653,6 +4674,12 @@ void BurstCollectorService::runLoop() {
                       << " — will retry next cycle" << std::endl;
         }
         cycle_in_flight_.store(false);
+
+        // Issue #96: a page open on the dashboard learns a night went live
+        // (or settled) from this burst, not from being reloaded.
+        try {
+            tellLiveNight();
+        } catch (...) {}
 
         // The card's mask off (no growth for long enough), and the live
         // state's own settling after a start. On the burst, no timer.

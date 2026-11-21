@@ -33,6 +33,11 @@ public:
     static void bridgeEvent(const std::string& event, const std::string& sender);
     /// The stream's state changed: one frame to every watcher.
     static void streamEvent(const Json::Value& stream);
+    /// Issue #96: a night went live in the ledger, or none is live any more:
+    /// {"t":"night","event":"live"|"settled"} to every watcher, so an open
+    /// dashboard asks /api/realtime again instead of waiting for a reload.
+    static void nightEvent(bool live);
+    static std::string nightFrame(bool live);
 
     void handleNewMessage(const drogon::WebSocketConnectionPtr&, std::string&&,
                           const drogon::WebSocketMessageType&) override {}

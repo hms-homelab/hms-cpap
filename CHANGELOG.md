@@ -288,6 +288,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The AI agent's MQTT connection has no built-in user name.** With `MQTT_USER` unset it connects anonymously, as the collector does; a set `MQTT_USER`/`MQTT_PASSWORD` is used as before.
 
 ### Fixed
+- **The dashboard shows LIVE SESSION on first load while a night is open
+  (#96).** The page read the live state once, which could be before the
+  night was live (the service just started, the bridge's first batch not
+  read yet), and never asked again until a reload. A burst that leaves a
+  night live, or settles it, now tells an open dashboard on the watch socket,
+  and the page reads the live state again then and when the socket opens.
+- **Settings > CpapDash Cloud shows the stream's state right after Save
+  (#98).** The line stayed an empty box until a reload: the stream was still
+  starting when Save read it, and the page did not listen for the change.
+  It now follows each state change the server pushes, and says "Connecting"
+  while the stream starts.
 - **A Sleep Bridge machine is no longer said to be on UTC+00:00 (#95).** The
   machine's clock was learned from the file times of the bridge's folder,
   which hms-cpap writes itself with this computer's clock, so an Eastern
