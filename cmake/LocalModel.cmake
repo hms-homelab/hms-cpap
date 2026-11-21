@@ -32,6 +32,11 @@ function(hms_local_model_fetch)
     if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
         set(CMAKE_BUILD_TYPE Release)
     endif()
+    # llama.cpp is C++17 ("don't bump", its own CMake says). hms-cpap builds
+    # C++20 on MSVC (and on a Mac matching Homebrew's libpqxx), where u8""
+    # literals are char8_t and llama-chat.cpp stops compiling. llama.cpp's
+    # directories get its own standard; hms-cpap keeps its.
+    set(CMAKE_CXX_STANDARD 17)
     set(BUILD_SHARED_LIBS OFF)
     set(LLAMA_BUILD_COMMON OFF)
     set(LLAMA_BUILD_TESTS OFF)
