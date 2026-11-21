@@ -11,8 +11,8 @@
 //
 // The switch: turning it on with no model installed downloads the pinned model
 // (model/ModelFile.h) and checks its hash; a model file can be loaded instead
-// for an install with no network. Until a model is published the pin is
-// empty, and turning it on is refused with the reason.
+// for an install with no network. With an empty pin (no model published),
+// turning it on is refused with the reason.
 //
 #include "database/IDatabase.h"
 #include "model/LocalModel.h"
@@ -118,6 +118,7 @@ private:
     bool busy_ = false;
     bool installed_ = false;  // verified at Startup and after each install
     bool runtime_ready_ = false;
+    std::string runtime_why_; // the model's whyNotReady() when it is not
     std::string state_;       // "" = derived from the above
     std::string message_;
     std::string last_night_, last_how_, last_at_, last_why_;

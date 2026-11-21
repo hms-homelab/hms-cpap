@@ -101,14 +101,15 @@ std::string LocalModelService::dir() const {
 std::unique_ptr<ILocalModel> LocalModelService::makeModel() const {
     const auto path = modelPath(dir(), deps_.pin);
     if (deps_.make_model) return deps_.make_model(path);
-    return std::make_unique<GgufModel>(path);
+    return std::make_unique<GgufModel>(path, deps_.pin.sha256);
 }
 
 void LocalModelService::noteInstalled() {
-    const bool ready = makeModel()->ready();
+    const auto why = makeModel()->whyNotReady();
     std::lock_guard<std::mutex> lk(mu_);
     installed_ = true;
-    runtime_ready_ = ready;
+    runtime_ready_ = why.empty();
+    runtime_why_ = why;
     state_.clear();
     message_.clear();
 }
@@ -263,7 +264,7 @@ Json::Value LocalModelService::status() const {
             message = verifyRefusal(deps_.pin);
         } else if (on && installed_) {
             state = runtime_ready_ ? "ready" : "no_runtime";
-            if (!runtime_ready_) message = "This build cannot run the model yet: it has no GGUF runtime.";
+            if (!runtime_ready_) message = runtime_why_;
         } else if (on) {
             state = "error";
             message = "The model file is missing: turn the switch off and on to download it again.";

@@ -216,19 +216,7 @@ TEST(LocalModelNarration, TheTemplatePassesItsOwnCheckGradedAndUngraded) {
 
 // -- The runner ----------------------------------------------------------------
 
-TEST(LocalModelGguf, IsDisabledWithoutAFileAndWithoutARuntime) {
-    const auto dir = tempDir("gguf");
-    GgufModel none((fs::path(dir) / "absent.gguf").string());
-    EXPECT_FALSE(none.ready());
-    EXPECT_NE(none.whyNotReady().find("No model file"), std::string::npos);
-
-    GgufModel present(writeFile(fs::path(dir) / "model.gguf", "GGUF"));
-    EXPECT_FALSE(GgufModel::runtimeAvailable()) << "no GGUF runtime is linked in this build";
-    EXPECT_FALSE(present.ready());
-    EXPECT_NE(present.whyNotReady().find("runtime"), std::string::npos);
-    EXPECT_FALSE(present.generate("Night: 2099-07-01\n", {}).has_value());
-    fs::remove_all(dir);
-}
+// The runner itself, with and without a model file, is in test_GgufModel.cpp.
 
 // -- The model file --------------------------------------------------------------
 
