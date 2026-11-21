@@ -58,7 +58,7 @@
       },
       "online": {
         "title": "Az éjszakái online (nem kötelező)",
-        "body": "A CpapDash-ben is látná az éjszakáit? Nyissa meg a CpapDash-t, menjen a Settings > hms-cpap részhez, másolja ki a tokent, és illessze be ide.",
+        "body": "A CpapDash-ben is látná az éjszakáit? Nyissa meg a CpapDash-t, menjen a Beállítások > Megosztás részhez, másolja ki a tokent, és illessze be ide.",
         "open": "Token létrehozása a CpapDash.com oldalon",
         "token": "Token",
         "send": "Éjszakáim küldése a CpapDash-be",

@@ -26,6 +26,7 @@
 #include <QPixmap>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QStandardPaths>
 #include <QUdpSocket>
 #include <QUrlQuery>
 #include <QVBoxLayout>
@@ -41,9 +42,11 @@ namespace {
 
 constexpr int kPageCount = 6;
 
-/// D6: where the hms-cpap token is made (cpapdash.com, Settings > hms-cpap);
-/// the web wizard's link goes to the same page.
-constexpr const char* kTokenPage = "https://cpapdash.com/settings";
+/// D6: where the hms-cpap token is made: CpapDash's Settings, Sharing tab
+/// (#90; plain /settings opens the Account tab). Signed out, CpapDash sends
+/// this through /login?returnUrl and comes back to it, query and all. The
+/// web wizard's link goes to the same page.
+constexpr const char* kTokenPage = "https://www.cpapdash.com/settings?tab=sharing";
 
 /// The external-link mark: a square open at its top right, an arrow leaving
 /// through it to the top right. Drawn, so it takes the link's colour and
@@ -190,7 +193,11 @@ public:
 
         connect(&drives_, &DriveWatch::changed, this, [this] { look(); });
         connect(choose, &QPushButton::clicked, this, [this] {
-            const QString f = QFileDialog::getOpenFileName(this, w_->t(Txt::CardFallbackButton), QString(),
+            // Documents, where CpapDash Desktop's Export for HMS CPAP saves
+            // the .cpapcard (#93). An empty folder meant the working folder,
+            // which for the installed app is the program folder.
+            const QString f = QFileDialog::getOpenFileName(this, w_->t(Txt::CardFallbackButton),
+                                                           QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation),
                                                            "CpapDash card (*.cpapcard)");
             if (f.isEmpty()) return;
             w_->pending_card = f;

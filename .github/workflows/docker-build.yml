@@ -516,9 +516,10 @@ jobs:
         if: steps.tray.outcome == 'success'
         run: |
           choco install innosetup --no-progress -y
-          $version = (Get-Content VERSION).Trim()
+          # No /DAppVersion: installer.iss reads VERSION itself (#91), so the
+          # path CI compiles is the one every build of the script takes.
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" `
-            "/DAppVersion=$version" /O"$PWD\dist-installer" desktop\windows\installer.iss
+            /O"$PWD\dist-installer" desktop\windows\installer.iss
 
       - name: Sign installer
         continue-on-error: true
@@ -579,6 +580,13 @@ jobs:
       contents: read
 
     steps:
+      # Only VERSION, for the version checks below (#91).
+      - name: Checkout VERSION
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: VERSION
+          sparse-checkout-cone-mode: false
+
       - name: Download installer
         uses: actions/download-artifact@v4
         with:
@@ -649,6 +657,33 @@ jobs:
             throw 'CpapDashDesktop.exe is still the old tray, not the new one'
           }
           Write-Host '  ok CpapDashDesktop.exe is the new tray'
+
+      # #91: Setup's title, its file version and both exes' file versions are
+      # VERSION, not whatever the script or a resource last said.
+      - name: Setup and both exes carry VERSION
+        run: |
+          $want = (Get-Content VERSION).Trim()
+          $app = "$env:LOCALAPPDATA\Programs\HMS-CPAP"
+          $setup = (Get-ChildItem installer\*.exe | Select-Object -First 1).FullName
+          foreach ($f in @($setup, "$app\HmsCpapInstaller.exe", "$app\hms_cpap.exe")) {
+            $vi = (Get-Item $f).VersionInfo
+            Write-Host "  $(Split-Path $f -Leaf): product $($vi.ProductVersion), file $($vi.FileVersion), fixed $($vi.FileMajorPart).$($vi.FileMinorPart).$($vi.FileBuildPart)"
+            if ($vi.ProductVersion -notlike "$want*") { throw "$f says product version $($vi.ProductVersion), VERSION is $want" }
+            if ("$($vi.FileMajorPart).$($vi.FileMinorPart).$($vi.FileBuildPart)" -ne $want) {
+              throw "$f has file version $($vi.FileMajorPart).$($vi.FileMinorPart).$($vi.FileBuildPart), VERSION is $want"
+            }
+          }
+          $dn = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
+                 Where-Object { $_.PSChildName -like '*8C4F1E2A-7B3D-4A5E-9C1F-6D2E8A0B4F71*' }).DisplayVersion
+          if ($dn -ne $want) { throw "Add/Remove Programs says $dn, VERSION is $want" }
+          Write-Host "  ok all say $want"
+
+      # SDD-073 D7 / #92: the install made the Sleep Bridge rule (the runner
+      # is elevated, so its one runas passes without a prompt).
+      - name: The install added the Sleep Bridge firewall rule
+        run: |
+          netsh advfirewall firewall show rule name="HmsCpap Sleep Bridge (TCP 8894)"
+          if ($LASTEXITCODE -ne 0) { throw 'no Sleep Bridge firewall rule after install' }
 
       - name: The upgrade repointed the Run entry and removed the old shortcuts
         run: |
@@ -856,6 +891,10 @@ jobs:
           # uninstaller that removes it turns a reinstall into permanent loss.
           New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.hms-cpap" | Out-Null
           Set-Content "$env:USERPROFILE\.hms-cpap\config.json" '{"marker":"keep me"}'
+          # #92: what the service leaves in its own folder at run time.
+          Set-Content "$app\hms-cpap.log" 'log'
+          Set-Content "$app\hms-cpap.log.1" 'log'
+          New-Item -ItemType Directory -Force -Path "$app\uploads\tmp\00", "$app\uploads\tmp\FF" | Out-Null
 
           $unins = Get-ChildItem "$app\unins*.exe" | Select-Object -First 1
           if (-not $unins) { throw 'no uninstaller was installed' }
@@ -870,10 +909,21 @@ jobs:
                   -Name CpapDashDesktop -ErrorAction SilentlyContinue).CpapDashDesktop
           if ($v) { throw "uninstall left a Run entry pointing at a deleted file: $v" }
 
+          # #92: the rule and the runtime files go with the program.
+          netsh advfirewall firewall show rule name="HmsCpap Sleep Bridge (TCP 8894)" | Out-Null
+          if ($LASTEXITCODE -eq 0) { throw 'uninstall left the Sleep Bridge firewall rule' }
+          foreach ($f in @('hms-cpap.log','hms-cpap.log.1','uploads')) {
+            if (Test-Path "$app\$f") { throw "uninstall left $f in the program folder" }
+          }
+          if (Test-Path $app) { throw "uninstall left the program folder: $((Get-ChildItem -Recurse $app | ForEach-Object FullName) -join ', ')" }
+
           if (-not (Test-Path "$env:USERPROFILE\.hms-cpap\config.json")) {
             throw 'THE UNINSTALLER DELETED THE USER DATA DIRECTORY'
           }
-          Write-Host '  ok program gone, Run key gone, ~/.hms-cpap intact'
+          Write-Host '  ok program gone, Run key gone, firewall rule gone, ~/.hms-cpap intact'
+          # netsh's "no such rule" (1) above is the passing result; GitHub
+          # would fail the step on that last exit code.
+          exit 0
 
   # ── macOS Build (Apple Silicon / arm64) ───────────────────────────
   # GitHub-hosted arm64 runner (free for public repos). Produces the
