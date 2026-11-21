@@ -309,6 +309,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   model. A name chosen in Settings is kept. A card moved from one machine to
   another keeps the first one's identification file beside the second's; the
   machine whose serial the newest night's EDF header names is the one read.
+  When those headers carry no serial, STR.edf's header decides, and with
+  neither the Identification.tgt is read, never the older .json on its own.
 - **Home Assistant names the machine the same way (#94 follow-up).** The
   device's name in Home Assistant was the configured device name, so it too
   said "ResMed AirSense 10" on a desktop install. Every announcement of the

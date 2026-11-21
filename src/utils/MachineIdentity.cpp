@@ -72,6 +72,20 @@ MachineIdentity fromTgt(const std::filesystem::path& path) {
 /// has one (hmscpap-tapper41, 2026-11-18: the CpapDash uploader held every file
 /// of the night, "names no machine serial yet"). Serial only: the header names
 /// no model.
+std::string edfSerial(const std::filesystem::path& edf) {
+    std::ifstream in(edf, std::ios::binary);
+    char header[256] = {};
+    if (!in.read(header, sizeof(header))) return "";
+    const std::string recording(header + 88, 80);
+    const auto at = recording.find("SRN=");
+    if (at == std::string::npos) return "";
+    const auto end = recording.find(' ', at + 4);
+    const std::string serial =
+        trim(recording.substr(at + 4, end == std::string::npos ? std::string::npos : end - at - 4));
+    if (serial.empty() || !std::all_of(serial.begin(), serial.end(), ::isalnum)) return "";
+    return serial;
+}
+
 MachineIdentity fromEdfHeader(const std::filesystem::path& root) {
     namespace fs = std::filesystem;
     std::error_code ec;
@@ -93,15 +107,8 @@ MachineIdentity fromEdfHeader(const std::filesystem::path& root) {
         }
         std::sort(edfs.begin(), edfs.end());
         for (const auto& edf : edfs) {
-            std::ifstream in(edf, std::ios::binary);
-            char header[256] = {};
-            if (!in.read(header, sizeof(header))) continue;
-            const std::string recording(header + 88, 80);
-            const auto at = recording.find("SRN=");
-            if (at == std::string::npos) continue;
-            const auto end = recording.find(' ', at + 4);
-            const std::string serial = trim(recording.substr(at + 4, end == std::string::npos ? std::string::npos : end - at - 4));
-            if (serial.empty() || !std::all_of(serial.begin(), serial.end(), ::isalnum)) continue;
+            const std::string serial = edfSerial(edf);
+            if (serial.empty()) continue;
             MachineIdentity id;
             id.manufacturer = "ResMed";
             id.serial = serial;
@@ -165,9 +172,21 @@ MachineIdentity readIdentification(const std::string& card_root) {
     if (!from_json.empty() && !from_tgt.empty() && !from_json.serial.empty() &&
         !from_tgt.serial.empty() && from_json.serial != from_tgt.serial) {
         // #94: one card, two machines. The machine writing the card now names
-        // itself in every EDF header it writes.
-        if (fromEdfHeader(root).serial == from_tgt.serial) return from_tgt;
-        return from_json;
+        // itself in every EDF header it writes; with no SRN in the newest
+        // night's EDFs, STR.edf (rewritten by the machine in the slot) names
+        // it. With neither, the .tgt: the .json alone is not proof, it is the
+        // file a card keeps from the machine it left.
+        std::string writer = fromEdfHeader(root).serial;
+        if (writer.empty()) {
+            for (const char* str : {"STR.edf", "STR.EDF", "str.edf"}) {
+                std::error_code sec;
+                if (!std::filesystem::is_regular_file(root / str, sec)) continue;
+                writer = edfSerial(root / str);
+                if (!writer.empty()) break;
+            }
+        }
+        if (writer == from_json.serial) return from_json;
+        return from_tgt;
     }
     if (!from_json.empty()) return from_json;
     if (!from_tgt.empty()) return from_tgt;
