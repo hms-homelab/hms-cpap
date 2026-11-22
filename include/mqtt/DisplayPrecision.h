@@ -13,10 +13,11 @@
 //
 //   cmH2O, L/min, %, breaths/min, min   1      9.2 cmH2O, 3.9 L/min, 94.0 %
 //   SpO2 (%)                            0      94 %
-//   events/h                            2      0.13 events/h
+//   events/h                            2      0.13 events/h (the ODI: 1, 13.5/h)
 //   mL, bpm, d                          0      518 mL, 81 bpm
 //   snore, flow limitation, I:E ratio   2      0.07
 //   event and apnea counts, index       0      a count has no fraction
+//   desaturation count                  0
 //
 // Nothing for a time (device_class duration or timestamp: Home Assistant
 // converts those itself) or for a sensor that is text.
@@ -36,12 +37,13 @@ inline std::optional<int> displayPrecision(const std::string& name, const std::s
     if (unit == "%" && name.find("spo2") != std::string::npos) return 0;
     if (unit == "cmH2O" || unit == "L/min" || unit == "%" || unit == "breaths/min" || unit == "min")
         return 1;
-    if (unit == "events/h") return 2;
+    if (unit == "events/h") return (name == "odi" || name == "avg_odi") ? 1 : 2;   // 13.5/h, an AHI 0.13
     if (unit == "mL" || unit == "bpm" || unit == "d") return 0;
     if (!unit.empty()) return std::nullopt;   // a unit we have no view on: leave it be
 
     auto has = [&name](const char* part) { return name.find(part) != std::string::npos; };
     if (has("snore") || has("flow_limitation") || has("ie_ratio")) return 2;
+    if (has("desat_count")) return 0;
     if (has("apneas") || has("hypopneas") || has("reras") || has("total_events") ||
         has("mask_events") || name == "sleep_index" || name == "str_sleep_index" || name == "motion")
         return 0;
