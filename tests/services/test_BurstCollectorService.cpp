@@ -3999,6 +3999,43 @@ TEST(BurstConfigReloadTest, TheCaptureSettingReachesTheRunningClientWithoutARest
     EXPECT_EQ(svc.getAirSense11Pairing(), spy);
 }
 
+// PR #106: the strict stream gap switch on the Settings page reaches the one
+// writer every AirSense 11 stream feeds, without a restart and without
+// remaking it (a bridge holds the same writer).
+TEST(BurstConfigReloadTest, TheStreamGapSettingReachesTheSharedWriterWithoutARestart) {
+    BurstCollectorService svc(300);
+    AppConfig cfg;
+    cfg.airsense11_ble.strict_stream_gaps = false;
+    svc.setAppConfig(&cfg);
+    svc.markConfigDirty();
+    svc.reloadConfigForTest();
+    const auto sink = svc.getAs11NightSink();
+    auto writer = std::dynamic_pointer_cast<As11NightWriter>(sink);
+    ASSERT_TRUE(writer);
+    EXPECT_FALSE(writer->preserveGaps());
+
+    cfg.airsense11_ble.strict_stream_gaps = true;
+    svc.markConfigDirty();
+    svc.reloadConfigForTest();
+    EXPECT_TRUE(writer->preserveGaps());
+    EXPECT_EQ(svc.getAs11NightSink(), sink) << "the same writer, not a new one";
+
+    cfg.airsense11_ble.strict_stream_gaps = false;
+    svc.markConfigDirty();
+    svc.reloadConfigForTest();
+    EXPECT_FALSE(writer->preserveGaps());
+}
+
+TEST(BurstConfigReloadTest, AWriterMadeAfterTheSettingTakesItFromTheConfig) {
+    BurstCollectorService svc(300);
+    AppConfig cfg;
+    cfg.airsense11_ble.strict_stream_gaps = true;
+    svc.setAppConfig(&cfg);
+    auto writer = std::dynamic_pointer_cast<As11NightWriter>(svc.getAs11NightSink());
+    ASSERT_TRUE(writer);
+    EXPECT_TRUE(writer->preserveGaps());
+}
+
 // ============================================================================
 // LLM PROMPT FORMATTER TESTS (SDD-002 coverage backfill)
 // buildMetricsString / buildRangeMetricsString are pure string builders over the

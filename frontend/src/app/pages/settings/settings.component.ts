@@ -394,6 +394,14 @@ import { showLocalModelSection } from './local-model';
                 {{ 'settings.as11.captureNone' | translate }}
               </p>
             </ng-container>
+            <!-- PR #106: how gaps in the stream are written. Shown with the
+                 switch off too: a bridge's AirSense 11 stream goes through
+                 the same writer. Applied live, from the next block. -->
+            <label class="toggle-row">
+              {{ 'settings.as11.strictGaps' | translate }}
+              <input type="checkbox" [(ngModel)]="config.airsense11_ble.strict_stream_gaps" name="as11_strict_gaps" />
+            </label>
+            <p class="hint">{{ 'settings.as11.strictGapsHint' | translate }}</p>
           </div>
         </div>
 
@@ -1889,9 +1897,10 @@ export class SettingsComponent implements OnInit, OnDestroy {
           cfg.o2ring = { enabled: false, mode: 'http', mule_url: '' };
         }
         if (!cfg.airsense11_ble) {
-          cfg.airsense11_ble = { enabled: false, address: '', capture: false };
+          cfg.airsense11_ble = { enabled: false, address: '', capture: false, strict_stream_gaps: false };
         }
         if (cfg.airsense11_ble.capture === undefined) cfg.airsense11_ble.capture = false;
+        if (cfg.airsense11_ble.strict_stream_gaps === undefined) cfg.airsense11_ble.strict_stream_gaps = false;
         if (!cfg.ds2_ble) {
           cfg.ds2_ble = { enabled: false, address: '' };
         }

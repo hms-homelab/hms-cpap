@@ -572,6 +572,58 @@ TEST_F(AppConfigTest, AirSense11BluetoothSettingsSurviveSaveAndLoad) {
     EXPECT_TRUE(defaults.airsense11_ble.address.empty());
 }
 
+// PR #106: the strict stream gap switch is a Settings option, off by default,
+// kept in config.json and read back by the page.
+TEST_F(AppConfigTest, TheStrictStreamGapSettingIsOffByDefaultAndSurvivesSaveAndLoad) {
+    saveAndUnsetEnv("HMS_CPAP_STRICT_STREAM_GAPS");
+    AppConfig defaults;
+    EXPECT_FALSE(defaults.airsense11_ble.strict_stream_gaps);
+    defaults.applyEnvFallbacks();
+    EXPECT_FALSE(defaults.airsense11_ble.strict_stream_gaps) << "no variable: the default holds";
+    EXPECT_EQ(defaults.toJson()["airsense11_ble"]["strict_stream_gaps"], false);
+
+    AppConfig a;
+    a.airsense11_ble.strict_stream_gaps = true;
+    a.save(config_path_);
+    AppConfig b;
+    ASSERT_TRUE(AppConfig::load(config_path_, b));
+    EXPECT_TRUE(b.airsense11_ble.strict_stream_gaps);
+    EXPECT_EQ(b.toJson()["airsense11_ble"]["strict_stream_gaps"], true);
+
+    // A config.json written before the setting existed reads as off.
+    writeConfig(R"({"airsense11_ble": {"enabled": true, "capture": false}})");
+    AppConfig old;
+    ASSERT_TRUE(AppConfig::load(config_path_, old));
+    EXPECT_FALSE(old.airsense11_ble.strict_stream_gaps);
+}
+
+// HMS_CPAP_STRICT_STREAM_GAPS switches it on for an install with no Settings
+// page in reach (Docker, the HA add-on), as the other *_ENABLED variables do:
+// it only switches on.
+TEST_F(AppConfigTest, TheStrictStreamGapVariableSwitchesTheSettingOn) {
+    saveAndUnsetEnv("HMS_CPAP_STRICT_STREAM_GAPS");   // restored once, in TearDown
+    for (const char* on : {"1", "true"}) {
+        setenv("HMS_CPAP_STRICT_STREAM_GAPS", on, 1);
+        AppConfig c;
+        c.applyEnvFallbacks();
+        EXPECT_TRUE(c.airsense11_ble.strict_stream_gaps) << on;
+    }
+    for (const char* off : {"0", "false", "", "yes"}) {
+        setenv("HMS_CPAP_STRICT_STREAM_GAPS", off, 1);
+        AppConfig c;
+        c.applyEnvFallbacks();
+        EXPECT_FALSE(c.airsense11_ble.strict_stream_gaps) << off;
+    }
+    // On in config.json and 0 in the environment: on (the file wins, as for
+    // every other setting here).
+    setenv("HMS_CPAP_STRICT_STREAM_GAPS", "0", 1);
+    writeConfig(R"({"airsense11_ble": {"strict_stream_gaps": true}})");
+    AppConfig c;
+    ASSERT_TRUE(AppConfig::load(config_path_, c));
+    c.applyEnvFallbacks();
+    EXPECT_TRUE(c.airsense11_ble.strict_stream_gaps);
+}
+
 // ── HMS_CPAP_DATA_DIR override (issue #16) ──────────────────────────────
 // In a container $HOME is the writable layer, so config.json written there is
 // destroyed by `docker compose down` and the next boot demands the setup wizard

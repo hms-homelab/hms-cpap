@@ -1324,6 +1324,7 @@ private:
         bool airsense11_ble_enabled = false;
         std::string airsense11_ble_address;
         bool airsense11_ble_capture = false;   // SDD-071, applied live
+        bool airsense11_strict_stream_gaps = false;   // PR #106, applied live
         bool ds2_ble_enabled = false;
         std::string ds2_ble_address;
     };

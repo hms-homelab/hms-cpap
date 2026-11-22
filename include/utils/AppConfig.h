@@ -279,6 +279,13 @@ struct AppConfig {
         // sent it, to <data_dir>/as11/<serial>/capture/. Off: nothing changes.
         // Applies live from the next stream, no restart.
         bool capture = false;
+        // Issue #103 / PR #106: how the night writer every AirSense 11 stream
+        // feeds (this host's Bluetooth and a bridge's) treats a gap between
+        // received blocks. Off: a gap under 60 s is joined, its samples zero.
+        // On: the waveform is split at every gap, nothing missing is drawn.
+        // HMS_CPAP_STRICT_STREAM_GAPS=1 switches it on (applyEnvFallbacks).
+        // Applies live from the next block; written files are not changed.
+        bool strict_stream_gaps = false;
     } airsense11_ble;
 
     // A Philips DreamStation 2 read over its own Bluetooth by this host,
@@ -579,6 +586,14 @@ struct AppConfig {
             if (v > 0) ml_training.min_days = v;
         }
 
+        // PR #106: the strict AirSense 11 gap policy. Like the other switches
+        // here, the variable only switches it on; the Settings page sets it
+        // for an install without one.
+        if (!airsense11_ble.strict_stream_gaps) {
+            const auto v = env("HMS_CPAP_STRICT_STREAM_GAPS");
+            if (v == "1" || v == "true") airsense11_ble.strict_stream_gaps = true;
+        }
+
         // Sleep Stage
         if (!sleep_stage.enabled && env("SLEEP_STAGE_ENABLED") == "true")
             sleep_stage.enabled = true;
@@ -829,6 +844,7 @@ struct AppConfig {
                 if (b.contains("enabled"))              config.airsense11_ble.enabled = b["enabled"];
                 if (b.contains("address"))              config.airsense11_ble.address = b["address"];
                 if (b.contains("capture"))              config.airsense11_ble.capture = b["capture"];
+                if (b.contains("strict_stream_gaps"))   config.airsense11_ble.strict_stream_gaps = b["strict_stream_gaps"];
             }
 
             if (j.contains("ds2_ble")) {
@@ -1009,6 +1025,7 @@ struct AppConfig {
             j["airsense11_ble"]["enabled"] = airsense11_ble.enabled;
             j["airsense11_ble"]["address"] = airsense11_ble.address;
             j["airsense11_ble"]["capture"] = airsense11_ble.capture;
+            j["airsense11_ble"]["strict_stream_gaps"] = airsense11_ble.strict_stream_gaps;
 
             j["ds2_ble"]["enabled"] = ds2_ble.enabled;
             j["ds2_ble"]["address"] = ds2_ble.address;
@@ -1176,6 +1193,7 @@ struct AppConfig {
         j["airsense11_ble"]["enabled"] = airsense11_ble.enabled;
         j["airsense11_ble"]["address"] = airsense11_ble.address;
         j["airsense11_ble"]["capture"] = airsense11_ble.capture;
+        j["airsense11_ble"]["strict_stream_gaps"] = airsense11_ble.strict_stream_gaps;
 
         j["ds2_ble"]["enabled"] = ds2_ble.enabled;
         j["ds2_ble"]["address"] = ds2_ble.address;
