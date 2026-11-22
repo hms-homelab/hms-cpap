@@ -532,7 +532,8 @@ bool BurstCollectorService::airSense11BleCompiled() {
 std::shared_ptr<IAs11NightSink> BurstCollectorService::getAs11NightSink() {
     std::lock_guard<std::mutex> lk(airsense11_mtx_);
     if (!as11_night_writer_) {
-        as11_night_writer_ = std::make_shared<As11NightWriter>(AppConfig::dataDir(), hostLocalClock());
+        as11_night_writer_ = std::make_shared<As11NightWriter>(AppConfig::dataDir(), hostLocalClock(),
+            ConfigManager::get("HMS_CPAP_STRICT_STREAM_GAPS", "0") == "1");
         // SDD-057 D9: a night whose files are complete is imported by the
         // worker, whichever source streamed it. Only a flag here: the hook
         // runs on the stream's thread.

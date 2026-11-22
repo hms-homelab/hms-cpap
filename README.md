@@ -595,3 +595,12 @@ Fork, branch, add tests, make sure `./tests/run_tests` passes, open a PR. See
 
 If this project is useful to you, consider
 [buying me a coffee](https://www.buymeacoffee.com/aamat09) or starring the repo.
+
+### Strict AS11 stream gaps (optional)
+
+Set `HMS_CPAP_STRICT_STREAM_GAPS=1` and restart the application to split AS11
+stream waveform files at every positive gap between received blocks. Missing
+intervals stay absent instead of becoming zero flow and mask pressure.
+The default (`0`) retains joining of gaps shorter than 60 seconds.
+This affects new blocks only; it does not repair existing files or recover
+missing samples. Disable and restart to restore the default joining policy.
