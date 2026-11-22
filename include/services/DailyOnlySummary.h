@@ -44,9 +44,16 @@ extern const char* const kLlmSource;   // "llm"
 /// The LLM summary of the summary-only night [sleep_day] (YYYY-MM-DD).
 /// [prompt_template] is the configured prompt ({metrics} is replaced by the
 /// fact block); [generate] is one LLM call. Nothing is sent when the night is
-/// not summary-only (it has sessions, or no daily record).
+/// not summary-only (it has sessions, or no daily record). [force]: SDD-082
+/// D-082-6, a Regenerate writes a new text even from the same facts; the
+/// event path (force false) skips a night summarized from these facts.
 Result summarize(IDatabase& db, const std::string& device_id, const std::string& sleep_day,
-                 const std::string& prompt_template, const grounding::Generate& generate);
+                 const std::string& prompt_template, const grounding::Generate& generate,
+                 bool force = false);
+
+/// D-082-7: the night's summary-only LLM summaries go once its full night's
+/// summary is written (the session close's own). Returns how many went.
+int dropSummaryOnly(IDatabase& db, const std::string& device_id, const std::string& sleep_day);
 
 /// The fact block the night's newest LLM summary was written from ("" when none).
 std::string storedFacts(IDatabase& db, const std::string& device_id, const std::string& sleep_day);

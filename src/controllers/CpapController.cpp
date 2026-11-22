@@ -2339,14 +2339,25 @@ void CpapController::generateReport(const drogon::HttpRequestPtr& req,
         cb(jsonError("'start' must be before 'end'", drogon::k400BadRequest));
         return;
     }
-    // SDD-082: the kind, a compliance report's rule (its hours defaulting to
-    // the usage target from Settings, B5) and the PDF's language.
+    // SDD-082: the kind, a compliance report's rule (absent: the remembered
+    // rule, D-082-2, else the usage target at 70 %, B5) and the PDF's language.
     ReportRequest request;
-    const double default_hours = config_ ? static_cast<double>(config_->usage_target_hours)
+    const double default_hours = config_ ? config_->complianceRuleHoursOrTarget()
                                          : static_cast<double>(AppConfig::kDefaultUsageTargetHours);
-    if (const auto bad = parseReportRequest(*body, default_hours, request)) {
+    const int default_share = config_ ? config_->compliance_rule_share
+                                      : AppConfig::kDefaultComplianceRuleShare;
+    if (const auto bad = parseReportRequest(*body, default_hours, request, default_share)) {
         cb(jsonError(*bad, drogon::k400BadRequest));
         return;
+    }
+    // D-082-2: the rule a compliance report is generated with is remembered,
+    // so the Reports page opens on it next time.
+    if (request.kind == "compliance" && config_ &&
+        (config_->compliance_rule_hours != request.rule_hours ||
+         config_->compliance_rule_share != request.rule_share)) {
+        config_->compliance_rule_hours = request.rule_hours;
+        config_->compliance_rule_share = request.rule_share;
+        if (!config_path_.empty()) config_->save(config_path_);
     }
 
     int id = report_svc_->triggerReport(start, end, request);

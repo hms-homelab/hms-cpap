@@ -53,8 +53,23 @@ std::string storedFacts(IDatabase& db, const std::string& device_id, const std::
     return rows.empty() ? "" : rows.front().facts;
 }
 
+int dropSummaryOnly(IDatabase& db, const std::string& device_id, const std::string& sleep_day_in) {
+    const std::string sleep_day = isoDay(sleep_day_in);
+    int dropped = 0;
+    const auto t = db.dbType();
+    // A summary-only row is the one whose stored facts say so; a full night's
+    // LLM row carries no facts.
+    for (const auto& row : llmRows(db, device_id, sleep_day)) {
+        if (row.facts.find("Summary-only night") == std::string::npos) continue;
+        db.executeQuery("DELETE FROM cpap_summaries WHERE id = " + sql::param(1, t), {row.id});
+        ++dropped;
+    }
+    return dropped;
+}
+
 Result summarize(IDatabase& db, const std::string& device_id, const std::string& sleep_day_in,
-                 const std::string& prompt_template, const grounding::Generate& generate) {
+                 const std::string& prompt_template, const grounding::Generate& generate,
+                 bool force) {
     Result r;
     const std::string sleep_day = isoDay(sleep_day_in);
     const auto night = night_facts::loadDailyOnlyNight(db, device_id, sleep_day);
@@ -66,7 +81,7 @@ Result summarize(IDatabase& db, const std::string& device_id, const std::string&
     const auto earlier = llmRows(db, device_id, sleep_day);
     // Only a summary-only row knows its facts here: a row from an ordinary
     // night's close has none, and is replaced like any other.
-    if (!earlier.empty() && earlier.front().facts == r.facts) {
+    if (!force && !earlier.empty() && earlier.front().facts == r.facts) {
         r.skipped = true;
         r.why = "already summarized from these facts";
         return r;

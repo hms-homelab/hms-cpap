@@ -282,8 +282,13 @@ std::string renderNight(const NightFacts& n) {
     return oss.str();
 }
 
-std::string renderRange(const std::vector<NightFacts>& nights, const std::string& label,
+std::string renderRange(const std::vector<NightFacts>& given, const std::string& label,
                         const std::optional<RangeOximetryFacts>& oximetry) {
+    // SDD-082 D-082-8: only nights with a full session count in a weekly or
+    // monthly summary; a summary-only night (#74) is left out.
+    std::vector<NightFacts> nights;
+    for (const auto& n : given)
+        if (n.daily_only.empty()) nights.push_back(n);
     std::ostringstream oss;
     oss << std::fixed << std::setprecision(2);
 

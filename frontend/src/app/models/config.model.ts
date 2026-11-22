@@ -21,6 +21,9 @@ export interface AppConfig {
   display_clock?: 'machine' | 'host';
   /** The nightly usage target, hours, 1 to 12 (4 when unset): the dashboard's "Xh+ target met". */
   usage_target_hours?: number;
+  /** SDD-082 D-082-2: the last compliance rule a report was generated with. */
+  compliance_rule_hours?: number;
+  compliance_rule_share?: number;
   /** SDD-041 D1: apply a newer release without asking, once idle. Off by default. */
   auto_update?: boolean;
   local_dir: string;

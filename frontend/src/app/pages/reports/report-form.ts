@@ -17,6 +17,20 @@ export function ruleInRange(hours: number, share: number): boolean {
          Number.isInteger(share) && share >= 1 && share <= 100;
 }
 
+/**
+ * D-082-2: the rule the page opens on: the one remembered from the last
+ * compliance report, else the usage target's hours at 70 %.
+ */
+export function openingRule(cfg: { compliance_rule_hours?: number; compliance_rule_share?: number;
+                                   usage_target_hours?: number } | null | undefined,
+                            usageTarget: number): { hours: number; share: number } {
+  const h = Number(cfg?.compliance_rule_hours);
+  const s = Number(cfg?.compliance_rule_share);
+  const share = Number.isInteger(s) && s >= 1 && s <= 100 ? s : RULE_DEFAULT_SHARE;
+  const hours = Number.isFinite(h) && h >= 0.5 && h <= 24 ? h : usageTarget;
+  return { hours, share };
+}
+
 /** "YYYY-MM-DD" of a date on this browser's calendar. */
 export function localDate(d: Date): string {
   const y = d.getFullYear();

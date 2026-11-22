@@ -293,6 +293,68 @@ TEST_P(DailyOnlyNightTest, ANightWithSessionsIsNotASummaryOnlyNight) {
     EXPECT_EQ(llm_.calls, 0);
 }
 
+TEST_P(DailyOnlyNightTest, RegenerateWritesANewTextFromTheSameFacts) {
+    // D-082-6: the event path skips a night summarized from these facts; a
+    // Regenerate (force) writes a new text all the same, and the night keeps one.
+    MyAirService myair(db_, config_);
+    std::string err;
+    ASSERT_EQ(myair.store({myairNight("2099-07-05", 390, 1.2)}, err), 1) << err;
+    ASSERT_EQ(llm_.calls, 1);
+    const auto skipped = daily_only::summarize(*db_, device_, "2099-07-05", "{metrics}",
+                                               [this](const std::string& p) { return llm_(p); });
+    EXPECT_TRUE(skipped.skipped);
+    EXPECT_EQ(llm_.calls, 1);
+    const auto forced = daily_only::summarize(*db_, device_, "2099-07-05", "{metrics}",
+                                              [this](const std::string& p) { return llm_(p); },
+                                              /*force=*/true);
+    EXPECT_TRUE(forced.written) << forced.why;
+    EXPECT_EQ(llm_.calls, 2);
+    EXPECT_EQ(summaries("2099-07-05", "llm").size(), 1u) << engineName(GetParam());
+}
+
+TEST_P(DailyOnlyNightTest, TheFullNightReplacesTheSummaryOnlySummaries) {
+    // D-082-7: a summary-only night whose sessions arrive later ends with the
+    // full night's summaries only, the local one and the LLM one.
+    MyAirService myair(db_, config_);
+    std::string err;
+    ASSERT_EQ(myair.store({myairNight("2099-07-06", 390, 1.2)}, err), 1) << err;
+    ASSERT_EQ(summaries("2099-07-06", "local").size(), 1u);
+    ASSERT_EQ(summaries("2099-07-06", "llm").size(), 1u);
+
+    NightSpec n;
+    n.hypopneas = 6;
+    saveNight(*db_, device_, localAt(2099, 7, 6, 23), n);
+    night_landed::announce("20990706");   // the sessions' close
+    const auto local = summaries("2099-07-06", "local");
+    ASSERT_EQ(local.size(), 1u) << engineName(GetParam());
+    EXPECT_EQ(local[0u]["facts"].asString().find("Summary-only"), std::string::npos)
+        << "the full night's local summary replaced it";
+
+    // The session close's LLM summary (generateAndPublishSummary): saved, then
+    // the summary-only one goes.
+    ASSERT_TRUE(db_->saveSummary(device_, "daily", "2099-07-06", "2099-07-06", 1, 1.0, 6.0, 100.0,
+                                 "The full night's text."));
+    EXPECT_EQ(daily_only::dropSummaryOnly(*db_, device_, "2099-07-06"), 1);
+    const auto llm = summaries("2099-07-06", "llm");
+    ASSERT_EQ(llm.size(), 1u) << engineName(GetParam());
+    EXPECT_EQ(llm[0u]["summary_text"].asString(), "The full night's text.");
+    EXPECT_EQ(daily_only::dropSummaryOnly(*db_, device_, "2099-07-06"), 0) << "a full row is never dropped";
+}
+
+TEST_P(DailyOnlyNightTest, WeeklyAndMonthlySummariesCountOnlyFullNights) {
+    // D-082-8: the range summaries read session nights; a summary-only night
+    // in the range is not one of them.
+    NightSpec n;
+    n.hypopneas = 6;
+    saveNight(*db_, device_, localAt(2099, 7, 8, 23), n);
+    MyAirService myair(db_, config_);
+    std::string err;
+    ASSERT_EQ(myair.store({myairNight("2099-07-09", 390, 1.2)}, err), 1) << err;
+    const auto nights = night_facts::loadRange(*db_, device_, "2099-07-07", "2099-07-10");
+    ASSERT_EQ(nights.size(), 1u) << engineName(GetParam());
+    EXPECT_EQ(nights[0].sleep_day, "2099-07-08");
+}
+
 INSTANTIATE_TEST_SUITE_P(Engines, DailyOnlyNightTest,
                          ::testing::Values(Engine::SQLite, Engine::MySQL, Engine::Postgres),
                          engineParamName);
@@ -423,6 +485,22 @@ TEST(DailyOnlyFacts, TheBlockSaysSummaryOnlyAndCarriesOnlyTheDailyFigures) {
     EXPECT_TRUE(violations(text, block).empty()) << text;
     // A reply that adds a figure the night does not have is caught.
     EXPECT_FALSE(violations("You had 14 obstructive apneas.", block).empty());
+}
+
+TEST(DailyOnlyFacts, ARangeSummaryLeavesASummaryOnlyNightOut) {
+    // D-082-8, at the renderer: whatever a caller hands it.
+    NightFacts full;
+    full.sleep_day = "2099-07-08";
+    full.usage_hours = 6.0;
+    full.index = 1.0;
+    full.hypopnea = 6;
+    full.total = 6;
+    NightFacts daily = full;
+    daily.sleep_day = "2099-07-09";
+    daily.daily_only = "myair";
+    const auto text = night_facts::renderRange({full, daily}, "Weekly");
+    EXPECT_NE(text.find("(1 nights)"), std::string::npos) << text;
+    EXPECT_EQ(text.find("2099-07-09"), std::string::npos) << text;
 }
 
 TEST(DailyOnlyFacts, TheTemplateWritesASummaryOnlyNightAndTheModelIsNotAsked) {

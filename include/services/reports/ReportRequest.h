@@ -60,12 +60,15 @@ inline std::string ruleJsonOf(double hours, int share) {
 }
 
 /// Read a request body into `out`; nullopt when it may run, else the 400's text.
-/// `default_hours` is the usage target from Settings (B5). Dates are checked
-/// by the caller, as they always were.
+/// `default_hours` / `default_share` are the rule a request without one is
+/// judged against: the remembered rule (D-082-2), else the usage target from
+/// Settings at 70 % (B5). Dates are checked by the caller, as they always were.
 inline std::optional<std::string> parseReportRequest(const Json::Value& body, double default_hours,
-                                                     ReportRequest& out) {
+                                                     ReportRequest& out,
+                                                     int default_share = compliance::kDefaultShare) {
     out = ReportRequest();
     out.rule_hours = default_hours;
+    out.rule_share = default_share;
     if (body.isMember("kind") && !body["kind"].isNull()) {
         if (!body["kind"].isString() || !validReportKind(body["kind"].asString()))
             return std::string("'kind' must be standard, clinician or compliance");

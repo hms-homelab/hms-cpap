@@ -6,7 +6,7 @@ import { CpapApiService } from '../../services/cpap-api.service';
 import { LanguageService } from '../../services/language.service';
 import { usageTargetHoursOf } from '../dashboard/card-data';
 import {
-  ReportKind, RULE_DEFAULT_SHARE, SPANS, hoursLabel, localDate, nightOf, requestBody,
+  ReportKind, RULE_DEFAULT_SHARE, SPANS, hoursLabel, localDate, nightOf, openingRule, requestBody,
   ruleInRange, spanDates,
 } from './report-form';
 
@@ -47,7 +47,12 @@ export class ReportsComponent implements OnInit, OnDestroy {
     this.loadReports();
     this.refreshTimer = setInterval(() => this.loadReports(), 15000);
     this.api.getConfig().subscribe({
-      next: (cfg) => { this.ruleHours = usageTargetHoursOf(cfg?.usage_target_hours); },
+      // D-082-2: the rule the last compliance report was generated with.
+      next: (cfg) => {
+        const rule = openingRule(cfg, usageTargetHoursOf(cfg?.usage_target_hours));
+        this.ruleHours = rule.hours;
+        this.ruleShare = rule.share;
+      },
       error: () => {},
     });
     this.api.getDashboard().subscribe({

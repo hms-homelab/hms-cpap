@@ -533,6 +533,19 @@ TEST(ReportRequests, AnAbsentRuleIsTheUsageTargetAndSeventyPercent) {
     EXPECT_EQ(r.rule_share, 70) << "each half by itself";
 }
 
+TEST(ReportRequests, AnAbsentRuleIsTheRememberedOne) {
+    // D-082-2: the route passes the remembered rule as the defaults.
+    ReportRequest r;
+    EXPECT_FALSE(parseReportRequest(body("compliance"), 6.5, r, 90));
+    EXPECT_DOUBLE_EQ(r.rule_hours, 6.5);
+    EXPECT_EQ(r.rule_share, 90);
+    Json::Value b = body("compliance");
+    b["rule"]["share"] = 75;
+    EXPECT_FALSE(parseReportRequest(b, 6.5, r, 90));
+    EXPECT_DOUBLE_EQ(r.rule_hours, 6.5);
+    EXPECT_EQ(r.rule_share, 75);
+}
+
 TEST(ReportRequests, ARuleOutsideTheBoundsIsRefused) {
     ReportRequest r;
     const auto with = [&](double h, double s) {

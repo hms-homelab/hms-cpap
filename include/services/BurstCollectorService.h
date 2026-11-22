@@ -192,7 +192,8 @@ public:
     /// session files, a myAir or STR daily record), skipped when written
     /// before from the same facts. Called from Regenerate and from the
     /// summary-only queue a landed night feeds.
-    daily_only::Result summarizeDailyOnlyNight(const std::string& sleep_day);
+    /// [force]: D-082-6, Regenerate writes a new text from unchanged facts.
+    daily_only::Result summarizeDailyOnlyNight(const std::string& sleep_day, bool force = false);
 
     // ── SDD-005: sync now ────────────────────────────────────────────────
     /// What a "sync now" request did.

@@ -164,6 +164,26 @@ struct AppConfig {
         if (v > kMaxUsageTargetHours) return kMaxUsageTargetHours;
         return static_cast<int>(v);
     }
+    /// SDD-082 D-082-2: the last compliance rule a report was generated with,
+    /// remembered so the Reports page opens on it (CpapDash keeps it on the
+    /// account). 0 hours: never set, and the rule starts from the usage
+    /// target above and 70 %.
+    double compliance_rule_hours = 0;
+    int compliance_rule_share = kDefaultComplianceRuleShare;
+    static constexpr int kDefaultComplianceRuleShare = 70;
+    /// A stored rule's hours as read back: 0.5 to 24, else 0 (not set).
+    static double complianceRuleHoursOf(double v) {
+        return (v >= 0.5 && v <= 24.0) ? v : 0.0;
+    }
+    /// A stored rule's percent as read back: 1 to 100, else 70.
+    static int complianceRuleShareOf(long long v) {
+        return (v >= 1 && v <= 100) ? static_cast<int>(v) : kDefaultComplianceRuleShare;
+    }
+    /// The rule a report starts from: the remembered one, else the usage
+    /// target's hours at 70 %.
+    double complianceRuleHoursOrTarget() const {
+        return compliance_rule_hours > 0 ? compliance_rule_hours : static_cast<double>(usage_target_hours);
+    }
     /// SDD-056: a FlashAir on the home WiFi (APPMODE=5) answers by mDNS.
     std::string flashair_url = "http://flashair.local";
     /// SDD-041 D1: apply a newer release without asking, once the collector is
@@ -740,6 +760,10 @@ struct AppConfig {
                 config.display_clock = j["display_clock"] == "host" ? "host" : "machine";
             if (j.contains("usage_target_hours") && j["usage_target_hours"].is_number())
                 config.usage_target_hours = usageTargetHoursOf(j["usage_target_hours"].get<long long>());
+            if (j.contains("compliance_rule_hours") && j["compliance_rule_hours"].is_number())
+                config.compliance_rule_hours = complianceRuleHoursOf(j["compliance_rule_hours"].get<double>());
+            if (j.contains("compliance_rule_share") && j["compliance_rule_share"].is_number())
+                config.compliance_rule_share = complianceRuleShareOf(j["compliance_rule_share"].get<long long>());
             if (j.contains("flashair_url"))  config.flashair_url = j["flashair_url"];
             if (j.contains("auto_update"))   config.auto_update = j["auto_update"];
             if (j.contains("local_dir"))     config.local_dir = j["local_dir"];
@@ -954,6 +978,11 @@ struct AppConfig {
             j["ezshare_range"] = ezshare_range;
             j["display_clock"] = display_clock;
             j["usage_target_hours"] = usage_target_hours;
+            // D-082-2: written only once a compliance report set it.
+            if (compliance_rule_hours > 0) {
+                j["compliance_rule_hours"] = compliance_rule_hours;
+                j["compliance_rule_share"] = compliance_rule_share;
+            }
             j["flashair_url"] = flashair_url;
             j["auto_update"] = auto_update;
             j["local_dir"] = local_dir;
@@ -1114,6 +1143,10 @@ struct AppConfig {
         j["ezshare_range"] = ezshare_range;
         j["display_clock"] = display_clock;
         j["usage_target_hours"] = usage_target_hours;
+        // D-082-2: the rule the Reports page opens on (hours from the usage
+        // target until a compliance report set one).
+        j["compliance_rule_hours"] = complianceRuleHoursOrTarget();
+        j["compliance_rule_share"] = compliance_rule_share;
         j["flashair_url"] = flashair_url;
         j["auto_update"] = auto_update;
         j["local_dir"] = local_dir;

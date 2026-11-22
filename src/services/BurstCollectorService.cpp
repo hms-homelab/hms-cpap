@@ -1222,7 +1222,8 @@ bool BurstCollectorService::generateSummaryForDate(const std::string& sleep_day)
     auto session_start = db_service_->getSessionStartForSleepDay(device_id_, sleep_day, false);
     if (!session_start) {
         // Issue #74: no session, but maybe a daily record (myAir, or the STR).
-        const auto r = summarizeDailyOnlyNight(sleep_day);
+        // D-082-6: Regenerate always writes a new text.
+        const auto r = summarizeDailyOnlyNight(sleep_day, /*force=*/true);
         if (r.written || r.skipped) return true;
         std::cerr << "generateSummaryForDate: no session found for " << sleep_day << " (" << r.why
                   << ")" << std::endl;
@@ -1240,14 +1241,14 @@ bool BurstCollectorService::generateSummaryForDate(const std::string& sleep_day)
     return true;
 }
 
-daily_only::Result BurstCollectorService::summarizeDailyOnlyNight(const std::string& sleep_day) {
+daily_only::Result BurstCollectorService::summarizeDailyOnlyNight(const std::string& sleep_day, bool force) {
     daily_only::Result r;
     if (!llm_enabled_ || !llm_client_ || !db_service_) {
         r.why = "LLM not enabled";
         return r;
     }
     r = daily_only::summarize(*db_service_, device_id_, sleep_day, summaryPromptTemplate(app_config_),
-                              [this](const std::string& p) { return llm_client_->generate(p); });
+                              [this](const std::string& p) { return llm_client_->generate(p); }, force);
     if (r.written && data_publisher_) data_publisher_->publishSessionSummary(r.text);
     return r;
 }
@@ -5106,6 +5107,10 @@ void BurstCollectorService::generateAndPublishSummary(const SessionMetrics& metr
         db_service_->saveSummary(
             device_id_, "daily", sleep_day, sleep_day,
             1, metrics.ahi, hours, compliance, summary.value());
+        // SDD-082 D-082-7: the full night replaces what its daily record gave.
+        if (const int n = daily_only::dropSummaryOnly(*db_service_, device_id_, sleep_day); n > 0)
+            std::cout << "LLM: " << sleep_day << "'s summary-only summary replaced by the full night's"
+                      << std::endl;
 
         // Publish O2Ring session-level summary (avg_spo2, avg_hr) as retained MQTT topics
         if (data_publisher_) {

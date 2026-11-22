@@ -4,7 +4,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { hoursLabel, nightOf, requestBody, ruleInRange, spanDates } from './report-form.ts';
+import { hoursLabel, nightOf, openingRule, requestBody, ruleInRange, spanDates } from './report-form.ts';
+
+test('the page opens on the remembered rule, else the usage target at 70 % (D-082-2)', () => {
+  assert.deepEqual(openingRule({ compliance_rule_hours: 6, compliance_rule_share: 90 }, 4), { hours: 6, share: 90 });
+  assert.deepEqual(openingRule({ compliance_rule_hours: 4.5 }, 4), { hours: 4.5, share: 70 });
+  assert.deepEqual(openingRule({}, 5), { hours: 5, share: 70 });
+  assert.deepEqual(openingRule(null, 4), { hours: 4, share: 70 });
+  assert.deepEqual(openingRule({ compliance_rule_hours: 0, compliance_rule_share: 0 }, 4), { hours: 4, share: 70 });
+});
 
 test('a rule is 0.5 to 24 hours and a whole 1 to 100 percent', () => {
   assert.equal(ruleInRange(4, 70), true);
