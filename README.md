@@ -41,16 +41,16 @@ and shows you the data. It is a fully local-first experience.
 
 **How each machine gets here**
 
-| Machine | Sleep Bridge Lite | Bluetooth from this computer | Mule & Miner (Bluetooth) | Mule & Miner (WiFi SD card, ez Share) | Toshiba FlashAir | Card reader or upload page |
+| Machine | Card reader or upload page | Sleep Bridge Lite | Bluetooth from this computer | Mule & Miner (Bluetooth) | Mule & Miner (WiFi SD card, ez Share) | Toshiba FlashAir |
 |---|---|---|---|---|---|---|
-| ResMed AirSense 10 | ✅ live | ❌ | ❌ | ✅ live | ✅ live | ✅ after the night |
-| ResMed AirSense 11 | ✅ live | ✅ live | ✅ live | ✅ live | Not tested yet | ✅ after the night |
-| ResMed AirCurve 10 | Not tested yet | ❌ | ❌ | ✅ live | ✅ live | ✅ after the night |
-| ResMed AirCurve 11 | Not tested yet | ✅ live | ✅ live | ✅ live | Not tested yet | ✅ after the night |
-| Philips DreamStation 2 | ✅ live, through OSCAR | ✅ after the night | ✅ after the night | ❌ | ❌ | Not tested yet (unencrypted cards only) |
-| BMC / React Health Luna | ✅ live | ❌ | ❌ | ✅ after the night | ❌ | ✅ after the night |
-| Löwenstein Prisma Line, Prisma Smart | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ after the night |
-| Sefam S.Box, SleepBox | ❌ | ❌ | ❌ | Not tested yet | ❌ | ✅ after the night |
+| ResMed AirSense 10 | ✅ after the night | ✅ live | ❌ | ❌ | ✅ live | ✅ live |
+| ResMed AirSense 11 | ✅ after the night | ✅ live | ✅ live | ✅ live | ✅ live | Not tested yet |
+| ResMed AirCurve 10 | ✅ after the night | Not tested yet | ❌ | ❌ | ✅ live | ✅ live |
+| ResMed AirCurve 11 | ✅ after the night | Not tested yet | ✅ live | ✅ live | ✅ live | Not tested yet |
+| Philips DreamStation 2 | Not tested yet (unencrypted cards only) | ✅ live, through OSCAR | ✅ after the night | ✅ after the night | ❌ | ❌ |
+| BMC / React Health Luna | ✅ after the night | ✅ live | ❌ | ❌ | ✅ after the night | ❌ |
+| Löwenstein Prisma Line, Prisma Smart | ✅ after the night | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Sefam S.Box, SleepBox | ✅ after the night | ❌ | ❌ | ❌ | Not tested yet | ❌ |
 
 ✅ live: charts update during therapy. ✅ after the night: the night arrives
 once it has ended. ❌: not supported. Not tested yet: the code reads it, not
