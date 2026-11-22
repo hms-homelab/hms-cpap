@@ -51,7 +51,11 @@ export class ReportsComponent implements OnInit, OnDestroy {
       error: () => {},
     });
     this.api.getDashboard().subscribe({
-      next: (d: any) => { this.latestNight = nightOf(d?.latest_night?.sleep_day); },
+      // hms-cpap's dashboard names the latest night `date` (CpapDash's `sleep_day`).
+      next: (d: any) => {
+        this.latestNight = nightOf(d?.latest_night?.date ?? d?.latest_night?.sleep_day);
+        if (this.kind === 'compliance' && this.complianceSpan !== null) this.pickSpan(this.complianceSpan);
+      },
       error: () => {},
     });
   }
