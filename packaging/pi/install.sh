@@ -42,6 +42,8 @@ libuuid1
 libhpdf-2.3.0
 libsdbus-c++2
 tzdata
+gnuplot-nox
+fonts-dejavu-core
 "
 # runtime-packages-end
 
