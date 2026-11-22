@@ -16,9 +16,13 @@ import { CommonModule } from '@angular/common';
     </div>
   `,
   styles: [`
+    /* Cards in a row share the width equally and the inner card fills the
+       host's height, so a card with a second line (the SpO2 card's ODI) does
+       not make its neighbours a different size. */
+    :host { display: block; flex: 1 1 0; min-width: 140px; }
     .metric-card {
       background: #1e1e2f; border: 1px solid #333; border-radius: 8px;
-      padding: 1.2rem; min-width: 140px;
+      padding: 1.2rem; height: 100%; box-sizing: border-box;
     }
     .card-top { display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.4rem; }
     .card-icon { font-size: 0.85rem; }
