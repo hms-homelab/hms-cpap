@@ -238,8 +238,9 @@ std::string sleepDayFolder(const WallClock& wc) {
 
 // ── the writer ──
 
-As11NightWriter::As11NightWriter(std::string data_dir, WallClockFn default_clock)
-    : data_dir_(std::move(data_dir)), default_clock_(std::move(default_clock)) {}
+As11NightWriter::As11NightWriter(std::string data_dir, WallClockFn default_clock, bool preserve_gaps)
+    : segment_gap_ms_(preserve_gaps ? 1 : kSegmentGapMs),
+      data_dir_(std::move(data_dir)), default_clock_(std::move(default_clock)) {}
 
 void As11NightWriter::setClock(const std::string& serial, WallClockFn clock) {
     std::lock_guard<std::mutex> lk(mtx_);
@@ -323,9 +324,10 @@ void As11NightWriter::onBlock(const as11::StreamBlock& b) {
     Machine& m = machine(b.serial);
 
     Segment* seg = nullptr;
-    for (auto& s : m.segments)
-        if (b.start_ms >= s.start_ms - kSegmentGapMs && b.start_ms < s.end_ms + kSegmentGapMs) seg = &s;
-    if (seg && seg->starts.count(b.start_ms)) return;   // a resend: kept once
+    for (auto& s : m.segments) {
+        if (s.starts.count(b.start_ms)) return;   // a resend, including an older segment
+        if (b.start_ms >= s.start_ms - segment_gap_ms_ && b.start_ms < s.end_ms + segment_gap_ms_) seg = &s;
+    }
     if (!seg) {
         Segment s;
         s.night = sleepDayFolder(clockFor(b.serial)(b.start_ms));
@@ -350,7 +352,7 @@ void As11NightWriter::onBlock(const as11::StreamBlock& b) {
     // A segment this block can no longer join is closed: its files are final.
     for (auto& s : m.segments) {
         if (&s == seg || s.written_end == s.end_ms) continue;
-        if (b.start_ms >= s.end_ms + kSegmentGapMs) { writeSegment(b.serial, s); s.written_end = s.end_ms; }
+        if (b.start_ms >= s.end_ms + segment_gap_ms_) { writeSegment(b.serial, s); s.written_end = s.end_ms; }
     }
     // The open segment: live, every 10 s of stream (every block from a Mule &
     // Miner, whose blocks are 10 s). The files are rewritten whole and moved

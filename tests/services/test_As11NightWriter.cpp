@@ -623,3 +623,42 @@ TEST_F(NightTest, AStoredRunBeforeTheStreamMovesTheEveAndLeavesOne) {
     EXPECT_NE(eve.front(), eveOf(streamed_brp));
     EXPECT_EQ(named(names, "CSL").size(), 1u);
 }
+
+TEST_F(NightTest, StrictGapDoesNotFabricateUsageOrReplayOlderSegment) {
+    As11NightWriter w(dir_.string(), fixedOffsetClock(-300), true);
+    for (int i=0; i<30; ++i) w.onBlock(second(kT0+i*1000));
+    for (int i=0; i<30; ++i) w.onBlock(second(kT0+35000+i*1000));
+    w.onBlock(second(kT0));
+    w.onStreamEnd(kSerial);
+    const auto names=files(night());
+    EXPECT_EQ(std::count_if(names.begin(), names.end(), [](const auto& n) {
+        return n.find("_BRP.edf") != std::string::npos;
+    }), 2);
+    EXPECT_EQ(records(night()/"20261016_220000_BRP.edf"), 30);
+    EXPECT_EQ(records(night()/"20261016_220035_BRP.edf"), 30);
+}
+
+TEST_F(NightTest, DefaultPolicyStillJoinsFiveSecondGap) {
+    auto w = writer();
+    for (int i = 0; i < 30; ++i) w.onBlock(second(kT0 + i * 1000));
+    for (int i = 0; i < 30; ++i) w.onBlock(second(kT0 + 35000 + i * 1000));
+    w.onStreamEnd(kSerial);
+    EXPECT_EQ(records(night() / "20261016_220000_BRP.edf"), 65);
+    EXPECT_FALSE(fs::exists(night() / "20261016_220035_BRP.edf"));
+}
+TEST_F(NightTest, StrictContiguousBlocksRemainOneSegmentAcrossRestart) {
+    {
+        As11NightWriter w(dir_.string(), fixedOffsetClock(-300), true);
+        for (int i = 0; i < 30; ++i) w.onBlock(second(kT0 + i * 1000));
+        w.onStreamEnd(kSerial);
+    }
+    As11NightWriter w(dir_.string(), fixedOffsetClock(-300), true);
+    w.onBlock(second(kT0));
+    for (int i = 30; i < 60; ++i) w.onBlock(second(kT0 + i * 1000));
+    w.onStreamEnd(kSerial);
+    const auto names = files(night());
+    EXPECT_EQ(std::count_if(names.begin(), names.end(), [](const auto& n) {
+        return n.find("_BRP.edf") != std::string::npos;
+    }), 1);
+    EXPECT_EQ(records(night() / "20261016_220000_BRP.edf"), 60);
+}
