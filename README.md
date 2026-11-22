@@ -595,18 +595,3 @@ Fork, branch, add tests, make sure `./tests/run_tests` passes, open a PR. See
 
 If this project is useful to you, consider
 [buying me a coffee](https://www.buymeacoffee.com/aamat09) or starring the repo.
-
-### Strict AS11 stream gaps (optional)
-
-Settings, AirSense 11 over Bluetooth, **Split the waveform at stream gaps**
-splits AS11 stream waveform files at every positive gap between received
-blocks, from this host's Bluetooth or a bridge's. Missing intervals stay
-absent instead of becoming zero flow and mask pressure. Off (the default)
-keeps joining gaps shorter than 60 seconds. The switch applies to new blocks
-at once, with no restart; it does not repair existing files or recover missing
-samples. It is kept in `config.json` as `airsense11_ble.strict_stream_gaps`.
-
-Without the Settings page (Docker, the Home Assistant add-on),
-`HMS_CPAP_STRICT_STREAM_GAPS=1` switches it on at start. Like the other
-`*_ENABLED` variables it only switches on; switch it off in Settings or in
-`config.json` with the variable unset.

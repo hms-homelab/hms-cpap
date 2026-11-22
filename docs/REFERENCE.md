@@ -532,6 +532,27 @@ Bluetooth row (the machine may cut its card files where the stream had one
 stretch, so the test is overlap, not equal starts); where the card has nothing
 the Bluetooth session stays.
 
+#### Gaps in the live stream
+
+A gap in the stream is the machine's samples that never reached hms-cpap.
+Over a Bluetooth link from a computer they are common and vary with the
+setup (the computer's Bluetooth, walls, distance, a PC in another room); a
+Mule & Miner sits next to the machine and rarely has one.
+
+By default a gap shorter than 60 seconds is joined, so a night stays one
+waveform file, and the missing seconds read as zero flow and mask pressure.
+Settings, AirSense 11 over Bluetooth, **Split the waveform at stream gaps**
+(off by default; thanks to @djbill99-hue, #106) splits the waveform file at
+every gap instead, so nothing missing is drawn. It applies to new blocks at
+once, with no restart, from this computer's Bluetooth or a bridge's. It does
+not repair existing files or recover missing samples. It is kept in
+`config.json` as `airsense11_ble.strict_stream_gaps`.
+
+Without the Settings page (Docker, the Home Assistant add-on),
+`HMS_CPAP_STRICT_STREAM_GAPS=1` switches it on at start. Like the other
+`*_ENABLED` variables it only switches on; switch it off in Settings or in
+`config.json` with the variable unset.
+
 ### Device id
 
 Every night is stored under `device_id`, and it names the device in Home
