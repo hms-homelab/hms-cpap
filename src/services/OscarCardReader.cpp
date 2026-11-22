@@ -79,7 +79,49 @@ std::vector<SessionFileRef> cardFilesOf(const std::string& card_root, long long 
     return refs;
 }
 
+/// SDD-083: the session numbers of a card's session files.
+std::set<long long> cardSessionNumbers(const std::string& card_root) {
+    std::set<long long> out;
+    std::error_code ec;
+    for (fs::recursive_directory_iterator it(fs::path(card_root) / "P-SERIES",
+                                             fs::directory_options::skip_permission_denied, ec),
+         end;
+         !ec && it != end; it.increment(ec)) {
+        if (!it->is_regular_file(ec)) continue;
+        const auto ext = upper(it->path().extension().string());
+        if (ext != ".B01" && ext != ".B02" && ext != ".B05") continue;
+        if (const auto n = numberOf(it->path().stem().string())) out.insert(*n);
+    }
+    return out;
+}
+
+/// The session number at the end of a "<serial>/<session>" key.
+std::optional<long long> numberOfKey(const std::string& key) {
+    const auto slash = key.rfind('/');
+    try {
+        return std::stoll(slash == std::string::npos ? key : key.substr(slash + 1));
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
 }  // namespace
+
+void OscarCardReader::restoreHead(const std::string& key, long long start_ms,
+                                  const std::set<std::string>& removed_now, std::set<std::string>& restored) {
+    if (!opt_.db || removed_now.empty()) return;
+    const std::string night = strDayForSessionStart(sessionClock(start_ms));
+    if (!removed_now.count(night)) return;
+    const std::string dashed = night.substr(0, 4) + "-" + night.substr(4, 2) + "-" + night.substr(6, 2);
+    if (!restored.count(dashed)) {
+        for (const auto& d : restoreUploadedNights(*opt_.db, opt_.device_id, std::vector<std::string>{night})) {
+            std::cout << kTag << "restored removed night " << d << " (uploaded card)" << std::endl;
+            restored.insert(d);
+        }
+    }
+    // Stored once before it was removed: stored again now.
+    if (restored.count(dashed)) done_.erase(key);
+}
 
 OscarCardReader::OscarCardReader(Options o) : opt_(std::move(o)), runner_(opt_.runner) {
     if (!runner_) runner_ = std::make_shared<SystemProcessRunner>();
@@ -236,7 +278,7 @@ void OscarCardReader::run() {
         std::cout << kTag << "reading the card (" << why << ")" << std::endl;
         ReadResult r;
         try {
-            r = card ? readOnce(*card) : readOnce();
+            r = card ? readOnce(*card, true) : readOnce();
         } catch (const std::exception& e) {
             r.outcome = Outcome::Failed;
             r.message = e.what();
@@ -370,10 +412,10 @@ OscarCardReader::ReadResult OscarCardReader::readOnce() {
     return readOnce(opt_.card_root ? opt_.card_root() : "");
 }
 
-OscarCardReader::ReadResult OscarCardReader::readOnce(const std::string& root) {
+OscarCardReader::ReadResult OscarCardReader::readOnce(const std::string& root, bool restore_removed) {
     ReadResult r;
     // SDD-081 D5: while a helper is remembered, the read is its.
-    if (opt_.remote && opt_.remote->remembered()) return readRemote(root);
+    if (opt_.remote && opt_.remote->remembered()) return readRemote(root, restore_removed);
 
     const Settings s = opt_.settings ? opt_.settings() : Settings{};
     const ImportRun run = runImport(s, root, *runner_);
@@ -388,6 +430,16 @@ OscarCardReader::ReadResult OscarCardReader::readOnce(const std::string& root) {
     if (!db) return finish(r, Outcome::Failed, why);
     const auto g = db->gate();
     if (!g.ok) return finish(r, Outcome::NotSupported, g.why);
+    // SDD-083: an uploaded card brings back the removed nights it holds,
+    // before the filter reads which nights are removed.
+    std::set<std::string> restored;
+    if (restore_removed && opt_.db) {
+        const auto removed_now = removedNightSet(*opt_.db, opt_.device_id);
+        const auto numbers = cardSessionNumbers(root);
+        for (const auto& h : run.heads)
+            if (numbers.count(h.session_id)) restoreHead(sessionKey(h), h.start_ms, removed_now, restored);
+    }
+    r.restored.assign(restored.begin(), restored.end());
     const auto removed = opt_.removed ? opt_.removed() : std::set<std::string>{};
     std::optional<CPAPSession> newest;
     std::vector<std::chrono::system_clock::time_point> landed;
@@ -401,18 +453,29 @@ OscarCardReader::ReadResult OscarCardReader::readOnce(const std::string& root) {
     return finish(r, r.stored > 0 ? Outcome::Imported : run.outcome, "");
 }
 
-OscarCardReader::ReadResult OscarCardReader::readRemote(const std::string& root) {
+OscarCardReader::ReadResult OscarCardReader::readRemote(const std::string& root, bool restore_removed) {
     ReadResult r;
     std::error_code ec;
     if (root.empty() || !fs::is_directory(fs::path(root) / "P-SERIES", ec))
         return finish(r, Outcome::Failed, "no P-SERIES card folder to read");
-    const auto removed = opt_.removed ? opt_.removed() : std::set<std::string>{};
+    auto removed = opt_.removed ? opt_.removed() : std::set<std::string>{};
     const std::string slice_dir =
         !opt_.slice_dir.empty() ? opt_.slice_dir : (fs::temp_directory_path() / "hms-cpap-oscar-slice").string();
+    std::set<std::string> restored;
 
     // D5.3: the store half's own filter decides what comes back.
     const IRemoteOscar::Want want = [&](const std::vector<std::string>& keys,
                                         const std::vector<std::pair<long long, long long>>& spans) {
+        // SDD-083: an uploaded card brings back the removed nights it holds.
+        if (restore_removed && opt_.db) {
+            const auto removed_now = removedNightSet(*opt_.db, opt_.device_id);
+            const auto numbers = cardSessionNumbers(root);
+            for (size_t i = 0; i < keys.size() && i < spans.size(); ++i) {
+                const auto n = numberOfKey(keys[i]);
+                if (n && numbers.count(*n)) restoreHead(keys[i], spans[i].first, removed_now, restored);
+            }
+            if (!restored.empty()) removed = opt_.removed ? opt_.removed() : std::set<std::string>{};
+        }
         std::vector<std::string> out;
         for (size_t i = 0; i < keys.size() && i < spans.size(); ++i)
             if (wanted(keys[i], spans[i].first, spans[i].second, removed)) out.push_back(keys[i]);
@@ -420,6 +483,7 @@ OscarCardReader::ReadResult OscarCardReader::readRemote(const std::string& root)
     };
     const RemoteRead rr = opt_.remote->read(root, want, slice_dir);
     r.version = rr.version;
+    r.restored.assign(restored.begin(), restored.end());
     const auto cleanup = [&] {
         std::error_code e;
         if (!rr.slice_dir.empty()) fs::remove_all(rr.slice_dir, e);   // kept for the one pass

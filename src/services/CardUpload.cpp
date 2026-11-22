@@ -190,6 +190,10 @@ Json::Value philipsUploadReply(const oscar::OscarCardReader::ReadResult& rr, boo
     r["oscar"] = oscar::outcomeName(rr.outcome);
     r["read_by"] = helper ? "oscar_helper" : "oscar";
     if (!rr.version.empty()) r["oscar_version"] = rr.version;
+    // SDD-036 D2, as the other cards' replies carry it.
+    Json::Value back(Json::arrayValue);
+    for (const auto& d : rr.restored) back.append(d);
+    r["restored_nights"] = back;
     const std::string why = rr.message.empty() ? "" : " (" + rr.message + ")";
     switch (rr.outcome) {
         case Outcome::Imported:

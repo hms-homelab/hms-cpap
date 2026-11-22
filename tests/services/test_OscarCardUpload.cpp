@@ -13,6 +13,7 @@
 #include "services/DataPublisherService.h"
 #include "services/OscarCard.h"
 #include "services/OscarCardReader.h"
+#include "services/RemovedNights.h"
 #include "OscarFakes.h"
 
 #include <gtest/gtest.h>
@@ -324,6 +325,129 @@ TEST_F(OscarUploadTest, APairedHelperIsAnOscarSourceAndAnOfflineOneIsSaidSo) {
     EXPECT_FALSE(ok.isMember("error"));
     EXPECT_EQ(ok["read_by"].asString(), "oscar_helper");
     svc->oscarReaderForTest()->stop();
+}
+
+// ── removed nights come back with the card (SDD-036 D2) ───────────────────
+
+namespace {
+
+std::string nightOfMs(long long ms) { return strDayForSessionStart(sessionClock(ms)); }
+
+int sessionsOn(SQLiteDatabase& db, const std::string& device) {
+    const auto rows = db.executeQuery("SELECT COUNT(*) AS v FROM cpap_sessions WHERE device_id = ?", {device});
+    const Json::Value& v = rows[0]["v"];
+    return v.isString() ? std::stoi(v.asString()) : v.asInt();
+}
+
+}  // namespace
+
+TEST_F(OscarUploadTest, AnUploadedCardBringsBackTheRemovedNightsItHoldsAndNoOther) {
+    constexpr long long kDay = 86400000LL;
+    // The upload holds session 0x41. OSCAR's profile also holds 0x50, from
+    // another card it read once, on a night removed too.
+    cardFile(store_, "P-SERIES/PXENC001/PROP.BIN");
+    cardFile(store_, "P-SERIES/PXENC001/P0/00000041.B01");
+    oscar_->session(oscar_->hms_, 0x41, kT0, 10);
+    oscar_->session(oscar_->hms_, 0x50, kT0 + 3 * kDay, 10);
+    const std::string mine = nightOfMs(kT0), other = nightOfMs(kT0 + 3 * kDay);
+    ASSERT_NE(mine, other);
+    ASSERT_TRUE(db_->removeNight(kDevice, mine).ok);
+    ASSERT_TRUE(db_->removeNight(kDevice, other).ok);
+
+    OscarCardReader::Options o;
+    o.settings = [this] { return settings_; };
+    o.card_root = [this] { return store_.string(); };
+    o.db = db_;
+    o.device_id = kDevice;
+    o.device_name = "DreamStation 2";
+    o.runner = fake_;
+    o.removed = [this] { return removedNightSet(*db_, kDevice); };
+    OscarCardReader reader(o);
+
+    // A read that is not an upload (a session close, "Read now") restores nothing.
+    auto r = reader.readOnce(store_.string());
+    EXPECT_TRUE(r.restored.empty());
+    EXPECT_EQ(sessionsOn(*db_, kDevice), 0);
+
+    r = reader.readOnce(store_.string(), true);
+    ASSERT_EQ(r.restored.size(), 1u);
+    EXPECT_EQ(nightKeyOf(r.restored[0]), mine);
+    EXPECT_EQ(r.stored, 1);
+    EXPECT_TRUE(db_->sessionExists(kDevice, sessionClock(kT0)));
+    EXPECT_FALSE(db_->sessionExists(kDevice, sessionClock(kT0 + 3 * kDay))) << "not on this card";
+    const auto still = removedNightSet(*db_, kDevice);
+    EXPECT_FALSE(still.count(mine));
+    EXPECT_TRUE(still.count(other)) << "another card's removed night stays removed";
+
+    const auto reply = philipsUploadReply(r, false);
+    ASSERT_EQ(reply["restored_nights"].size(), 1u);
+    EXPECT_EQ(reply["restored_nights"][0].asString(), r.restored[0]);
+}
+
+TEST_F(OscarUploadTest, ANightStoredThenRemovedIsStoredAgainWhenTheCardIsUploadedAgain) {
+    cardFile(store_, "P-SERIES/PXENC001/PROP.BIN");
+    cardFile(store_, "P-SERIES/PXENC001/P0/00000041.B01");
+    oscar_->session(oscar_->hms_, 0x41, kT0, 10);
+    OscarCardReader::Options o;
+    o.settings = [this] { return settings_; };
+    o.card_root = [this] { return store_.string(); };
+    o.db = db_;
+    o.device_id = kDevice;
+    o.runner = fake_;
+    o.removed = [this] { return removedNightSet(*db_, kDevice); };
+    OscarCardReader reader(o);
+    reader.start();
+    EXPECT_EQ(reader.readCard(store_.string(), "upload").get().stored, 1);
+    ASSERT_TRUE(db_->removeNight(kDevice, nightOfMs(kT0)).ok);
+    EXPECT_EQ(sessionsOn(*db_, kDevice), 0);
+
+    // The same process: what it noted as stored is stored again.
+    const auto r = reader.readCard(store_.string(), "upload").get();
+    reader.stop();
+    EXPECT_EQ(r.restored.size(), 1u);
+    EXPECT_EQ(r.stored, 1);
+    EXPECT_EQ(sessionsOn(*db_, kDevice), 1);
+}
+
+TEST_F(OscarUploadTest, ThroughAHelperTheRemovedNightIsRestoredBeforeItsSessionsAreAskedFor) {
+    // The helper returns the heads; the restore happens in the want, so the
+    // restored session is among the ones asked back.
+    class HeadsRemote : public FakeRemote {
+    public:
+        std::vector<std::string> keys;
+        std::vector<std::pair<long long, long long>> spans;
+        std::vector<std::string> asked;
+        RemoteRead read(const std::string& card_root, const Want& want, const std::string& d) override {
+            FakeRemote::read(card_root, want, d);
+            asked = want(keys, spans);
+            RemoteRead r;
+            r.outcome = Outcome::NothingNew;   // no slice: the store half is SDD-081's, tested there
+            return r;
+        }
+    };
+    cardFile(store_, "P-SERIES/PXENC001/PROP.BIN");
+    cardFile(store_, "P-SERIES/PXENC001/P0/00000041.B01");
+    auto remote = std::make_shared<HeadsRemote>();
+    remote->keys = {std::string(kSerial) + "/65", std::string(kSerial) + "/80"};   // 0x41 on the card, 0x50 not
+    remote->spans = {{kT0, kT0 + 600000}, {kT0 + 3 * 86400000LL, kT0 + 3 * 86400000LL + 600000}};
+    ASSERT_TRUE(db_->removeNight(kDevice, nightOfMs(kT0)).ok);
+    ASSERT_TRUE(db_->removeNight(kDevice, nightOfMs(kT0 + 3 * 86400000LL)).ok);
+
+    OscarCardReader::Options o;
+    o.settings = [this] { return settings_; };
+    o.card_root = [this] { return store_.string(); };
+    o.db = db_;
+    o.device_id = kDevice;
+    o.runner = fake_;
+    o.removed = [this] { return removedNightSet(*db_, kDevice); };
+    o.remote = remote;
+    OscarCardReader reader(o);
+    const auto r = reader.readOnce(store_.string(), true);
+    ASSERT_EQ(r.restored.size(), 1u);
+    EXPECT_EQ(nightKeyOf(r.restored[0]), nightOfMs(kT0));
+    ASSERT_EQ(remote->asked.size(), 1u);
+    EXPECT_EQ(remote->asked[0], std::string(kSerial) + "/65");
+    EXPECT_TRUE(removedNightSet(*db_, kDevice).count(nightOfMs(kT0 + 3 * 86400000LL)));
 }
 
 TEST(OscarUploadReply, EveryOutcomeButAnImportIsAnErrorThatSaysWhatToDo) {

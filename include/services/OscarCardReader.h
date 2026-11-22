@@ -110,6 +110,8 @@ public:
         std::string message;       ///< for the log and the tile
         /// SDD-083: each stored session's start, for the upload's nights.
         std::vector<std::chrono::system_clock::time_point> landed;
+        /// SDD-083: removed nights this read restored (YYYY-MM-DD).
+        std::vector<std::string> restored;
     };
 
     explicit OscarCardReader(Options o);
@@ -141,8 +143,11 @@ public:
 
     /// One read, on the calling thread (the worker's body; tests drive it).
     ReadResult readOnce();
-    /// The same, of `card_root` instead of the source's.
-    ReadResult readOnce(const std::string& card_root);
+    /// The same, of `card_root` instead of the source's. `restore_removed`
+    /// (an uploaded card, SDD-083): a night the user removed that holds a
+    /// session of this card is restored first and its sessions stored again,
+    /// as a re-upload of any other card does (SDD-036 D2).
+    ReadResult readOnce(const std::string& card_root, bool restore_removed = false);
 
     /// D7's check on save: the program answers --help with its batch import,
     /// the folder holds an oscar.db that passes D6's gate, the profile is in
@@ -162,7 +167,11 @@ private:
     int storeFrom(OscarDb& db, const std::string& profile, const std::string& card_root,
                   const std::set<std::string>& removed, std::optional<CPAPSession>& newest,
                   std::vector<std::chrono::system_clock::time_point>& landed);
-    ReadResult readRemote(const std::string& root);
+    ReadResult readRemote(const std::string& root, bool restore_removed);
+    /// SDD-083: the removed night of a head of the uploaded card, restored;
+    /// its key forgotten so it is stored again. Worker only.
+    void restoreHead(const std::string& key, long long start_ms, const std::set<std::string>& removed_now,
+                     std::set<std::string>& restored);
     ReadResult finish(ReadResult r, Outcome o, std::string msg);
     /// Stores one decoded session. True when saved.
     bool storeOne(CPAPSession& s, long long session_number, const std::string& card_root);

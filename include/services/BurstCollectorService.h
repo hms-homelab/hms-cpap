@@ -694,7 +694,8 @@ public:
     /// SDD-083: the paired source is the helper.
     bool oscarHelperPaired() const;
     /// SDD-083: an uploaded encrypted card at `card_root` (it holds
-    /// P-SERIES/), read through the paired OSCAR on the reader's thread. Blocks
+    /// P-SERIES/), read through the paired OSCAR on the reader's thread; the
+    /// removed nights holding its sessions are restored first. Blocks
     /// until that read ends. nullopt, and nothing read, when none is paired.
     std::optional<oscar::OscarCardReader::ReadResult> readUploadedOscarCard(const std::string& card_root);
     /// SDD-081: the OSCAR helper, used for the read while one is remembered,

@@ -97,7 +97,8 @@ bool keepPhilipsUpload(const std::string& card_dir, const std::string& store, st
 Json::Value philipsUploadRefusal(bool containerised);
 
 /// The upload's reply from OSCAR's read: on an import the nights stored
-/// ("dates"), on anything else an "error" that says what to do. [helper]:
+/// ("dates") and the removed nights it brought back ("restored_nights", as
+/// for any other card), on anything else an "error" that says what to do. [helper]:
 /// the read was the helper's.
 Json::Value philipsUploadReply(const oscar::OscarCardReader::ReadResult& r, bool helper);
 
