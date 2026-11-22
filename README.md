@@ -33,11 +33,11 @@ and shows you the data. It is a fully local-first experience.
 
 | Manufacturer | Models |
 |---|---|
-| ResMed | AirSense 10, AirSense 11 |
+| ResMed | AirSense 10, AirSense 11, AirCurve 10, AirCurve 11 |
 | Philips | DreamStation 2 |
+| BMC / React Health | Luna |
 | Löwenstein | Prisma Line (20A, 20C, 25S, 25ST), Prisma Smart (Max, Plus, Soft) |
 | Sefam | S.Box AUTO (1263R), SleepBox AUTO (1200R) |
-| BMC / React Health | Luna |
 
 **How each machine gets here**
 
@@ -45,10 +45,12 @@ and shows you the data. It is a fully local-first experience.
 |---|---|---|---|---|---|---|
 | ResMed AirSense 10 | ✅ live | ❌ | ❌ | ✅ live | ✅ live | ✅ after the night |
 | ResMed AirSense 11 | ✅ live | ✅ live | ✅ live | ✅ live | Not tested yet | ✅ after the night |
+| ResMed AirCurve 10 | Not tested yet | ❌ | ❌ | ✅ live | ✅ live | ✅ after the night |
+| ResMed AirCurve 11 | Not tested yet | ✅ live | ✅ live | ✅ live | Not tested yet | ✅ after the night |
 | Philips DreamStation 2 | ✅ live, through OSCAR | ✅ after the night | ✅ after the night | ❌ | ❌ | Not tested yet (unencrypted cards only) |
+| BMC / React Health Luna | ✅ live | ❌ | ❌ | ✅ after the night | ❌ | ✅ after the night |
 | Löwenstein Prisma Line, Prisma Smart | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ after the night |
 | Sefam S.Box, SleepBox | ❌ | ❌ | ❌ | Not tested yet | ❌ | ✅ after the night |
-| BMC / React Health Luna | ✅ live | ❌ | ❌ | ✅ after the night | ❌ | ✅ after the night |
 
 ✅ live: charts update during therapy. ✅ after the night: the night arrives
 once it has ended. ❌: not supported. Not tested yet: the code reads it, not
@@ -190,10 +192,11 @@ the card's files from what it streams into a folder it reads like any card.
 The device and what it does are introduced in
 [Introducing Sleep Bridge Lite](https://www.cpapdash.com/blog/introducing-sleep-bridge-lite).
 
-Supported today: ResMed AirSense 10 and 11, and the BMC Luna G3, live. Coming
-soon, not supported yet: the AirCurve machines. A Philips DreamStation 2
-encrypts its card, so a Sleep Bridge Lite on it gives hms-cpap nothing it
-can read; it is supported over Bluetooth instead (2 and 3 below).
+Supported today: ResMed AirSense 10 and 11, and the BMC Luna G3, live. The
+AirCurve 10 and 11 write the same card as an AirSense, but the Lite has not
+been tested on one yet. A Philips DreamStation 2 encrypts its card, so on a
+Sleep Bridge Lite it is read through the OSCAR you install yourself, live
+once OSCAR is paired; it is also read over Bluetooth (2 and 3 below).
 The brand work happens once, in the bridge, and hms-cpap
 reads a card as it always has. That is what makes hms-cpap brand agnostic,
 and what brings real-time capture of therapy to every machine the bridge
