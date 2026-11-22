@@ -47,7 +47,7 @@ and shows you the data. It is a fully local-first experience.
 | ResMed AirSense 11 | ✅ after the night | ✅ live | ✅ live | ✅ live | ✅ live | Not tested yet |
 | ResMed AirCurve 10 | ✅ after the night | Not tested yet | ❌ | ❌ | ✅ live | ✅ live |
 | ResMed AirCurve 11 | ✅ after the night | Not tested yet | ✅ live | ✅ live | ✅ live | Not tested yet |
-| Philips DreamStation 2 | Not tested yet (unencrypted cards only) | ✅ live, through OSCAR | ✅ after the night | ✅ after the night | ❌ | ❌ |
+| Philips DreamStation 2 | ✅ after the night, through OSCAR | ✅ live, through OSCAR | ✅ after the night | ✅ after the night | ❌ | ❌ |
 | BMC / React Health Luna | ✅ after the night | ✅ live | ❌ | ❌ | ✅ after the night | ❌ |
 | Löwenstein Prisma Line, Prisma Smart | ✅ after the night | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Sefam S.Box, SleepBox | ✅ after the night | ❌ | ❌ | ❌ | Not tested yet | ❌ |
