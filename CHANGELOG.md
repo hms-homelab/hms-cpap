@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hand inside the container was lost on the next update or restart. The
   image now ships gnuplot (the no-X build, which has the pngcairo terminal
   the reports use) and the DejaVu fonts the charts name. Reported by Robert.
+- **Settings, ML Training shows how many models are loaded** instead of
+  "Models {{count}} loaded": the status now carries `model_count` (#102,
+  thanks @rccoleman).
 
 ## [7.0.1]
 
