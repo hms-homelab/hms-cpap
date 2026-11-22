@@ -100,6 +100,7 @@ const char* uploadedCardName(UploadedCard kind) {
         case UploadedCard::Sefam:      return "sefam";
         case UploadedCard::Lowenstein: return "lowenstein";
         case UploadedCard::Bmc:        return "bmc";
+        case UploadedCard::Philips:    return "philips";
         case UploadedCard::Unknown:    break;
     }
     return "unknown";
@@ -145,6 +146,18 @@ std::optional<std::string> encryptedPhilipsCardIn(const std::string& dir) {
     const auto card = PhilipsCardIngestion::findCardDir(dir, kZipDepth);
     if (!card) return std::nullopt;
     if (!cpapdash::parser::PhilipsParser::isEncryptedCard(*card)) return std::nullopt;
+    return card;
+#else
+    (void)dir;
+    return std::nullopt;
+#endif
+}
+
+std::optional<std::string> plainPhilipsCardIn(const std::string& dir) {
+#ifdef CPAPDASH_WITH_PHILIPS
+    const auto card = PhilipsCardIngestion::findCardDir(dir, kZipDepth);
+    if (!card) return std::nullopt;
+    if (cpapdash::parser::PhilipsParser::isEncryptedCard(*card)) return std::nullopt;
     return card;
 #else
     (void)dir;
@@ -353,6 +366,11 @@ std::set<std::string> cardNights(UploadedCard kind, const std::string& root) {
         // is small (about 1 MB an hour), so the reply reads it.
         const auto read = BmcIngestion(root).readSessions("upload", "BMC");
         for (const auto& s : read.sessions) nights.insert(nightOf(*s->session_start));
+    } else if (kind == UploadedCard::Philips) {
+        // SDD-083 D10: as a plain card in a folder is read.
+        const auto read = PhilipsCardIngestion(root).readSessions("upload", "DreamStation");
+        for (const auto& s : read.sessions)
+            if (s.parsed && s.parsed->session_start) nights.insert(nightOf(*s.parsed->session_start));
     }
     return nights;
 }
@@ -424,6 +442,24 @@ CardImportCounts importCardSessions(IDatabase& db, UploadedCard kind, const std:
             if (isRemovedNight(removed, start)) { ++c.removed; continue; }
             if (db.sessionExists(device_id, start)) { ++c.already_stored; continue; }
             if (!save(*s, start)) ++c.refused;
+        }
+    } else if (kind == UploadedCard::Philips) {
+        // SDD-083 D10: a DreamStation card whose files are plain, read as the
+        // burst reads one in a folder (PhilipsCardIngestion).
+        const auto read = PhilipsCardIngestion(root).readSessions(device_id, device_name);
+        if (!read.ok) {
+            std::cerr << "CardUpload: " << read.error << std::endl;
+            return c;
+        }
+        c.found = static_cast<int>(read.sessions.size());
+        int done = 0;
+        for (const auto& s : read.sessions) {
+            if (progress) progress(done++, c.found);
+            if (!s.parsed || !s.parsed->session_start) { ++c.refused; continue; }
+            const auto start = *s.parsed->session_start;
+            if (isRemovedNight(removed, start)) { ++c.removed; continue; }
+            if (db.sessionExists(device_id, start)) { ++c.already_stored; continue; }
+            if (!save(*s.parsed, start)) ++c.refused;
         }
     } else {
         return c;

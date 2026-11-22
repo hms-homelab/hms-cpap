@@ -450,6 +450,39 @@ TEST_F(OscarUploadTest, ThroughAHelperTheRemovedNightIsRestoredBeforeItsSessions
     EXPECT_TRUE(removedNightSet(*db_, kDevice).count(nightOfMs(kT0 + 3 * 86400000LL)));
 }
 
+// ── D10: a DreamStation card whose files are plain ─────────────────────────
+
+TEST_F(OscarUploadTest, APlainDreamStationCardIsReadAsAPlainCardInAFolderIs) {
+    if (!fs::exists(fixtures() / "ds2_live")) GTEST_SKIP() << "fixture not found";
+    fs::create_directories(staging_ / "wrapped");
+    fs::copy(fixtures() / "ds2_live", staging_ / "wrapped", fs::copy_options::recursive);
+    const auto card = plainPhilipsCardIn(staging_.string());
+    ASSERT_TRUE(card.has_value());
+    EXPECT_EQ(fs::path(*card).filename().string(), "PXLIVE01");
+    EXPECT_EQ(classifyUploadedCard(staging_.string()), UploadedCard::Unknown)
+        << "the installer's card read is not changed by this";
+    EXPECT_STREQ(uploadedCardName(UploadedCard::Philips), "philips");
+
+    const auto nights = cardNights(UploadedCard::Philips, *card);
+    ASSERT_FALSE(nights.empty());
+    std::string err;
+    ASSERT_TRUE(keepPhilipsUpload(*card, store_.string(), err)) << err;
+    auto c = importCardSessions(*db_, UploadedCard::Philips, store_.string(), kDevice, "DreamStation");
+    EXPECT_GT(c.found, 0);
+    EXPECT_EQ(c.imported, c.found);
+    EXPECT_EQ(c.nights, nights);
+    c = importCardSessions(*db_, UploadedCard::Philips, store_.string(), kDevice, "DreamStation");
+    EXPECT_EQ(c.imported, 0);
+    EXPECT_EQ(c.already_stored, c.found) << "uploaded again: nothing new";
+}
+
+TEST_F(OscarUploadTest, AnEncryptedCardIsNeverTakenForAPlainOne) {
+    if (!fs::exists(fixtures() / "ds2_encrypted")) GTEST_SKIP() << "fixture not found";
+    encryptedZip();
+    EXPECT_FALSE(plainPhilipsCardIn(staging_.string()).has_value());
+    EXPECT_TRUE(encryptedPhilipsCardIn(staging_.string()).has_value());
+}
+
 TEST(OscarUploadReply, EveryOutcomeButAnImportIsAnErrorThatSaysWhatToDo) {
     for (Outcome o : {Outcome::NotSetUp, Outcome::NoProgram, Outcome::NotSupported, Outcome::NoProfile,
                       Outcome::Busy, Outcome::Timeout, Outcome::ReadNothing, Outcome::Failed,

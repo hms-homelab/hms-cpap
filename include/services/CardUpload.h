@@ -26,9 +26,12 @@ namespace hms_cpap {
 
 class IDatabase;
 
-enum class UploadedCard { ResMed, Sefam, Lowenstein, Bmc, Unknown };
+/// Philips: a DreamStation card whose files are plain (SDD-083 D10). Never
+/// returned by classifyUploadedCard (the installer's card read uses it too);
+/// the upload finds it with plainPhilipsCardIn.
+enum class UploadedCard { ResMed, Sefam, Lowenstein, Bmc, Philips, Unknown };
 
-/// "resmed", "sefam", "lowenstein", "bmc", "unknown": the folder name under uploads/.
+/// "resmed", "sefam", "lowenstein", "bmc", "philips", "unknown": the folder name under uploads/.
 const char* uploadedCardName(UploadedCard kind);
 
 /// What an extracted card is, by its files. Sefam by its session folders,
@@ -84,6 +87,11 @@ CardImportCounts importCardSessions(IDatabase& db, UploadedCard kind, const std:
 /// whose files are encrypted, as the Philips parser judges it; nullopt for no
 /// DreamStation card or one whose files are plain.
 std::optional<std::string> encryptedPhilipsCardIn(const std::string& dir);
+
+/// SDD-083 D10: the folder of a DreamStation card in [dir] whose files are
+/// plain; nullopt for none or an encrypted one. Read as a plain card in a
+/// folder is (PhilipsCardIngestion), kept under uploads/philips.
+std::optional<std::string> plainPhilipsCardIn(const std::string& dir);
 
 /// The card at [card_dir] kept under [store] the way OSCAR takes a card:
 /// <store>/P-SERIES/<machine>/, merged with what earlier uploads left there.

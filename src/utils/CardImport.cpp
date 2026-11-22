@@ -32,6 +32,26 @@ CardImportResult mirrorCardInto(const std::string& extracted_root,
 
     const std::regex datedir("^[0-9]{8}$");
 
+    // SDD-083 D11: a zip with no date folder is refused by the caller, and a
+    // refused upload leaves nothing in the card folder: nothing is copied
+    // until a date folder is known to be there.
+    {
+        bool any_date = false;
+        for (auto it = fs::recursive_directory_iterator(card_root, ec);
+             !any_date && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+            if (ec) break;
+            if (!it->is_regular_file(ec)) continue;
+            const auto size = fs::file_size(it->path(), ec);
+            if (ec) { ec.clear(); continue; }
+            // A file the copy would skip does not make the zip a card.
+            if (residualSkip(it->path().filename().string(), static_cast<uint64_t>(size))) continue;
+            for (const auto& part : fs::relative(it->path(), card_root, ec))
+                if (std::regex_match(part.string(), datedir)) any_date = true;
+        }
+        ec.clear();
+        if (!any_date) return out;
+    }
+
     for (auto it = fs::recursive_directory_iterator(card_root, ec);
          it != fs::recursive_directory_iterator(); it.increment(ec)) {
         if (ec) break;
