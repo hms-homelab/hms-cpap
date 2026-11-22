@@ -1,5 +1,27 @@
 {
   "reports": {
+    "form": {
+      "summary": "Rapport de synthèse",
+      "clinician": "Rapport clinique",
+      "compliance": "Rapport d'observance"
+    },
+    "compliance": {
+      "nights": "Nuits",
+      "hours": "Heures",
+      "share": "Pourcentage de nuits",
+      "ruleSentence": "Au moins {{hours}} heures sur au moins {{share}} % des nuits."
+    },
+    "pdf": {
+      "clinicianDesc": "Un PDF détaillé pour votre médecin : les statistiques de votre traitement par période et par mois, les modifications des réglages de votre appareil, le contrôle d'observance CMS et une page pour votre dernière nuit et votre pire nuit.",
+      "clinicianBadge": "Clinique",
+      "complianceDesc": "Un PDF avec un seul verdict : avez-vous respecté votre règle sur la période. Chaque nuit de la période compte, et une nuit sans utilisation est un échec. Avec un calendrier des nuits et les chiffres derrière.",
+      "complianceBadge": "Observance",
+      "ruleShort": "{{h}} h sur {{p}} %"
+    },
+    "messages": {
+      "generateFailed": "Impossible de générer le rapport",
+      "ruleOutOfRange": "Les heures doivent être entre 0,5 et 24 et le pourcentage entre 1 et 100."
+    },
     "title": "Rapports PDF",
     "generate": {
       "heading": "Générer un rapport",

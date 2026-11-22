@@ -3,6 +3,7 @@
 #include "utils/MachineClocks.h"
 #include "utils/AppConfig.h"
 #include "web/ArchiveChart.h"
+#include "services/reports/figures/ClinicianFigures.h"
 #include "utils/NightQuiet.h"
 #include "utils/OximetryDevice.h"
 #include "utils/TherapyPressure.h"
@@ -1148,6 +1149,136 @@ Json::Value QueryService::getSessionOximetry(const std::string& date, int interv
     result["source"]      = sources.empty() ? Json::Value(Json::nullValue) : sources[0u]["source"];
     result["device_name"] = sources.empty() ? Json::Value(Json::nullValue) : sources[0u]["device_name"];
     return result;
+}
+
+// ---- SDD-082: the clinician and compliance reports' nights -------------------
+
+namespace {
+
+/// A pressure a machine can deliver, else nullopt: a 0 is a minute the machine
+/// was off, and anything above 30 cmH2O is a decoding glitch, not a reading.
+std::optional<double> plausiblePressure(const Json::Value& row, const char* key) {
+    const auto v = jopt(row, key);
+    if (v && *v > 0 && *v <= 30) return v;
+    return std::nullopt;
+}
+
+double round2(double v) { return std::round(v * 100.0) / 100.0; }
+
+/// The per-minute figures of one night from its minute rows (database rows
+/// or archived points, the same four keys).
+void minuteFigures(const Json::Value& minutes, Json::Value& night) {
+    std::vector<double> fl;
+    std::optional<double> press_min, epap_min, epap_max;
+    double epap_sum = 0;
+    int epap_n = 0, leak_n = 0, leak_over = 0;
+    for (const auto& m : minutes) {
+        if (const auto f = jopt(m, "flow_limitation")) fl.push_back(*f);
+        if (const auto p = plausiblePressure(m, "therapy_pressure"))
+            press_min = press_min ? std::min(*press_min, *p) : *p;
+        if (const auto e = plausiblePressure(m, "epr_pressure")) {
+            epap_min = epap_min ? std::min(*epap_min, *e) : *e;
+            epap_max = epap_max ? std::max(*epap_max, *e) : *e;
+            epap_sum += *e;
+            ++epap_n;
+        }
+        if (const auto l = jopt(m, "leak_rate")) {
+            ++leak_n;
+            if (*l > 24) ++leak_over;
+        }
+    }
+    const auto put = [&](const char* k, const std::optional<double>& v) {
+        night[k] = v ? Json::Value(*v) : Json::Value(Json::nullValue);
+    };
+    const auto p95 = clinician::percentileCont(fl, 0.95);
+    put("flow_lim_95", p95 ? std::optional<double>(round2(*p95)) : std::nullopt);
+    put("press_min", press_min);
+    put("epap_min", epap_min);
+    put("epap_avg", epap_n ? std::optional<double>(round2(epap_sum / epap_n)) : std::nullopt);
+    put("epap_max", epap_max);
+    // A night with per-minute leak and no minute over the line is 0, not
+    // null: the machine reported, and it was under.
+    put("leak_over_24_minutes", leak_n ? std::optional<double>(leak_over) : std::nullopt);
+}
+
+}  // namespace
+
+Json::Value QueryService::getClinicalNights(const std::string& start, const std::string& end) {
+    Json::Value rows = query(
+        "SELECT record_date, duration_minutes, ahi, hi, ai, oai, cai, uai, rin, csr,"
+        " COALESCE(index_kind, 'ahi') AS index_kind,"
+        " leak_50, leak_95, leak_max,"
+        " mask_press_50, mask_press_95, mask_press_max,"
+        " therapy_press_50, therapy_press_95, therapy_press_max,"
+        " mode, epr_level, pressure_setting, COALESCE(family, 0) AS family,"
+        " apap_min_pressure, apap_max_pressure,"
+        " bl_min_epap, bl_max_ipap, bl_ps, bl_ipap, bl_epap"
+        " FROM cpap_daily_summary"
+        " WHERE device_id = " + sql::param(1, dt_) +
+        " AND record_date >= " + sql::castDate(2, dt_) +
+        " AND record_date <= " + sql::castDate(3, dt_) +
+        " ORDER BY record_date",
+        {device_id_, start, end});
+    if (!rows.isArray() || rows.empty()) return Json::Value(Json::arrayValue);
+
+    // The machine's own Large Leak flags, summed per night (null when it
+    // wrote none, which a ResMed never does).
+    const std::string night = sql::sleepDay("s.session_start", dt_);
+    std::map<std::string, double> large_leak;
+    for (const auto& r : query(
+             "SELECT " + night + " AS night, SUM(e.duration_seconds) AS secs"
+             " FROM cpap_sessions s JOIN cpap_events e ON e.session_id = s.id"
+             " WHERE s.device_id = " + sql::param(1, dt_) +
+             " AND e.event_type = 'Large Leak'"
+             " AND " + night + " >= " + sql::castDate(2, dt_) +
+             " AND " + night + " <= " + sql::castDate(3, dt_) +
+             " GROUP BY " + night,
+             {device_id_, start, end})) {
+        const auto secs = jopt(r, "secs");
+        if (secs) large_leak[r.get("night", "").asString().substr(0, 10)] = *secs;
+    }
+
+    const auto archive = archive_chart::load(AppConfig::dataDir(), device_id_);
+    const auto removed = db_->removedNights(device_id_);
+    for (auto& row : rows) {
+        const std::string date = row.get("record_date", "").asString().substr(0, 10);
+        row["record_date"] = date;
+        Json::Value minutes = query(
+            "SELECT c.flow_limitation, c.therapy_pressure, c.epr_pressure, c.leak_rate"
+            " FROM cpap_sessions s JOIN cpap_calculated_metrics c ON c.session_id = s.id"
+            " WHERE s.device_id = " + sql::param(1, dt_) +
+            " AND " + night + " = " + sql::castDate(2, dt_),
+            {device_id_, date});
+        // A night whose minutes left the database lives on in the opt-in
+        // archive the session page also reads.
+        if (!minutes.isArray() || minutes.empty()) {
+            const auto day = archive_chart::day(archive, date);
+            if (!day.isNull() && !archive_chart::removed(date, removed)) minutes = day["points"];
+        }
+        minuteFigures(minutes, row);
+        const auto it = large_leak.find(date);
+        row["large_leak_minutes"] = it == large_leak.end()
+            ? Json::Value(Json::nullValue)
+            : Json::Value(std::round(it->second / 60.0 * 10.0) / 10.0);
+    }
+    return rows;
+}
+
+Json::Value QueryService::getNightsOnRecord() {
+    const auto rows = query(
+        "SELECT MIN(record_date) AS first_night, MAX(record_date) AS last_night"
+        " FROM cpap_daily_summary"
+        " WHERE device_id = " + sql::param(1, dt_) + " AND duration_minutes > 0",
+        {device_id_});
+    Json::Value out(Json::objectValue);
+    out["first_night"] = "";
+    out["last_night"] = "";
+    if (rows.isArray() && !rows.empty()) {
+        const auto& r = rows[0];
+        if (!r["first_night"].isNull()) out["first_night"] = r["first_night"].asString().substr(0, 10);
+        if (!r["last_night"].isNull()) out["last_night"] = r["last_night"].asString().substr(0, 10);
+    }
+    return out;
 }
 
 } // namespace hms_cpap

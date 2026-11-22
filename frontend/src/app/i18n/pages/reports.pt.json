@@ -1,5 +1,27 @@
 {
   "reports": {
+    "form": {
+      "summary": "Relatório resumo",
+      "clinician": "Relatório clínico",
+      "compliance": "Relatório de adesão"
+    },
+    "compliance": {
+      "nights": "Noites",
+      "hours": "Horas",
+      "share": "Porcentagem de noites",
+      "ruleSentence": "Pelo menos {{hours}} horas em pelo menos {{share}} % das noites."
+    },
+    "pdf": {
+      "clinicianDesc": "Um PDF detalhado para o seu médico: as estatísticas da sua terapia por período e por mês, as mudanças nas configurações do seu aparelho, a verificação de adesão CMS e uma página para a sua última noite e a sua pior noite.",
+      "clinicianBadge": "Clínico",
+      "complianceDesc": "Um PDF com um só veredicto: se você cumpriu a sua regra no período. Cada noite do período conta, e uma noite sem uso é uma falha. Com um calendário das noites e os números por trás.",
+      "complianceBadge": "Adesão",
+      "ruleShort": "{{h}} h em {{p}} %"
+    },
+    "messages": {
+      "generateFailed": "Não foi possível gerar o relatório",
+      "ruleOutOfRange": "As horas devem ficar entre 0,5 e 24 e a porcentagem entre 1 e 100."
+    },
     "title": "Relatórios em PDF",
     "generate": {
       "heading": "Gerar relatório",

@@ -584,8 +584,14 @@ export class CpapApiService {
     return this.http.post<any>(`/api/sleephq/export/${date}`, {});
   }
 
-  generateReport(start: string, end: string): Observable<{ report_id: number; status: string }> {
-    return this.http.post<any>('/api/reports/generate', { start, end });
+  /**
+   * SDD-082: `extra` carries the kind (clinician, compliance; absent is the
+   * standard report), a compliance report's rule and the PDF's language.
+   */
+  generateReport(start: string, end: string,
+                 extra: { kind?: string; rule?: { hours: number; share: number }; language?: string } = {}):
+      Observable<{ report_id: number; status: string }> {
+    return this.http.post<any>('/api/reports/generate', { start, end, ...extra });
   }
 
   listReports(): Observable<any[]> {

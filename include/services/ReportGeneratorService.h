@@ -2,6 +2,8 @@
 #include "database/IDatabase.h"
 #include "web/QueryService.h"
 #include "services/reports/BaseReportGenerator.h"
+#include "services/reports/ReportRequest.h"
+#include <optional>
 #include "mqtt_client.h"
 #include <string>
 #include <memory>
@@ -21,7 +23,13 @@ struct ReportJob {
     int         nights_count = 0;
     std::string created_at;
     std::string completed_at;
+    // SDD-082: "standard", "clinician" or "compliance" (from the filename
+    // prefix, as CpapDash does), and a compliance report's rule as stored
+    // ({"hours":4,"share":70}; empty for any other kind).
+    std::string kind = "standard";
+    std::string rule;
 };
+
 
 class ReportGeneratorService {
 public:
@@ -35,7 +43,8 @@ public:
 
     // Create a report job and kick off async generation.
     // Returns the report id on success, -1 on error.
-    int triggerReport(const std::string& start, const std::string& end);
+    int triggerReport(const std::string& start, const std::string& end,
+                      const ReportRequest& request = ReportRequest());
 
     // List reports for device, most-recent first.
     std::vector<ReportJob> listReports(int limit = 20);
@@ -52,10 +61,11 @@ private:
     std::string                         report_dir_;
     std::string                         logo_path_;
 
-    std::string buildFilename(const std::string& start, const std::string& end) const;
-    // Picks DailyReportGenerator or RangeReportGenerator and calls generate().
+    // Picks the generator for the request's kind (Daily or Range for a
+    // standard report) and calls generate().
     void generate(int report_id, const std::string& start, const std::string& end,
-                  const std::string& filepath);
+                  const std::string& filepath, const ReportRequest& request);
+    ReportJob jobOf(const Json::Value& row) const;
 };
 
 } // namespace hms_cpap

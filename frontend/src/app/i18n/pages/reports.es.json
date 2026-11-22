@@ -1,5 +1,27 @@
 {
   "reports": {
+    "form": {
+      "summary": "Informe resumen",
+      "clinician": "Informe clínico",
+      "compliance": "Informe de cumplimiento"
+    },
+    "compliance": {
+      "nights": "Noches",
+      "hours": "Horas",
+      "share": "Porcentaje de noches",
+      "ruleSentence": "Al menos {{hours}} horas en al menos el {{share}} % de las noches."
+    },
+    "pdf": {
+      "clinicianDesc": "Un PDF detallado para tu médico: las estadísticas de tu terapia por periodo y por mes, los cambios en la configuración de tu equipo, la comprobación de adherencia CMS y una página para tu última noche y tu peor noche.",
+      "clinicianBadge": "Clínico",
+      "complianceDesc": "Un PDF con un solo veredicto: si cumpliste tu regla en el rango. Cuenta cada noche del rango, y una noche sin uso es un fallo. Con un calendario de las noches y los números que hay detrás.",
+      "complianceBadge": "Cumplimiento",
+      "ruleShort": "{{h}} h en el {{p}} %"
+    },
+    "messages": {
+      "generateFailed": "No se pudo generar el informe",
+      "ruleOutOfRange": "Las horas deben estar entre 0,5 y 24 y el porcentaje entre 1 y 100."
+    },
     "title": "Informes PDF",
     "generate": {
       "heading": "Generar informe",

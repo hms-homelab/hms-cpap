@@ -2339,8 +2339,17 @@ void CpapController::generateReport(const drogon::HttpRequestPtr& req,
         cb(jsonError("'start' must be before 'end'", drogon::k400BadRequest));
         return;
     }
+    // SDD-082: the kind, a compliance report's rule (its hours defaulting to
+    // the usage target from Settings, B5) and the PDF's language.
+    ReportRequest request;
+    const double default_hours = config_ ? static_cast<double>(config_->usage_target_hours)
+                                         : static_cast<double>(AppConfig::kDefaultUsageTargetHours);
+    if (const auto bad = parseReportRequest(*body, default_hours, request)) {
+        cb(jsonError(*bad, drogon::k400BadRequest));
+        return;
+    }
 
-    int id = report_svc_->triggerReport(start, end);
+    int id = report_svc_->triggerReport(start, end, request);
     if (id < 0) {
         cb(jsonError("Failed to create report job", drogon::k500InternalServerError));
         return;
@@ -2350,7 +2359,37 @@ void CpapController::generateReport(const drogon::HttpRequestPtr& req,
     result["status"]    = "generating";
     result["start"]     = start;
     result["end"]       = end;
+    result["kind"]      = request.kind;
+    if (request.kind == "compliance") {
+        result["rule"]["hours"] = request.rule_hours;
+        result["rule"]["share"] = request.rule_share;
+    }
     cb(jsonResp(result));
+}
+
+// SDD-082: a report as the list and the status answer it.
+static Json::Value reportJobJson(const ReportJob& j) {
+    Json::Value o;
+    o["id"]           = j.id;
+    o["range_start"]  = j.range_start;
+    o["range_end"]    = j.range_end;
+    o["nights_count"] = j.nights_count;
+    o["filename"]     = j.filename;
+    o["status"]       = j.status;
+    o["error_msg"]    = j.error_msg;
+    o["created_at"]   = j.created_at;
+    o["completed_at"] = j.completed_at;
+    o["kind"]         = j.kind;
+    Json::Value rule(Json::nullValue);
+    if (!j.rule.empty()) {
+        Json::CharReaderBuilder rb;
+        std::string errs;
+        std::istringstream in(j.rule);
+        Json::Value parsed;
+        if (Json::parseFromStream(rb, in, &parsed, &errs) && parsed.isObject()) rule = parsed;
+    }
+    o["rule"] = rule;
+    return o;
 }
 
 void CpapController::listReports(const drogon::HttpRequestPtr&,
@@ -2361,19 +2400,7 @@ void CpapController::listReports(const drogon::HttpRequestPtr&,
     }
     auto jobs = report_svc_->listReports(50);
     Json::Value arr(Json::arrayValue);
-    for (const auto& j : jobs) {
-        Json::Value o;
-        o["id"]           = j.id;
-        o["range_start"]  = j.range_start;
-        o["range_end"]    = j.range_end;
-        o["nights_count"] = j.nights_count;
-        o["filename"]     = j.filename;
-        o["status"]       = j.status;
-        o["error_msg"]    = j.error_msg;
-        o["created_at"]   = j.created_at;
-        o["completed_at"] = j.completed_at;
-        arr.append(o);
-    }
+    for (const auto& j : jobs) arr.append(reportJobJson(j));
     cb(jsonResp(arr));
 }
 
@@ -2394,17 +2421,7 @@ void CpapController::reportStatus(const drogon::HttpRequestPtr&,
         cb(jsonError("Report not found", drogon::k404NotFound));
         return;
     }
-    Json::Value o;
-    o["id"]           = job->id;
-    o["range_start"]  = job->range_start;
-    o["range_end"]    = job->range_end;
-    o["nights_count"] = job->nights_count;
-    o["filename"]     = job->filename;
-    o["status"]       = job->status;
-    o["error_msg"]    = job->error_msg;
-    o["created_at"]   = job->created_at;
-    o["completed_at"] = job->completed_at;
-    cb(jsonResp(o));
+    cb(jsonResp(reportJobJson(*job)));
 }
 
 void CpapController::downloadReport(const drogon::HttpRequestPtr&,

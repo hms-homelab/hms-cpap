@@ -1,8 +1,14 @@
-import { Component, OnInit, OnDestroy } from '@angular/core';
+import { Component, OnInit, OnDestroy, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { TranslatePipe } from '@ngx-translate/core';
+import { TranslatePipe, TranslateService } from '@ngx-translate/core';
 import { CpapApiService } from '../../services/cpap-api.service';
+import { LanguageService } from '../../services/language.service';
+import { usageTargetHoursOf } from '../dashboard/card-data';
+import {
+  ReportKind, RULE_DEFAULT_SHARE, SPANS, hoursLabel, localDate, nightOf, requestBody,
+  ruleInRange, spanDates,
+} from './report-form';
 
 @Component({
   selector: 'app-reports',
@@ -20,12 +26,34 @@ export class ReportsComponent implements OnInit, OnDestroy {
   downloading: Record<number, boolean> = {};
   private refreshTimer: any = null;
 
+  // SDD-082: CpapDash's three report kinds.
+  kind: ReportKind = 'standard';
+  readonly spans = SPANS;
+  /** 30, 60 or 90 nights ending at the latest night; null once a date is typed. */
+  complianceSpan: 30 | 60 | 90 | null = null;
+  /** B5: the hours default to the usage target from Settings, the percent to 70. */
+  ruleHours = 4;
+  ruleShare = RULE_DEFAULT_SHARE;
+  /** The latest therapy night, what the span choice ends on. */
+  private latestNight = '';
+
+  private translate = inject(TranslateService);
+  private lang = inject(LanguageService);
+
   constructor(private api: CpapApiService) {}
 
   ngOnInit() {
     this.setDefaultDates();
     this.loadReports();
     this.refreshTimer = setInterval(() => this.loadReports(), 15000);
+    this.api.getConfig().subscribe({
+      next: (cfg) => { this.ruleHours = usageTargetHoursOf(cfg?.usage_target_hours); },
+      error: () => {},
+    });
+    this.api.getDashboard().subscribe({
+      next: (d: any) => { this.latestNight = nightOf(d?.latest_night?.sleep_day); },
+      error: () => {},
+    });
   }
 
   ngOnDestroy() {
@@ -41,6 +69,29 @@ export class ReportsComponent implements OnInit, OnDestroy {
     this.endDate = now.toISOString().slice(0, 10);
   }
 
+  pickKind(k: ReportKind) {
+    this.kind = k;
+    // The compliance report opens on the last 30 nights, as CpapDash's does.
+    if (k === 'compliance' && this.complianceSpan === null) this.pickSpan(30);
+  }
+
+  /** Fill the dates with the last N nights ending at the latest night. */
+  pickSpan(n: 30 | 60 | 90) {
+    const span = spanDates(n, this.latestNight || localDate(new Date()));
+    this.startDate = span.start;
+    this.endDate = span.end;
+    this.complianceSpan = n;
+  }
+
+  /** A date typed by hand is no longer one of the three spans. */
+  dateEdited() {
+    this.complianceSpan = null;
+  }
+
+  get ruleHoursLabel(): string {
+    return hoursLabel(Number(this.ruleHours));
+  }
+
   loadReports() {
     this.api.listReports().subscribe({
       next: r => this.reports = r,
@@ -50,16 +101,22 @@ export class ReportsComponent implements OnInit, OnDestroy {
 
   generate() {
     if (!this.startDate || !this.endDate) return;
-    this.generating = true;
     this.generateError = '';
-    this.api.generateReport(this.startDate, this.endDate).subscribe({
+    if (this.kind === 'compliance' && !ruleInRange(Number(this.ruleHours), Number(this.ruleShare))) {
+      this.generateError = this.translate.instant('reports.messages.ruleOutOfRange');
+      return;
+    }
+    this.generating = true;
+    const extra = requestBody(this.kind, Number(this.ruleHours), Number(this.ruleShare), this.lang.current());
+    this.api.generateReport(this.startDate, this.endDate, extra).subscribe({
       next: () => {
         this.generating = false;
         this.loadReports();
       },
-      error: () => {
+      error: (e) => {
         this.generating = false;
-        this.generateError = 'Failed to start report generation.';
+        // The server's own words for a refused rule; the generic line otherwise.
+        this.generateError = e?.error?.error || this.translate.instant('reports.messages.generateFailed');
       }
     });
   }

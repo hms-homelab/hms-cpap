@@ -32,12 +32,22 @@ public:
 
     virtual ~BaseReportGenerator() = default;
 
-    // Entry point called from detached thread.
-    void generate(int report_id,
-                  const std::string& start,
-                  const std::string& end,
-                  const std::string& filepath,
-                  const std::string& report_dir);
+    // Entry point called from detached thread. Virtual for SDD-082: the
+    // clinician and compliance reports draw their own documents.
+    virtual void generate(int report_id,
+                          const std::string& start,
+                          const std::string& end,
+                          const std::string& filepath,
+                          const std::string& report_dir);
+
+    /// SDD-082 B6: the PDF's language ("en", "es", "pt", "hu", "fr"); anything
+    /// else is English. The range and daily reports stay English.
+    void setLanguage(const std::string& lang) { language_ = lang; }
+
+    /// SDD-082 B3: the disclaimer the clinician and compliance reports end with.
+    static constexpr const char* kDisclaimerEn =
+        "HMS-CPAP is a consumer tool for education and self-tracking, not a medical device and "
+        "not medical advice. Always consult your clinician about your therapy.";
 
 protected:
     // Subclasses override these three
@@ -99,10 +109,24 @@ protected:
     void addInsightsSection(PdfRenderer& pdf, const Json::Value& daily,
                             const std::string& start, const std::string& end);
 
-private:
+    // Protected for SDD-082's generators, which run their own generate().
     void updateStatus    (int id, const std::string& status, const std::string& err = "");
     void updateNightsCount(int id, int n);
-    void publishMqtt     (int id, const std::string& filename, int nights);
+    /// `extra` is merged into the ready message (SDD-082: kind, verdict).
+    void publishMqtt     (int id, const std::string& filename, int nights,
+                          const Json::Value& extra = Json::Value());
+
+    /// The machine's name for the cover, as the range report has always named it.
+    std::string coverMachineName() const;
+
+    /// SDD-082: the download name of a stored file, without the "<id>_" a
+    /// clinician or compliance file is stored under.
+    static std::string downloadName(const std::string& filepath);
+
+    /// 0 for English, 1 to 4 for es, pt, hu, fr: the column of a label table.
+    std::size_t languageIndex() const;
+
+    std::string language_ = "en";
 };
 
 } // namespace hms_cpap

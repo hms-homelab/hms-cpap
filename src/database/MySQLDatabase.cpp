@@ -4,6 +4,7 @@
 #include "database/NightWrite.h"
 #include "database/SqlDialect.h"
 #include "database/StrPercentile.h"
+#include "database/StrSettings.h"
 #include "utils/MachineClocks.h"
 #include "utils/Desaturation.h"
 #include "utils/OximetryDevice.h"
@@ -1188,6 +1189,17 @@ void MySQLDatabase::migrateSchema() {
         {"cpap_daily_summary", "therapy_press_50",     "DOUBLE"},
         {"cpap_daily_summary", "therapy_press_95",     "DOUBLE"},
         {"cpap_daily_summary", "therapy_press_max",    "DOUBLE"},
+        // SDD-082 B10: the STR's settings the clinician report reads.
+        {"cpap_daily_summary", "family",               "INT DEFAULT 0"},
+        {"cpap_daily_summary", "apap_min_pressure",    "DOUBLE"},
+        {"cpap_daily_summary", "apap_max_pressure",    "DOUBLE"},
+        {"cpap_daily_summary", "bl_min_epap",          "DOUBLE"},
+        {"cpap_daily_summary", "bl_max_ipap",          "DOUBLE"},
+        {"cpap_daily_summary", "bl_ps",                "DOUBLE"},
+        {"cpap_daily_summary", "bl_ipap",              "DOUBLE"},
+        {"cpap_daily_summary", "bl_epap",              "DOUBLE"},
+        // SDD-082: the rule a compliance report was judged against (JSON text).
+        {"cpap_reports", "rule", "TEXT"},
 
         // SDD-013: what wrote the summary ('llm' or 'local').
         {"cpap_summaries", "source", "VARCHAR(16) NOT NULL DEFAULT 'llm'"},
@@ -2916,7 +2928,10 @@ bool MySQLDatabase::saveSTRDailyRecords(const std::vector<STRDailyRecord>& recor
                  ahi_str, hi_str, ai_str, oai_str, cai_str, uai_str, rin_str,
                  duration_minutes_str, index_source, updated_at,
                  -- SDD-033 D1: appended, for the same reason.
-                 leak_50_str, leak_95_str, mask_press_50_str, spo2_50_str)
+                 leak_50_str, leak_95_str, mask_press_50_str, spo2_50_str,
+                 -- SDD-082 B10: the settings, appended (positional binds).
+                 family, apap_min_pressure, apap_max_pressure,
+                 bl_min_epap, bl_max_ipap, bl_ps, bl_ipap, bl_epap)
             VALUES (?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?,
@@ -2928,8 +2943,16 @@ bool MySQLDatabase::saveSTRDailyRecords(const std::vector<STRDailyRecord>& recor
                     ?,
                     ?, ?, ?, ?, ?, ?, ?,
                     ?, 'str', NOW(),
-                    ?, ?, ?, ?)
+                    ?, ?, ?, ?,
+                    ?, ?, ?,
+                    ?, ?, ?, ?, ?)
             ON DUPLICATE KEY UPDATE
+                -- SDD-082 B10: the STR is the only writer of the settings.
+                family = VALUES(family),
+                apap_min_pressure = VALUES(apap_min_pressure),
+                apap_max_pressure = VALUES(apap_max_pressure),
+                bl_min_epap = VALUES(bl_min_epap), bl_max_ipap = VALUES(bl_max_ipap),
+                bl_ps = VALUES(bl_ps), bl_ipap = VALUES(bl_ipap), bl_epap = VALUES(bl_epap),
                 mask_pairs       = VALUES(mask_pairs),
                 mask_events      = VALUES(mask_events),
                 machine_hours    = VALUES(machine_hours),
@@ -3008,7 +3031,7 @@ bool MySQLDatabase::saveSTRDailyRecords(const std::vector<STRDailyRecord>& recor
             }
             pairs_json << "]";
 
-            ParamBinder p(43);
+            ParamBinder p(51);
             p.bindText(0, rec.device_id);
             p.bindText(1, date_oss.str());
             p.bindText(2, pairs_json.str());
@@ -3060,6 +3083,16 @@ bool MySQLDatabase::saveSTRDailyRecords(const std::vector<STRDailyRecord>& recor
             bind_pct(40, strPercentile(rec.leak_95, true));
             bind_pct(41, strPercentile(rec.mask_press_50, false));
             bind_pct(42, strPercentile(rec.spo2_50, false));
+            // SDD-082 B10: the family and the prescribed pressures.
+            const StrSettings st = strSettingsOf(rec);
+            p.bindInt(43, st.family);
+            bind_pct(44, st.apap_min);
+            bind_pct(45, st.apap_max);
+            bind_pct(46, st.bl_min_epap);
+            bind_pct(47, st.bl_max_ipap);
+            bind_pct(48, st.bl_ps);
+            bind_pct(49, st.bl_ipap);
+            bind_pct(50, st.bl_epap);
 
             mysql_stmt_bind_param(g.stmt, p.data());
             if (mysql_stmt_execute(g.stmt) != 0) {

@@ -3,6 +3,7 @@
 #include "database/DatabaseService.h"
 #include "database/NightWrite.h"
 #include "database/SqlDialect.h"
+#include "database/StrSettings.h"
 #include "utils/MachineClocks.h"
 #include "utils/Desaturation.h"
 #include "utils/OximetryDevice.h"
@@ -476,7 +477,12 @@ bool DatabaseService::connect() {
                                         "mask_press_50_str FLOAT", "spo2_50_str FLOAT",
                                         // Issue #56: the night's therapy pressure (PLD Press).
                                         "therapy_press_50 FLOAT", "therapy_press_95 FLOAT",
-                                        "therapy_press_max FLOAT"}) {
+                                        "therapy_press_max FLOAT",
+                                        // SDD-082 B10: the STR's settings.
+                                        "family INT DEFAULT 0", "apap_min_pressure FLOAT",
+                                        "apap_max_pressure FLOAT", "bl_min_epap FLOAT",
+                                        "bl_max_ipap FLOAT", "bl_ps FLOAT", "bl_ipap FLOAT",
+                                        "bl_epap FLOAT"}) {
                     txn.exec(std::string("ALTER TABLE cpap_daily_summary ADD COLUMN IF NOT EXISTS ") + col);
                 }
                 txn.exec("ALTER TABLE cpap_session_metrics ADD COLUMN IF NOT EXISTS avg_epr_pressure FLOAT");
@@ -929,6 +935,8 @@ bool DatabaseService::connect() {
                     CREATE INDEX IF NOT EXISTS idx_cpap_reports_device_created
                     ON cpap_reports(device_id, created_at DESC)
                 )");
+                // SDD-082: the rule a compliance report was judged against.
+                txn.exec("ALTER TABLE cpap_reports ADD COLUMN IF NOT EXISTS rule TEXT");
                 // The seven presets from SDD-043, verbatim, so a user running
                 // both stacks sees one vocabulary.
                 txn.exec(R"(
@@ -3161,7 +3169,10 @@ bool DatabaseService::saveSTRDailyRecords(const std::vector<STRDailyRecord>& rec
                      ahi_str, hi_str, ai_str, oai_str, cai_str, uai_str, rin_str,
                      duration_minutes_str, index_source, updated_at,
                      -- SDD-033 D1: appended, for the same reason.
-                     leak_50_str, leak_95_str, mask_press_50_str, spo2_50_str)
+                     leak_50_str, leak_95_str, mask_press_50_str, spo2_50_str,
+                     -- SDD-082 B10: the settings, appended for the same reason.
+                     family, apap_min_pressure, apap_max_pressure,
+                     bl_min_epap, bl_max_ipap, bl_ps, bl_ipap, bl_epap)
                 VALUES ($1, $2, $3::jsonb, $4, $5, $6,
                         $7, $8, $9, $10, $11, $12, $13, $14,
                         $15, $16, $17,
@@ -3178,8 +3189,23 @@ bool DatabaseService::saveSTRDailyRecords(const std::vector<STRDailyRecord>& rec
                         CASE WHEN $18::float >= 0 THEN $18::float END,
                         CASE WHEN $19::float >= 0 THEN $19::float END,
                         CASE WHEN $15::float > 0 THEN $15::float END,
-                        CASE WHEN $21::float > 0 THEN $21::float END)
+                        CASE WHEN $21::float > 0 THEN $21::float END,
+                        -- SDD-082 B10: -1 is "the STR has none" (StrSettings.h).
+                        $32,
+                        CASE WHEN $33::float >= 0 THEN $33::float END,
+                        CASE WHEN $34::float >= 0 THEN $34::float END,
+                        CASE WHEN $35::float >= 0 THEN $35::float END,
+                        CASE WHEN $36::float >= 0 THEN $36::float END,
+                        CASE WHEN $37::float >= 0 THEN $37::float END,
+                        CASE WHEN $38::float >= 0 THEN $38::float END,
+                        CASE WHEN $39::float >= 0 THEN $39::float END)
                 ON CONFLICT (device_id, record_date) DO UPDATE SET
+                    -- SDD-082 B10: the STR is the only writer of the settings.
+                    family = EXCLUDED.family,
+                    apap_min_pressure = EXCLUDED.apap_min_pressure,
+                    apap_max_pressure = EXCLUDED.apap_max_pressure,
+                    bl_min_epap = EXCLUDED.bl_min_epap, bl_max_ipap = EXCLUDED.bl_max_ipap,
+                    bl_ps = EXCLUDED.bl_ps, bl_ipap = EXCLUDED.bl_ipap, bl_epap = EXCLUDED.bl_epap,
                     mask_pairs = EXCLUDED.mask_pairs,
                     mask_events = EXCLUDED.mask_events,
                     machine_hours = EXCLUDED.machine_hours,
@@ -3246,6 +3272,8 @@ bool DatabaseService::saveSTRDailyRecords(const std::vector<STRDailyRecord>& rec
             // are derived from Duration here, and the counter goes to its own
             // column. See SDD-019's note on why duration_minutes is the honest
             // source for anything per-day.
+            const StrSettings st = strSettingsOf(r);
+            const auto orNone = [](const std::optional<double>& v) { return v ? *v : -1.0; };
             txn.exec_params(query,
                 r.device_id, date_oss.str(), pairs_json.str(),
                 r.mask_events, r.duration_minutes, r.duration_minutes / 60.0,
@@ -3256,7 +3284,11 @@ bool DatabaseService::saveSTRDailyRecords(const std::vector<STRDailyRecord>& rec
                 r.resp_rate_50, r.tid_vol_50, r.min_vent_50,
                 r.mode, r.epr_level, r.pressure_setting,
                 r.fault_device, r.fault_alarm,
-                r.patient_hours  // $31, the lifetime counter
+                r.patient_hours,  // $31, the lifetime counter
+                // $32..$39, SDD-082 B10
+                st.family, orNone(st.apap_min), orNone(st.apap_max),
+                orNone(st.bl_min_epap), orNone(st.bl_max_ipap), orNone(st.bl_ps),
+                orNone(st.bl_ipap), orNone(st.bl_epap)
             );
         }
 

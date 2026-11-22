@@ -100,14 +100,46 @@ void BaseReportGenerator::updateNightsCount(int id, int n) {
                       {std::to_string(n), std::to_string(id)});
 }
 
-void BaseReportGenerator::publishMqtt(int id, const std::string& filename, int nights) {
+void BaseReportGenerator::publishMqtt(int id, const std::string& filename, int nights,
+                                      const Json::Value& extra) {
     if (!mqtt_ || !mqtt_->isConnected()) return;
-    std::ostringstream payload;
-    payload << R"({"report_id":)" << id
-            << R"(,"filename":")" << filename << R"(")"
-            << R"(,"nights_count":)" << nights
-            << R"(,"status":"ready"})";
-    mqtt_->publish("cpap/" + device_id_ + "/reports/ready", payload.str(), 0, false);
+    Json::Value payload(Json::objectValue);
+    payload["report_id"]    = id;
+    payload["filename"]     = filename;
+    payload["nights_count"] = nights;
+    payload["status"]       = "ready";
+    // SDD-082: additive keys (kind, and a compliance report's verdict).
+    if (extra.isObject())
+        for (const auto& k : extra.getMemberNames()) payload[k] = extra[k];
+    Json::StreamWriterBuilder w;
+    w["indentation"] = "";
+    mqtt_->publish("cpap/" + device_id_ + "/reports/ready", Json::writeString(w, payload), 0, false);
+}
+
+std::string BaseReportGenerator::coverMachineName() const {
+    // The configured machine, not a hardcoded one; #94: and when the
+    // configured name is one the service filled in itself, the machine's own
+    // model, as the dashboard's title names it.
+    const auto identity = installIdentity(
+        ConfigManager::get("CPAP_SOURCE", "") == "local" ? ConfigManager::get("CPAP_LOCAL_DIR", "") : "",
+        ConfigManager::get("CPAP_ARCHIVE_DIR", ""), AppConfig::dataDir());
+    return machineName(ConfigManager::get("CPAP_DEVICE_NAME", AppConfig::kDefaultDeviceName), identity);
+}
+
+std::string BaseReportGenerator::downloadName(const std::string& filepath) {
+    const std::string base = fs::path(filepath).filename().string();
+    const auto us = base.find('_');
+    if (us == std::string::npos || us == 0) return base;
+    for (std::size_t i = 0; i < us; ++i)
+        if (base[i] < '0' || base[i] > '9') return base;
+    return base.substr(us + 1);
+}
+
+std::size_t BaseReportGenerator::languageIndex() const {
+    static const char* kLangs[] = {"es", "pt", "hu", "fr"};
+    for (std::size_t i = 0; i < 4; ++i)
+        if (language_ == kLangs[i]) return i + 1;
+    return 0;
 }
 
 // ---- Shared PDF sections ---------------------------------------------------

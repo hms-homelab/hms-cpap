@@ -52,6 +52,24 @@ public:
     Json::Value getSessionBreaths(const std::string& date);
     Json::Value getSessionOximetry(const std::string& date, int interval);
 
+    /**
+     * SDD-082: the clinician and compliance reports' nights, [start, end].
+     *
+     * One row per night of cpap_daily_summary with the columns the report's
+     * figures read (the settings of B10 included), and per night the figures
+     * the row does not carry, from the night's own minutes and events:
+     * flow_lim_95 (percentile_cont(0.95) of flow limitation, 2 decimals),
+     * press_min, epap_min / epap_avg / epap_max (only pressures in (0, 30]
+     * cmH2O), leak_over_24_minutes (null when no minute has a leak) and
+     * large_leak_minutes (the machine's "Large Leak" durations, null when it
+     * wrote none). The same definitions as CpapDash's.
+     */
+    Json::Value getClinicalNights(const std::string& start, const std::string& end);
+
+    /// SDD-082: the first and last night with use, {"first_night", "last_night"}
+    /// (empty strings when there is none).
+    Json::Value getNightsOnRecord();
+
     /// Access the underlying database (for ad-hoc queries by controller endpoints).
     std::shared_ptr<IDatabase> getDb() const { return db_; }
 
