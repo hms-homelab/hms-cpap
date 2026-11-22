@@ -45,58 +45,15 @@ and shows you the data. It is a fully local-first experience.
 |---|---|---|---|---|---|---|
 | ResMed AirSense 10 | ✅ live | ❌ | ❌ | ✅ live | ✅ live | ✅ after the night |
 | ResMed AirSense 11 | ✅ live | ✅ live | ✅ live | ✅ live | Not tested yet | ✅ after the night |
-| Philips DreamStation 2 | ✅ live, through OSCAR | ✅ after the night | ✅ after the night | ❌ the machine rejects WiFi SD cards | ❌ the machine rejects WiFi SD cards | Not tested yet (unencrypted cards only) |
+| Philips DreamStation 2 | ✅ live, through OSCAR | ✅ after the night | ✅ after the night | ❌ | ❌ | Not tested yet (unencrypted cards only) |
 | Löwenstein Prisma Line, Prisma Smart | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ after the night |
 | Sefam S.Box, SleepBox | ❌ | ❌ | ❌ | Not tested yet | ❌ | ✅ after the night |
 | BMC / React Health Luna | ✅ live | ❌ | ❌ | ✅ after the night | ❌ | ✅ after the night |
 
-✅ live: the charts update during therapy (as each write reaches hms-cpap from
-a Sleep Bridge Lite or over Bluetooth, every 65 seconds from a WiFi SD card).
-✅ after the night: the night arrives once it has ended. ❌: not supported.
-Coming soon: not supported yet. Not tested yet: the code reads it, but it
-hasn't been shown working on a real machine. A card in a reader is read when you put it
-in, so its last night is there once the machine has finished writing it. An
-AirSense 11 with REF 39517 can't power a WiFi SD card (see "Getting the data
-off the machine" below).
-
-On a Sefam card you get the recorded signals, breath-by-breath respiratory
-mechanics, and apneas. **You do not get an AHI.** The machine records apneas but
-does not mark hypopneas in a form anyone outside Sefam can read, so HMS-CPAP
-shows an apnea-only index and labels it as one. It will read lower than the AHI
-a ResMed reports for the same night. That is a different measurement, not a
-better night.
-
-On a Luna card you get flow, pressure, leak, respiratory rate, tidal volume,
-minute ventilation and I:E ratio per minute, and the apneas the machine marks
-itself (obstructive and clear airway). On a bi-level Luna, IPAP, EPAP and
-pressure support are reported too. The flow and pressure scales were measured
-against the machine's own screen. The flow chart is your breathing with the
-leak taken out, as for a ResMed; the Luna's screen shows total flow, so it
-reads higher. Through a Sleep Bridge Lite the charts grow while the night is
-written; over an ez Share a session appears once the mask is off. There is
-no breath-by-breath (25 Hz) view yet. Details: [the Luna in the
-reference](docs/REFERENCE.md#bmc--react-health-luna).
-
-A DreamStation 2 is read over Bluetooth after the night: from this
-computer's own Bluetooth (2 below) or through a Mule & Miner (3 below). You
-get each session's summary and its events: the night's usage, its events and
-its AHI. Bluetooth carries no waveform, so there are no flow or pressure
-charts for these nights. A DreamStation 2 rejects WiFi SD cards (an ez Share
-or a FlashAir), so its card is read through a Sleep Bridge Lite or a folder.
-It encrypts the files on its card and hms-cpap does not decrypt them: the
-card is read through an OSCAR you install yourself (OSCAR 2.1.1; a later
-release once it is proven), on the same computer or, for Docker and the Home
-Assistant add-on, through the OSCAR helper on a home PC. hms-cpap runs that
-OSCAR with no window to import the card into a profile of its own (create a
-profile named `hms-cpap` in OSCAR once), then reads what OSCAR stored. With a
-Sleep Bridge Lite and OSCAR paired, the night is charted live. Set it up in
-Settings, Data Source; the Devices page shows each read and has "Read now".
-hms-cpap ships no OSCAR and never writes to OSCAR's database. A DreamStation card whose files are not
-encrypted (in a folder, on a network share, behind an ez Share or a Mule &
-Miner in proxy mode) is charted live: flow, breathing rate and I:E while the
-session is open, with "Pressure arrives when the session ends", then the
-pressure the machine delivered. Details: [the Philips card in the
-reference](docs/REFERENCE.md#philips-dreamstation-card-plain-files).
+✅ live: charts update during therapy. ✅ after the night: the night arrives
+once it has ended. ❌: not supported. Not tested yet: the code reads it, not
+yet shown on a real machine. What each machine gives you, and why:
+[What each machine gives you in HMS-CPAP](https://cpapdash.com/blog/hms-cpap-machines).
 
 ## Features
 
