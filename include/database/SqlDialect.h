@@ -190,7 +190,10 @@ inline std::string nightIndexColumns(const std::string& m, const std::string& s,
            idx(nightCount(m, "hypopneas"), "hi") + ",\n" +
            idx(nightApneas(m), "ai") + ",\n" +
            idx(nightCount(m, "obstructive_apneas"), "oai") + ",\n" +
-           idx(nightCount(m, "central_apneas"), "cai") + ",\n" +
+           // SDD-083 F2: a DreamStation marks its central apneas "clear
+           // airway"; AHI and AI count both columns, and so does the CAI.
+           idx("(" + nightCount(m, "central_apneas") + " + " + nightCount(m, "clear_airway_apneas") + ")",
+               "cai") + ",\n" +
            idx(nightCount(m, "unclassified_apneas"), "uai") + ",\n" +
            idx(nightCount(m, "reras"), "rin");
 }

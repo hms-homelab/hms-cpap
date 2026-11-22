@@ -190,7 +190,7 @@ TEST_F(OscarUploadTest, ReadCardReadsTheGivenRootOnTheWorkerAndSaysWhatLanded) {
     EXPECT_EQ(r.stored, 1);
     ASSERT_EQ(r.landed.size(), 1u);
     EXPECT_EQ(fake_->runs.size(), 1u);
-    EXPECT_TRUE(db_->sessionExists(kDevice, sessionClock(kT0)));
+    EXPECT_TRUE(db_->sessionExists(kDevice, sessionLabel(kT0, kDevice)));
 }
 
 TEST_F(OscarUploadTest, AsksForTheSameCardWhileOscarRunsAreOneMoreReadNeverAQueue) {
@@ -284,7 +284,7 @@ TEST_F(OscarUploadTest, OscarOnThisComputerReadsTheUploadedCardAndItsNightsLand)
     EXPECT_EQ(reply["read_by"].asString(), "oscar");
     EXPECT_EQ(reply["sessions_found"].asInt(), 1);
     EXPECT_EQ(reply["dates"].size(), 1u);
-    EXPECT_TRUE(db_->sessionExists(svc->deviceIdForTest(), sessionClock(kT0)));
+    EXPECT_TRUE(db_->sessionExists(svc->deviceIdForTest(), sessionLabel(kT0, svc->deviceIdForTest())));
     // The card's own files are the session's (SDD-077 D1), under the upload.
     const auto rows = db_->executeQuery(
         "SELECT COUNT(*) AS v FROM cpap_session_files f JOIN cpap_sessions s ON s.id = f.session_id "
@@ -331,7 +331,7 @@ TEST_F(OscarUploadTest, APairedHelperIsAnOscarSourceAndAnOfflineOneIsSaidSo) {
 
 namespace {
 
-std::string nightOfMs(long long ms) { return strDayForSessionStart(sessionClock(ms)); }
+std::string nightOfMs(long long ms) { return strDayForSessionStart(sessionLabel(ms, kDevice)); }
 
 int sessionsOn(SQLiteDatabase& db, const std::string& device) {
     const auto rows = db.executeQuery("SELECT COUNT(*) AS v FROM cpap_sessions WHERE device_id = ?", {device});
@@ -373,8 +373,8 @@ TEST_F(OscarUploadTest, AnUploadedCardBringsBackTheRemovedNightsItHoldsAndNoOthe
     ASSERT_EQ(r.restored.size(), 1u);
     EXPECT_EQ(nightKeyOf(r.restored[0]), mine);
     EXPECT_EQ(r.stored, 1);
-    EXPECT_TRUE(db_->sessionExists(kDevice, sessionClock(kT0)));
-    EXPECT_FALSE(db_->sessionExists(kDevice, sessionClock(kT0 + 3 * kDay))) << "not on this card";
+    EXPECT_TRUE(db_->sessionExists(kDevice, sessionLabel(kT0, kDevice)));
+    EXPECT_FALSE(db_->sessionExists(kDevice, sessionLabel(kT0 + 3 * kDay, kDevice))) << "not on this card";
     const auto still = removedNightSet(*db_, kDevice);
     EXPECT_FALSE(still.count(mine));
     EXPECT_TRUE(still.count(other)) << "another card's removed night stays removed";

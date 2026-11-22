@@ -110,7 +110,7 @@ std::optional<long long> numberOfKey(const std::string& key) {
 void OscarCardReader::restoreHead(const std::string& key, long long start_ms,
                                   const std::set<std::string>& removed_now, std::set<std::string>& restored) {
     if (!opt_.db || removed_now.empty()) return;
-    const std::string night = strDayForSessionStart(sessionClock(start_ms));
+    const std::string night = strDayForSessionStart(sessionLabel(start_ms, opt_.device_id));   // F1
     if (!removed_now.count(night)) return;
     const std::string dashed = night.substr(0, 4) + "-" + night.substr(4, 2) + "-" + night.substr(6, 2);
     if (!restored.count(dashed)) {
@@ -367,8 +367,9 @@ bool OscarCardReader::wanted(const std::string& key, long long start_ms, long lo
                              const std::set<std::string>& removed) {
     const auto known = done_.find(key);
     if (known != done_.end() && end_ms <= known->second) return false;
-    const auto start = sessionClock(start_ms);
-    const auto end = sessionClock(end_ms);
+    // SDD-083 F1: on the machine's clock, as the sessions are stored.
+    const auto start = sessionLabel(start_ms, opt_.device_id);
+    const auto end = sessionLabel(end_ms, opt_.device_id);
     if (isRemovedNight(removed, start)) return false;   // SDD-029
     if (known == done_.end() && opt_.db) {
         // First look in this process: a card row already stored at this
@@ -380,6 +381,20 @@ bool OscarCardReader::wanted(const std::string& key, long long start_ms, long lo
                 return false;
             }
         }
+        // SDD-083 F1: a card row stored before the machine's clock was
+        // applied sits at the instant itself. It is this session already:
+        // never stored a second time at its label. (Moving such rows onto
+        // the machine's clock is not done here.)
+        const auto old_start = sessionClock(start_ms);
+        const auto old_end = sessionClock(end_ms);
+        if (old_start != start)
+            for (const auto& sp : As11NightImport::storedSpansOverlapping(*opt_.db, opt_.device_id, old_start, old_end)) {
+                const auto ds = sp.start > old_start ? sp.start - old_start : old_start - sp.start;
+                if (!sp.constructed && ds < std::chrono::seconds(1)) {
+                    done_[key] = end_ms;
+                    return false;
+                }
+            }
     }
     return true;
 }

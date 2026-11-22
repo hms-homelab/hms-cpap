@@ -17,6 +17,8 @@
 #include "services/OscarCardReader.h"
 #include "services/OscarDb.h"
 #include "sleepbridge/BridgeSource.h"
+#include "utils/MachineClocks.h"
+#include "utils/MachineZone.h"
 #include "OscarFakes.h"
 
 #include <gtest/gtest.h>
@@ -230,18 +232,18 @@ TEST_F(OscarTest, ASessionDecodesIntoEventsMinutesBreathsAndTrends) {
     EXPECT_EQ(s->manufacturer, DeviceManufacturer::PHILIPS);
     EXPECT_EQ(s->serial_number, kSerial);
     EXPECT_EQ(s->model_id.value_or(0), 520);
-    EXPECT_EQ(*s->session_start, sessionClock(kT0));
+    EXPECT_EQ(*s->session_start, sessionLabel(kT0, kDevice));   // SDD-083 F1: the machine's clock
     EXPECT_EQ(s->duration_seconds.value_or(0), 600);
     // Two OA flagged at their end, 12 s long: onset 12 s before.
     int oa = 0, leak = 0;
     for (const auto& e : s->events) {
         if (e.event_type == EventType::OBSTRUCTIVE) {
-            if (oa == 0) EXPECT_EQ(e.timestamp, sessionClock(kT0 + 120000 - 12000));
+            if (oa == 0) EXPECT_EQ(e.timestamp, sessionLabel(kT0 + 120000 - 12000, kDevice));
             EXPECT_DOUBLE_EQ(e.duration_seconds, 12.0);
             ++oa;
         }
         if (e.event_type == EventType::LARGE_LEAK) {
-            EXPECT_EQ(e.timestamp, sessionClock(kT0 + 300000 - 30000));
+            EXPECT_EQ(e.timestamp, sessionLabel(kT0 + 300000 - 30000, kDevice));
             ++leak;
         }
     }
@@ -294,7 +296,7 @@ TEST_F(OscarTest, AnImportStoresTheNewSessionsAsCardAndANothingNewStoresNone) {
     EXPECT_EQ(r.version, "2.1.1+00000000");
     ASSERT_EQ(fake_->runs.size(), 1u);
     EXPECT_EQ(fake_->runs[0], importCommand(settings_, card_.string()));
-    EXPECT_TRUE(db_->sessionExists(kDevice, sessionClock(kT0)));
+    EXPECT_TRUE(db_->sessionExists(kDevice, sessionLabel(kT0, kDevice)));
     // Its files are the card's (SDD-077 D1), by the session's number.
     EXPECT_EQ(count("SELECT COUNT(*) AS v FROM cpap_session_files f JOIN cpap_sessions s ON s.id = f.session_id "
                     "WHERE s.device_id = ? AND f.source = 'card'"),
@@ -361,8 +363,9 @@ TEST_F(OscarTest, TheCardReplacesABluetoothCopyOfTheSameStretch) {
     ble.device_id = kDevice;
     ble.device_name = "DreamStation 2";
     ble.manufacturer = DeviceManufacturer::PHILIPS;
-    ble.session_start = sessionClock(kT0 + 1000);
-    ble.session_end = sessionClock(kT0 + 600000);
+    // The Bluetooth reader holds it on the machine's clock too.
+    ble.session_start = sessionLabel(kT0 + 1000, kDevice);
+    ble.session_end = sessionLabel(kT0 + 600000, kDevice);
     ble.duration_seconds = 599;
     ble.calculateMetrics();
     ASSERT_TRUE(db_->saveSession(ble));
@@ -466,7 +469,7 @@ TEST_F(OscarTest, AnEncryptedCardInTheSourceFolderIsReadThroughOscar) {
     const auto st = svc.oscarStatus();
     EXPECT_EQ(st["state"].asString(), "imported");
     EXPECT_EQ(st["card_root"].asString(), card.string());
-    EXPECT_TRUE(db_->sessionExists(svc.deviceIdForTest(), sessionClock(kT0)));
+    EXPECT_TRUE(db_->sessionExists(svc.deviceIdForTest(), sessionLabel(kT0, svc.deviceIdForTest())));
 }
 
 // ── the check on save (D7) ────────────────────────────────────────────────
@@ -532,4 +535,76 @@ TEST_F(OscarTest, TheBridgeTileCarriesTheOscarLine) {
     const auto out = devices::buildDevices(in, store);
     ASSERT_EQ(out["devices"].size(), 1u);
     EXPECT_EQ(out["devices"][0]["detail"]["oscar"]["state"].asString(), "imported");
+}
+
+// ── SDD-083 F1, F2: found with a real OSCAR and card, proven here on made-up ones
+
+// F1: OSCAR stores real instants (epoch ms). A session is held on the
+// machine's clock (SDD-074 D4), as the Bluetooth and plain card readers hold a
+// DreamStation's, so its night is split at the MACHINE's noon. It used to be
+// stored as the instant itself: on a machine five hours behind UTC, a session
+// starting at 07:30 its time (12:30 UTC) became a night of its own.
+TEST_F(OscarTest, AnOscarSessionIsOnTheMachinesClockAndSplitAtItsNoon) {
+    machine_clocks::set(kDevice, MachineZone::fixed(-5 * 3600));
+    constexpr long long kHour = 3600000LL;
+    oscar_->session(oscar_->hms_, 0x1E, kT0 + 3 * kHour, 60);         // 22:00 the machine's time
+    oscar_->session(oscar_->hms_, 0x1F, kT0 + 12 * kHour + 1800000, 30);   // 07:30 the next morning
+    OscarCardReader reader(options());
+    const auto r = reader.readOnce();
+    machine_clocks::clear();
+    ASSERT_EQ(r.stored, 2) << r.message;
+
+    const auto starts = db_->executeQuery(
+        "SELECT session_start AS v FROM cpap_sessions WHERE device_id = ? ORDER BY session_start", {kDevice});
+    ASSERT_EQ(starts.size(), 2u);
+    EXPECT_EQ(starts[0]["v"].asString().substr(0, 19), "2029-12-31 22:00:00") << "the machine's wall clock";
+    EXPECT_EQ(starts[1]["v"].asString().substr(0, 19), "2030-01-01 07:30:00");
+    const auto nights = db_->executeQuery(
+        "SELECT record_date AS v FROM cpap_daily_summary WHERE device_id = ?", {kDevice});
+    ASSERT_EQ(nights.size(), 1u) << "one night, as OSCAR has it";
+    EXPECT_EQ(nights[0]["v"].asString().substr(0, 10), "2029-12-31");
+    // Read again: the same sessions, held as done; nothing stored twice.
+    machine_clocks::set(kDevice, MachineZone::fixed(-5 * 3600));
+    const auto again = reader.readOnce();
+    machine_clocks::clear();
+    EXPECT_EQ(again.stored, 0);
+    EXPECT_EQ(count("SELECT COUNT(*) AS v FROM cpap_sessions WHERE device_id = ?"), 2);
+}
+
+// F1 on an install that read OSCAR before the fix: its card rows sit at the
+// instant itself. The same session is never stored again at its label.
+TEST_F(OscarTest, ASessionStoredBeforeTheFixIsNotStoredASecondTime) {
+    oscar_->session(oscar_->hms_, 0x1E, kT0, 10);
+    cardFile(card_, "P-SERIES/1A2B3C4D/P0/0000001E.B01");
+    {   // the old read: the instant as the stored time (no zone step)
+        machine_clocks::set(kDevice, MachineZone::fixed(0));
+        OscarCardReader before(options());
+        ASSERT_EQ(before.readOnce().stored, 1);
+        machine_clocks::clear();
+    }
+    machine_clocks::set(kDevice, MachineZone::fixed(-5 * 3600));
+    OscarCardReader after(options());   // a new process, the machine's clock
+    const auto r = after.readOnce();
+    machine_clocks::clear();
+    EXPECT_EQ(r.stored, 0);
+    EXPECT_EQ(count("SELECT COUNT(*) AS v FROM cpap_sessions WHERE device_id = ?"), 1);
+}
+
+// F2: a DreamStation marks its central apneas "clear airway", which AHI and AI
+// count; the night's CAI counted only "central" and read 0.0.
+TEST_F(OscarTest, TheNightsCaiCountsClearAirwayApneasAsTheAhiDoes) {
+    const long long row = oscar_->session(oscar_->hms_, 0x1E, kT0, 60, /*oa=*/0);
+    std::vector<int16_t> lens(8, 12);
+    std::vector<uint32_t> at;
+    for (int i = 0; i < 8; ++i) at.push_back(static_cast<uint32_t>(300000 + i * 300000));
+    oscar_->list(row, oscar_->hms_, "ClearAirway", 1, kT0, 0, 1, lens, at);
+    OscarCardReader reader(options());
+    ASSERT_EQ(reader.readOnce().stored, 1);
+    const auto d = db_->executeQuery(
+        "SELECT ahi, cai, oai FROM cpap_daily_summary WHERE device_id = ?", {kDevice});
+    ASSERT_EQ(d.size(), 1u);
+    auto num = [](const Json::Value& v) { return v.isString() ? std::stod(v.asString()) : v.asDouble(); };
+    EXPECT_DOUBLE_EQ(num(d[0]["cai"]), 8.0) << "8 clear-airway apneas in one hour";
+    EXPECT_DOUBLE_EQ(num(d[0]["ahi"]), 8.0);
+    EXPECT_DOUBLE_EQ(num(d[0]["oai"]), 0.0);
 }
