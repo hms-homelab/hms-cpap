@@ -23,7 +23,7 @@
     "title": "Adatok feltöltése",
     "zip": {
       "heading": "CPAP-adatok (.zip vagy .cpapcard)",
-      "hint": "Töltsön fel egy zipet az SD-kártyájáról: ResMed (a DATALOG mappái), Sefam S.Box, Löwenstein Prisma vagy BMC / React Health Luna. A kártyát a fájljai alapján ismerjük fel, és minden még nem tárolt éjszakát automatikusan hozzáadunk és feldolgozunk. A CpapDash Desktop .cpapcard fájlja (Exportálás a HMS CPAP számára) az ide küldő Sleep Bridge-nek a kártya szerkezetét is megtanítja.",
+      "hint": "Töltsön fel egy zipet az SD-kártyájáról: ResMed (a DATALOG mappái), Sefam S.Box, Löwenstein Prisma, BMC / React Health Luna vagy Philips DreamStation 2 (a P-SERIES mappája; a fájljai titkosítottak, ezért a saját OSCAR-ján keresztül olvassuk be, amelyet a Beállítások, Adatforrás alatt állíthat be). A kártyát a fájljai alapján ismerjük fel, és minden még nem tárolt éjszakát automatikusan hozzáadunk és feldolgozunk. A CpapDash Desktop .cpapcard fájlja (Exportálás a HMS CPAP számára) az ide küldő Sleep Bridge-nek a kártya szerkezetét is megtanítja.",
       "idle": "Húzzon ide egy .zip vagy .cpapcard fájlt, vagy kattintson a kiválasztáshoz",
       "uploading": "Feltöltés...",
       "imported": "{{count}} éjszaka importálva",

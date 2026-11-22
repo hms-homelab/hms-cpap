@@ -23,7 +23,7 @@
     "title": "Upload Data",
     "zip": {
       "heading": "CPAP Data (.zip or .cpapcard)",
-      "hint": "Upload a zip of your SD card: ResMed (its DATALOG folders), Sefam S.Box, Löwenstein Prisma or BMC / React Health Luna. The card is recognised by its files, and every night not yet stored is added and parsed automatically. A .cpapcard file from CpapDash Desktop (Export for HMS CPAP) also teaches a Sleep Bridge streaming here the card's layout.",
+      "hint": "Upload a zip of your SD card: ResMed (its DATALOG folders), Sefam S.Box, Löwenstein Prisma, BMC / React Health Luna or Philips DreamStation 2 (its P-SERIES folder; its files are encrypted, so it is read through your own OSCAR, set up in Settings, Data Source). The card is recognised by its files, and every night not yet stored is added and parsed automatically. A .cpapcard file from CpapDash Desktop (Export for HMS CPAP) also teaches a Sleep Bridge streaming here the card's layout.",
       "idle": "Drag a .zip or .cpapcard here or click to choose",
       "uploading": "Uploading...",
       "imported": "Imported {{count}} night(s)",
