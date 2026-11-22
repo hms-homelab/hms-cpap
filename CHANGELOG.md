@@ -5,6 +5,16 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.0.2] - 2026-11-22
+
+### Fixed
+- **Report PDFs have their charts again in Docker and the Home Assistant
+  add-on.** The charts are drawn by gnuplot, which the image did not carry,
+  so every chart in a daily or range report was missing; installing it by
+  hand inside the container was lost on the next update or restart. The
+  image now ships gnuplot (the no-X build, which has the pngcairo terminal
+  the reports use) and the DejaVu fonts the charts name. Reported by Robert.
+
 ## [7.0.1]
 
 ### Changed

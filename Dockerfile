@@ -122,6 +122,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libhpdf-2.3.0 \
     libsdbus-c++2 \
     tzdata \
+    gnuplot-nox \
+    fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 # The CPAP's clock is local time with no zone, and hms-cpap reads it in the
