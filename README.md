@@ -45,7 +45,7 @@ and shows you the data. It is a fully local-first experience.
 |---|---|---|---|---|---|---|
 | ResMed AirSense 10 | ✅ live | ❌ | ❌ | ✅ live | ✅ live | ✅ after the night |
 | ResMed AirSense 11 | ✅ live | ✅ live | ✅ live | ✅ live | Not tested yet | ✅ after the night |
-| Philips DreamStation 2 | ❌ card encrypted | ✅ after the night | ✅ after the night | Not tested yet (unencrypted cards only) | ❌ | Not tested yet (unencrypted cards only) |
+| Philips DreamStation 2 | ✅ live, through OSCAR | ✅ after the night | ✅ after the night | ❌ the machine rejects WiFi SD cards | ❌ the machine rejects WiFi SD cards | Not tested yet (unencrypted cards only) |
 | Löwenstein Prisma Line, Prisma Smart | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ after the night |
 | Sefam S.Box, SleepBox | ❌ | ❌ | ❌ | Not tested yet | ❌ | ✅ after the night |
 | BMC / React Health Luna | ✅ live | ❌ | ❌ | ✅ after the night | ❌ | ✅ after the night |
@@ -81,16 +81,17 @@ A DreamStation 2 is read over Bluetooth after the night: from this
 computer's own Bluetooth (2 below) or through a Mule & Miner (3 below). You
 get each session's summary and its events: the night's usage, its events and
 its AHI. Bluetooth carries no waveform, so there are no flow or pressure
-charts for these nights. A DreamStation 2 encrypts the files on its card and
-hms-cpap does not decrypt them. Its card, through a Sleep Bridge Lite, an ez
-Share or a folder, is read through the OSCAR you install yourself on the same
-computer (OSCAR 2.1.1; a later release once it is proven): when the machine ends a session, hms-cpap runs that
+charts for these nights. A DreamStation 2 rejects WiFi SD cards (an ez Share
+or a FlashAir), so its card is read through a Sleep Bridge Lite or a folder.
+It encrypts the files on its card and hms-cpap does not decrypt them: the
+card is read through an OSCAR you install yourself (OSCAR 2.1.1; a later
+release once it is proven), on the same computer or, for Docker and the Home
+Assistant add-on, through the OSCAR helper on a home PC. hms-cpap runs that
 OSCAR with no window to import the card into a profile of its own (create a
-profile named `hms-cpap` in OSCAR once), then reads what OSCAR stored. Set it
-up in Settings, Data Source; the Devices page shows each read and has "Read
-now". hms-cpap ships no OSCAR and never writes to OSCAR's database. This needs
-OSCAR on the same computer, so it does not work from Docker or the Home
-Assistant add-on. A DreamStation card whose files are not
+profile named `hms-cpap` in OSCAR once), then reads what OSCAR stored. With a
+Sleep Bridge Lite and OSCAR paired, the night is charted live. Set it up in
+Settings, Data Source; the Devices page shows each read and has "Read now".
+hms-cpap ships no OSCAR and never writes to OSCAR's database. A DreamStation card whose files are not
 encrypted (in a folder, on a network share, behind an ez Share or a Mule &
 Miner in proxy mode) is charted live: flow, breathing rate and I:E while the
 session is open, with "Pressure arrives when the session ends", then the
