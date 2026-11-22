@@ -86,13 +86,11 @@
         </ng-template>
         <td>
           <span *ngIf="s.avg_spo2 && +s.avg_spo2 > 0">{{ s.avg_spo2 }}%</span>
-          <span *ngIf="!(s.avg_spo2 && +s.avg_spo2 > 0) && oxiMap[s.sleep_day || sleepDay(s.session_start)]">{{ oxiMap[s.sleep_day || sleepDay(s.session_start)] }}%</span>
-          <span *ngIf="!(s.avg_spo2 && +s.avg_spo2 > 0) && !oxiMap[s.sleep_day || sleepDay(s.session_start)]">-</span>
+          <span *ngIf="!(s.avg_spo2 && +s.avg_spo2 > 0)">-</span>
         </td>
         <td>
           <span *ngIf="s.avg_heart_rate && +s.avg_heart_rate > 0">{{ s.avg_heart_rate }} bpm</span>
-          <span *ngIf="!(s.avg_heart_rate && +s.avg_heart_rate > 0) && hrMap[s.sleep_day || sleepDay(s.session_start)]">{{ hrMap[s.sleep_day || sleepDay(s.session_start)] }} bpm</span>
-          <span *ngIf="!(s.avg_heart_rate && +s.avg_heart_rate > 0) && !hrMap[s.sleep_day || sleepDay(s.session_start)]">-</span>
+          <span *ngIf="!(s.avg_heart_rate && +s.avg_heart_rate > 0)">-</span>
         </td>
         <td class="actions-cell" (click)="$event.stopPropagation()">
           <div class="actions-inner">
