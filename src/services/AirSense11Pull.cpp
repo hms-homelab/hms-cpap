@@ -1,6 +1,7 @@
 #include "services/AirSense11Pull.h"
 
 #include "services/As11NightWriter.h"   // machineOffsetFromDayStart
+#include "services/NightLanded.h"
 #include "services/RemovedNights.h"
 #include "utils/MachineClocks.h"
 
@@ -139,7 +140,8 @@ AirSense11Pull::Result AirSense11Pull::pullNow() {
         }
     }
     if (!used.empty()) {
-        if (!db_->saveSTRDailyRecords(used)) {
+        // Issue #74: a night read only as its daily summary is announced.
+        if (!night_landed::saveStrDaysAndAnnounce(*db_, used)) {
             r.error = "saveSTRDailyRecords failed";
             return r;
         }

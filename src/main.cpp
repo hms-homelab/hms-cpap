@@ -1494,6 +1494,21 @@ int main(int argc, char** argv) {
                     });
             }
 
+            // Issue #74: the configured LLM summarizes a summary-only night (no
+            // session files; myAir's or the STR's daily record) when it lands:
+            // myAir data stored, or an STR-only night closed. The listener only
+            // queues; a night with sessions or no LLM is passed over at once,
+            // and one written before from the same facts is skipped.
+            auto daily_only_queue = std::make_shared<hms_cpap::daily_only::Queue>(
+                [](const std::string& day) {
+                    if (burst_service) burst_service->summarizeDailyOnlyNight(day);
+                });
+            daily_only_queue->start();
+            hms_cpap::night_landed::listen(
+                [q = daily_only_queue](const std::string& folder, const std::optional<hms_cpap::STRDailyRecord>&) {
+                    q->enqueue(folder);
+                });
+
             // SDD-041: check GitHub for a newer stable release, daily and on
             // demand. It only reports; the supervisor applies. Off by itself in a
             // container (D5), where the image is what updates.
@@ -2345,6 +2360,7 @@ int main(int argc, char** argv) {
             cpapdash_stream->stop();
             if (burst_service) burst_service->clearNightClosedListeners();
             hms_cpap::night_landed::clear();
+            daily_only_queue->stop();
             local_model->stop();
             hms_cpap::CpapController::setGarminService(nullptr);
             garmin->stop();

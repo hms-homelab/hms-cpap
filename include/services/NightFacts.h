@@ -50,8 +50,29 @@ struct NightStrFacts {
     std::optional<double> tgt_ipap_50, tgt_epap_50, tgt_vent_50;
 };
 
+/// Issue #74 (SDD-082 section 8): what ResMed's myAir says of a night.
+struct NightMyAirFacts {
+    std::optional<int> score;            ///< myAir score, 0-100
+    std::optional<int> usage_score, ahi_score, mask_score, leak_score;   ///< its parts, in points
+    std::optional<int> mask_pairs;       ///< mask on/off pairs
+};
+
+/// Issue #74: the per-hour indices a daily record carries instead of counts.
+struct NightDailyIndices {
+    std::optional<double> obstructive, central, hypopnea, unclassified, rera;
+};
+
 struct NightFacts {
     std::string sleep_day;   ///< YYYY-MM-DD, empty when the caller did not name it
+
+    /// Issue #74: "" for a night read from its sessions. "myair" or "str" for
+    /// a SUMMARY-ONLY night: no session files, only the daily figures myAir
+    /// or the card's STR gave for it (no breath-by-breath, no event counts).
+    /// The index is then the daily record's, and `daily_indices` replaces the
+    /// counts.
+    std::string daily_only;
+    std::optional<NightDailyIndices> daily_indices;
+    std::optional<NightMyAirFacts> myair;
 
     /// SDD-024: false for a machine that detects no hypopneas. Its index is not
     /// an AHI and its events have no per-type breakdown.
@@ -136,6 +157,20 @@ std::vector<NightFacts> loadRange(IDatabase& db, const std::string& device_id,
 /// One night by its sleep day, or none.
 std::optional<NightFacts> loadNight(IDatabase& db, const std::string& device_id,
                                     const std::string& sleep_day);
+
+/// Issue #74: the night [sleep_day] as a SUMMARY-ONLY night, when it has no
+/// closed session night: the card's STR daily row when it has one with use,
+/// else myAir's record of it (has_data). None when there is neither, or when
+/// the night has sessions (it is then an ordinary night).
+std::optional<NightFacts> loadDailyOnlyNight(IDatabase& db, const std::string& device_id,
+                                             const std::string& sleep_day);
+
+/// The block renderNight gives a summary-only night: marked as such, every
+/// figure the daily record has and nothing it does not.
+std::string renderDailyOnly(const NightFacts& night);
+
+/// Whether the device has a session that starts on the sleep day [sleep_day].
+bool hasSessions(IDatabase& db, const std::string& device_id, const std::string& sleep_day);
 
 /// The stored metrics of one closed night by its sleep day, as loadRange reads
 /// them (SDD-013: the local model builds its night from these and the STR).

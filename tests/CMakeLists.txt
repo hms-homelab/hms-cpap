@@ -166,6 +166,8 @@ set(TEST_SOURCES
     # SDD-013: the local sleep model's harness, no model file needed.
     model/test_LocalModel.cpp
     model/test_NightJson.cpp
+    # Issue #74: a summary-only night (myAir, or the STR) gets its summaries.
+    model/test_DailyOnlyNights.cpp
     # SDD-013: the runner on llama.cpp and the prompt contract; the real-model
     # tests run only when HMS_CPAP_NARRATOR_MODEL names the model file.
     model/test_GgufModel.cpp

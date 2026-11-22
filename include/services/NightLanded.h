@@ -20,6 +20,7 @@
 //
 // With no listener (a test, a one-shot command) it does nothing at all.
 //
+#include "database/IDatabase.h"
 #include "parsers/CpapdashBridge.h"
 
 #include <chrono>
@@ -47,5 +48,12 @@ void announceDays(const std::set<std::string>& days);
 /// The nights the sessions starting at [starts] belong to, once each, oldest
 /// first.
 void announceStarts(const std::vector<std::chrono::system_clock::time_point>& starts);
+
+/// Issue #74: save [records] (IDatabase::saveSTRDailyRecords) and announce
+/// every STR-ONLY night the save made new or changed: a day with use, whose
+/// stored STR duration was absent or different before, and no session. An
+/// STR row exists only for a day the machine has finished, so that is the
+/// night closing. A whole-history re-read of the same card announces nothing.
+bool saveStrDaysAndAnnounce(IDatabase& db, const std::vector<STRDailyRecord>& records);
 
 }  // namespace hms_cpap::night_landed

@@ -1,5 +1,6 @@
 #include "services/NightFacts.h"
 
+#include "database/SqlDialect.h"
 #include "services/BilevelSensors.h"
 #include "utils/OximetryDevice.h"
 
@@ -154,6 +155,8 @@ std::vector<std::string> rules(const std::vector<NightFacts>& nights) {
 }
 
 std::string renderNight(const NightFacts& n) {
+    // Issue #74: a night with no session files has its own block.
+    if (!n.daily_only.empty()) return renderDailyOnly(n);
     std::ostringstream oss;
     oss << std::fixed << std::setprecision(2);
 
@@ -541,6 +544,216 @@ bool isIsoDay(const std::string& day) {
     for (size_t i = 0; i < day.size(); ++i)
         if (i != 4 && i != 7 && (day[i] < '0' || day[i] > '9')) return false;
     return true;
+}
+
+// ---- Issue #74: a summary-only night ----------------------------------------
+
+const char* const kDailyOnlyRule =
+    "This is a summary-only night: say so. Describe only the daily figures "
+    "given; there are no event counts by type, no breath-by-breath data and no "
+    "pressure or leak curve for it, so do not describe any.";
+
+namespace {
+
+std::optional<double> numberOf(const Json::Value& row, const char* key) {
+    const Json::Value v = row.get(key, Json::nullValue);
+    if (v.isNull()) return std::nullopt;
+    if (v.isNumeric()) return std::isfinite(v.asDouble()) ? std::optional<double>(v.asDouble()) : std::nullopt;
+    if (v.isString() && !v.asString().empty()) {
+        try { return std::stod(v.asString()); } catch (...) {}
+    }
+    return std::nullopt;
+}
+
+/// A daily figure the record has: a negative is the STR's "none", and so is
+/// a 0 for a pressure (a machine without the channel).
+std::optional<double> present(const std::optional<double>& v, bool zero_is_a_value) {
+    if (!v || *v < 0 || (!zero_is_a_value && *v == 0)) return std::nullopt;
+    return v;
+}
+
+MachineFamily familyOf(int code) {
+    switch (code) {
+        case 1: return MachineFamily::Cpap;
+        case 2: return MachineFamily::AutoSet;
+        case 3: return MachineFamily::BiLevel;
+        case 4: return MachineFamily::Asv;
+        default: return MachineFamily::Unknown;
+    }
+}
+
+}  // namespace
+
+bool hasSessions(IDatabase& db, const std::string& device_id, const std::string& sleep_day) {
+    const auto t = db.dbType();
+    const auto rows = db.executeQuery(
+        "SELECT COUNT(*) AS n FROM cpap_sessions WHERE device_id = " + sql::param(1, t) + " AND " +
+            sql::sleepDay("session_start", t) + " = " + sql::castDate(2, t),
+        {device_id, sleep_day});
+    return !rows.empty() && numberOf(rows[0], "n").value_or(0) > 0;
+}
+
+std::optional<NightFacts> loadDailyOnlyNight(IDatabase& db, const std::string& device_id,
+                                             const std::string& sleep_day) {
+    if (!isIsoDay(sleep_day) || hasSessions(db, device_id, sleep_day)) return std::nullopt;
+    const auto t = db.dbType();
+    NightFacts f;
+    f.sleep_day = sleep_day;
+    const auto setUsage = [&f](double minutes) {
+        f.usage_hours = round2(minutes / 60.0);
+        f.usage_percent = round2(minutes / 60.0 / 8.0 * 100.0);
+    };
+
+    // The card's own daily row first: the machine's figures, read off the card.
+    const auto str = db.executeQuery(
+        "SELECT duration_minutes, ahi, hi, oai, cai, uai, rin, leak_50, leak_95,"
+        " mask_press_50, mask_press_95, therapy_press_50, therapy_press_95, mode, family,"
+        " COALESCE(index_kind, 'ahi') AS index_kind, mask_events"
+        " FROM cpap_daily_summary WHERE device_id = " + sql::param(1, t) +
+            " AND record_date = " + sql::castDate(2, t),
+        {device_id, sleep_day});
+    if (!str.empty() && numberOf(str[0], "duration_minutes").value_or(0) > 0) {
+        const auto& r = str[0];
+        f.daily_only = "str";
+        setUsage(*numberOf(r, "duration_minutes"));
+        f.graded = r.get("index_kind", "ahi").asString() != "ungraded";
+        f.index = round2(present(numberOf(r, "ahi"), true).value_or(0));
+        if (f.graded) {
+            NightDailyIndices ix;
+            ix.obstructive = present(numberOf(r, "oai"), true);
+            ix.central = present(numberOf(r, "cai"), true);
+            ix.hypopnea = present(numberOf(r, "hi"), true);
+            ix.unclassified = present(numberOf(r, "uai"), true);
+            ix.rera = present(numberOf(r, "rin"), true);
+            f.daily_indices = ix;
+        }
+        f.leak_p95 = present(numberOf(r, "leak_95"), true);
+        f.leak_p50 = present(numberOf(r, "leak_50"), true);
+        // Issue #56: the delivered pressure where the night has it.
+        f.pressure_p95 = present(numberOf(r, "therapy_press_95"), false);
+        if (!f.pressure_p95) f.pressure_p95 = present(numberOf(r, "mask_press_95"), false);
+        f.pressure_avg = present(numberOf(r, "therapy_press_50"), false);
+        if (!f.pressure_avg) f.pressure_avg = present(numberOf(r, "mask_press_50"), false);
+        const auto family = familyOf(static_cast<int>(numberOf(r, "family").value_or(0)));
+        if (const auto mode = numberOf(r, "mode"); mode && family != MachineFamily::Unknown) {
+            const auto m = therapyModeFor(std::nullopt, static_cast<int>(*mode));
+            if (m) f.therapy_mode = therapyModeName(*m, family);
+        }
+        if (const auto pairs = numberOf(r, "mask_events"); pairs && *pairs > 0) {
+            NightMyAirFacts mf;
+            mf.mask_pairs = static_cast<int>(*pairs) / 2;
+            f.myair = mf;
+        }
+        return f;
+    }
+
+    // Else what myAir says of it: a night ResMed has data for.
+    const auto my = db.executeQuery(
+        "SELECT total_usage_min, sleep_score, usage_score, ahi_score, mask_score, leak_score,"
+        " ahi, mask_pair_count, leak_percentile, has_data FROM cpap_myair_records"
+        " WHERE record_date = " + sql::castDate(1, t),
+        {sleep_day});
+    if (my.empty() || numberOf(my[0], "has_data").value_or(0) <= 0) return std::nullopt;
+    const auto& r = my[0];
+    f.daily_only = "myair";
+    setUsage(numberOf(r, "total_usage_min").value_or(0));
+    f.graded = true;   // myAir serves ResMed machines only: an AHI
+    f.index = round2(present(numberOf(r, "ahi"), true).value_or(0));
+    f.leak_p95 = present(numberOf(r, "leak_percentile"), true);
+    NightMyAirFacts mf;
+    const auto points = [&](const char* k) -> std::optional<int> {
+        const auto v = present(numberOf(r, k), true);
+        return v ? std::optional<int>(static_cast<int>(std::lround(*v))) : std::nullopt;
+    };
+    mf.score = points("sleep_score");
+    mf.usage_score = points("usage_score");
+    mf.ahi_score = points("ahi_score");
+    mf.mask_score = points("mask_score");
+    mf.leak_score = points("leak_score");
+    mf.mask_pairs = points("mask_pair_count");
+    f.myair = mf;
+    return f;
+}
+
+std::string renderDailyOnly(const NightFacts& n) {
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(2);
+    oss << "Summary-only night: the daily figures "
+        << (n.daily_only == "myair" ? "ResMed myAir reports" : "the machine's daily record (STR.edf) holds")
+        << " for it. No session files were recorded for this night, so there is no "
+           "breath-by-breath data, no event count by type and no pressure or leak curve.\n";
+    if (n.usage_hours) {
+        oss << "Usage: " << *n.usage_hours << " hours";
+        if (n.usage_percent) oss << " (" << *n.usage_percent << "% of 8h target)";
+        oss << "\n";
+    } else {
+        oss << "Usage: not recorded\n";
+    }
+    if (n.graded) {
+        oss << "AHI: " << n.index << " events/hour\n";
+        if (n.daily_indices) {
+            const auto& ix = *n.daily_indices;
+            std::vector<std::string> parts;
+            const auto part = [&](const char* name, const std::optional<double>& v) {
+                if (!v) return;
+                std::ostringstream p;
+                p << std::fixed << std::setprecision(2) << name << "=" << *v;
+                parts.push_back(p.str());
+            };
+            part("obstructive apnea", ix.obstructive);
+            part("central apnea", ix.central);
+            part("hypopnea", ix.hypopnea);
+            part("unclassified apnea", ix.unclassified);
+            if (!parts.empty()) {
+                oss << "Index by type (events/hour, from the daily record):";
+                for (std::size_t i = 0; i < parts.size(); ++i) oss << (i ? ", " : " ") << parts[i];
+                oss << "\n";
+            }
+            if (ix.rera) oss << "RERA index (not counted in the AHI): " << *ix.rera << " events/hour\n";
+        }
+    } else {
+        oss << "AHI: not available for this machine -- it does not detect hypopneas, so no "
+               "apnea-hypopnea index can be formed. Do not estimate one.\n";
+        oss << "Apnea index (all apneas, per hour): " << n.index << "\n";
+    }
+    if (n.leak_p95 || n.leak_p50) {
+        oss << "Leak:";
+        if (n.leak_p95) oss << " 95th=" << *n.leak_p95 << " L/min";
+        if (n.leak_p50) oss << (n.leak_p95 ? ", " : " ") << "median=" << *n.leak_p50 << " L/min";
+        oss << "\n";
+    }
+    if (n.pressure_p95 || n.pressure_avg) {
+        oss << "Pressure (delivered by the machine):";
+        if (n.pressure_avg) oss << " median=" << *n.pressure_avg << " cmH2O";
+        if (n.pressure_p95) oss << (n.pressure_avg ? ", " : " ") << "95th=" << *n.pressure_p95 << " cmH2O";
+        oss << "\n";
+    }
+    if (n.therapy_mode) oss << "Therapy mode: " << *n.therapy_mode << "\n";
+    if (n.myair) {
+        const auto& m = *n.myair;
+        if (m.score) {
+            oss << "myAir score: " << *m.score << " of 100";
+            std::vector<std::string> parts;
+            const auto part = [&](const char* name, const std::optional<int>& v) {
+                if (v) parts.push_back(std::string(name) + " " + std::to_string(*v));
+            };
+            part("usage", m.usage_score);
+            part("AHI", m.ahi_score);
+            part("mask seal", m.mask_score);
+            part("leak", m.leak_score);
+            if (!parts.empty()) {
+                oss << " (points:";
+                for (std::size_t i = 0; i < parts.size(); ++i) oss << (i ? ", " : " ") << parts[i];
+                oss << ")";
+            }
+            oss << "\n";
+        }
+        if (m.mask_pairs) oss << "Mask on/off pairs: " << *m.mask_pairs << "\n";
+    }
+    oss << "\n";
+    for (const auto& r : rules({n})) oss << r << "\n";
+    oss << kDailyOnlyRule << "\n";
+    return oss.str();
 }
 
 }  // namespace night_facts
