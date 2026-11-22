@@ -71,6 +71,11 @@ public:
     /// preserve_gaps splits at positive gaps; false retains the default 60 s joining.
     As11NightWriter(std::string data_dir, WallClockFn default_clock, bool preserve_gaps = false);
 
+    /// The Settings switch (airsense11_ble.strict_stream_gaps), applied live:
+    /// from the next block on. Files already written are not changed.
+    void setPreserveGaps(bool on);
+    bool preserveGaps() const;
+
     /// The wall clock for one machine (its own offset once a Summary showed
     /// it); the default otherwise.
     void setClock(const std::string& serial, WallClockFn clock);
@@ -110,7 +115,8 @@ public:
     static constexpr int64_t kStoredEventMatchMs = 2 * 1000;
 
 private:
-    const int64_t segment_gap_ms_;
+    bool preserve_gaps_ = false;   // mtx_ held
+    int64_t segment_gap_ms_;       // mtx_ held
     struct Segment {
         std::string night;
         std::string file;           // the .cds1s

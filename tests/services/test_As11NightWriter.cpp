@@ -662,3 +662,46 @@ TEST_F(NightTest, StrictContiguousBlocksRemainOneSegmentAcrossRestart) {
     }), 1);
     EXPECT_EQ(records(night() / "20261016_220000_BRP.edf"), 60);
 }
+
+// Split, a segment under a second long and the next one can start in the
+// same second; their files would share a name and the later would replace
+// the earlier. A real stream did this (a lost report closed a 200 ms
+// second, the next report came 160 ms on). The second block joins the first.
+TEST_F(NightTest, StrictTwoSegmentsInOneSecondShareOneSegment) {
+    As11NightWriter w(dir_.string(), fixedOffsetClock(-300), true);
+    StreamBlock part = second(kT0 + 100);
+    for (auto& c : part.channels) c.values.resize(5);   // 200 ms, a closed partial second
+    w.onBlock(part);
+    for (int i = 0; i < 30; ++i) w.onBlock(second(kT0 + 460 + i * 1000));   // 160 ms on
+    w.onStreamEnd(kSerial);
+    std::vector<std::string> segs;
+    for (const auto& n : files(dir_ / "as11" / kSerial / "stream" / "20261016"))
+        if (n.size() > 6 && n.substr(n.size() - 6) == ".cds1s") segs.push_back(n);
+    EXPECT_EQ(segs.size(), 1u) << "one segment, so one BRP name";
+    const auto names = files(night());
+    EXPECT_EQ(std::count_if(names.begin(), names.end(), [](const auto& n) {
+        return n.find("_BRP.edf") != std::string::npos;
+    }), 1);
+    EXPECT_GE(records(night() / "20261016_220000_BRP.edf"), 30);
+
+    // A gap past the second still splits.
+    for (int i = 0; i < 10; ++i) w.onBlock(second(kT0 + 40000 + i * 1000));
+    w.onStreamEnd(kSerial);
+    EXPECT_TRUE(fs::exists(night() / "20261016_220040_BRP.edf"));
+}
+
+// The Settings switch reaches a running writer: from the next block on.
+TEST_F(NightTest, ThePolicyChangesOnARunningWriter) {
+    auto w = writer();
+    EXPECT_FALSE(w.preserveGaps());
+    for (int i = 0; i < 30; ++i) w.onBlock(second(kT0 + i * 1000));
+    w.setPreserveGaps(true);
+    EXPECT_TRUE(w.preserveGaps());
+    for (int i = 0; i < 30; ++i) w.onBlock(second(kT0 + 35000 + i * 1000));   // 5 s gap: split
+    w.setPreserveGaps(false);
+    for (int i = 0; i < 30; ++i) w.onBlock(second(kT0 + 70000 + i * 1000));   // 5 s gap: joined
+    w.onStreamEnd(kSerial);
+    EXPECT_EQ(records(night() / "20261016_220000_BRP.edf"), 30);
+    EXPECT_EQ(records(night() / "20261016_220035_BRP.edf"), 65);
+    EXPECT_FALSE(fs::exists(night() / "20261016_220110_BRP.edf"));
+}
