@@ -767,6 +767,14 @@ void BurstCollectorService::oscarCardSeen(const std::string& card_root) {
     {
         std::lock_guard<std::mutex> lk(oscar_mu_);
         oscar_card_root_ = card_root;
+        reader = oscarReaderLocked();
+    }
+    reader->noteCloses(card_root);
+}
+
+std::shared_ptr<oscar::OscarCardReader> BurstCollectorService::oscarReaderLocked() {
+    if (!db_service_) return nullptr;
+    {   // oscar_mu_ is held by the caller
         if (!oscar_settings_set_ && app_config_) {
             oscar_settings_.program  = app_config_->oscar.program;
             oscar_settings_.data_dir = app_config_->oscar.data_dir;
@@ -782,9 +790,11 @@ void BurstCollectorService::oscarCardSeen(const std::string& card_root) {
                 if (s.program.empty()) s.program = oscar::findProgram();
                 return s;
             };
+            // SDD-083: with no card in the source, "Read now" and a helper's
+            // hello read the uploaded card.
             o.card_root = [this] {
                 std::lock_guard<std::mutex> l(oscar_mu_);
-                return oscar_card_root_;
+                return oscar_card_root_.empty() ? oscar_upload_root_ : oscar_card_root_;
             };
             o.db          = db_service_;
             o.device_id   = device_id_;
@@ -803,9 +813,48 @@ void BurstCollectorService::oscarCardSeen(const std::string& card_root) {
             oscar_reader_ = std::make_shared<oscar::OscarCardReader>(std::move(o));
             oscar_reader_->start();
         }
-        reader = oscar_reader_;
     }
-    reader->noteCloses(card_root);
+    return oscar_reader_;
+}
+
+bool BurstCollectorService::oscarSourcePaired() const {
+    std::lock_guard<std::mutex> lk(oscar_mu_);
+    // SDD-081: a helper paired to this hms-cpap.
+    if (oscar_remote_ && oscar_remote_->remembered()) return true;
+    // SDD-080: OSCAR on this computer, never inside a container.
+    if (SetupService::isContainerised()) return false;
+    oscar::Settings s = oscar_settings_;
+    if (!oscar_settings_set_ && app_config_) {
+        s.program  = app_config_->oscar.program;
+        s.data_dir = app_config_->oscar.data_dir;
+        s.profile  = app_config_->oscar.profile;
+    }
+    if (s.program.empty()) s.program = oscar::findProgram();
+    return s.set_up();
+}
+
+bool BurstCollectorService::oscarHelperPaired() const {
+    std::lock_guard<std::mutex> lk(oscar_mu_);
+    return oscar_remote_ && oscar_remote_->remembered();
+}
+
+std::optional<oscar::OscarCardReader::ReadResult> BurstCollectorService::readUploadedOscarCard(
+    const std::string& card_root) {
+    if (!oscarSourcePaired()) return std::nullopt;
+    std::shared_ptr<oscar::OscarCardReader> reader;
+    {
+        std::lock_guard<std::mutex> lk(oscar_mu_);
+        oscar_upload_root_ = card_root;
+        reader = oscarReaderLocked();
+    }
+    if (!reader) {
+        oscar::OscarCardReader::ReadResult r;
+        r.outcome = oscar::Outcome::Failed;
+        r.message = "the database is not ready";
+        return r;
+    }
+    // The read's end is the event; nothing here waits on a clock.
+    return reader->readCard(card_root, "a card was uploaded").get();
 }
 
 void BurstCollectorService::oscarCardWritten(const std::string& card_root, const std::vector<std::string>& rels) {

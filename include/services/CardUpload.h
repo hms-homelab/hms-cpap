@@ -12,7 +12,12 @@
 // No MQTT and no AI summary here: an upload is history, and publishing
 // hundreds of past nights would flood Home Assistant's history with them.
 //
+#include "services/OscarCardReader.h"
+
+#include <json/json.h>
+
 #include <functional>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -66,5 +71,34 @@ CardImportCounts importCardSessions(IDatabase& db, UploadedCard kind, const std:
                                     const std::string& device_id,
                                     const std::string& device_name,
                                     const CardImportProgress& progress = {});
+
+// ── SDD-083: a DreamStation 2 card whose files are encrypted ───────────────
+//
+// hms-cpap does not decrypt it. It is kept as a card (P-SERIES/<machine>/)
+// and read by the OSCAR the user paired (SDD-080 here, SDD-081 a helper),
+// the same read a card from a Sleep Bridge Lite or a folder gets. With none
+// paired the upload is refused, saying why and how to pair one, and nothing
+// is kept. A DreamStation card whose files are plain is not one of these.
+
+/// The folder of a DreamStation card (PROP.BIN beside P0 .. Pn) in [dir]
+/// whose files are encrypted, as the Philips parser judges it; nullopt for no
+/// DreamStation card or one whose files are plain.
+std::optional<std::string> encryptedPhilipsCardIn(const std::string& dir);
+
+/// The card at [card_dir] kept under [store] the way OSCAR takes a card:
+/// <store>/P-SERIES/<machine>/, merged with what earlier uploads left there.
+/// A card inside a P-SERIES folder brings that folder whole (LAST.TXT and
+/// every machine in it); a machine folder alone keeps its name ("UPLOAD"
+/// when the zip had none). False, with [error], when it could not be copied.
+bool keepPhilipsUpload(const std::string& card_dir, const std::string& store, std::string& error);
+
+/// The refusal when no OSCAR is paired. [containerised]: Docker or the Home
+/// Assistant add-on, where only a helper on a home PC can read it.
+Json::Value philipsUploadRefusal(bool containerised);
+
+/// The upload's reply from OSCAR's read: on an import the nights stored
+/// ("dates"), on anything else an "error" that says what to do. [helper]:
+/// the read was the helper's.
+Json::Value philipsUploadReply(const oscar::OscarCardReader::ReadResult& r, bool helper);
 
 }  // namespace hms_cpap

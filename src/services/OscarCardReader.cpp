@@ -95,12 +95,47 @@ void OscarCardReader::start() {
 }
 
 void OscarCardReader::stop() {
+    decltype(card_reads_) left;
     {
         std::lock_guard<std::mutex> lk(mu_);
         stop_ = true;
     }
     cv_.notify_all();
     if (worker_.joinable()) worker_.join();
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        left.swap(card_reads_);
+    }
+    // SDD-083: an upload waiting on a read that will not run hears so.
+    for (auto& [root, waiters] : left) {
+        ReadResult r;
+        r.outcome = Outcome::Failed;
+        r.message = "hms-cpap is stopping";
+        for (auto& w : waiters) w->set_value(r);
+    }
+}
+
+std::shared_future<OscarCardReader::ReadResult> OscarCardReader::readCard(const std::string& card_root,
+                                                                         const std::string& why) {
+    auto waiter = std::make_shared<std::promise<ReadResult>>();
+    std::shared_future<ReadResult> f = waiter->get_future().share();
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (worker_.joinable() && !stop_) {
+            card_reads_[card_root].push_back(waiter);
+            why_ = why;
+            waiter.reset();
+        }
+    }
+    if (waiter) {
+        ReadResult r;
+        r.outcome = Outcome::Failed;
+        r.message = "the OSCAR reader is not running";
+        waiter->set_value(r);
+        return f;
+    }
+    cv_.notify_all();
+    return f;
 }
 
 void OscarCardReader::request(const std::string& why) {
@@ -179,26 +214,40 @@ Json::Value OscarCardReader::status() const {
 void OscarCardReader::run() {
     for (;;) {
         std::string why;
+        // SDD-083: an uploaded card asked for, with everyone waiting on it.
+        std::optional<std::string> card;
+        std::vector<std::shared_ptr<std::promise<ReadResult>>> waiters;
         {
             std::unique_lock<std::mutex> lk(mu_);
-            cv_.wait(lk, [&] { return stop_ || pending_; });
+            cv_.wait(lk, [&] { return stop_ || pending_ || !card_reads_.empty(); });
             if (stop_) return;
-            pending_ = false;
+            if (!card_reads_.empty()) {
+                auto it = card_reads_.begin();
+                card = it->first;
+                waiters = std::move(it->second);
+                card_reads_.erase(it);
+                why = "a card was uploaded";
+            } else {
+                pending_ = false;
+                why = why_;
+            }
             running_ = true;
-            why = why_;
         }
         std::cout << kTag << "reading the card (" << why << ")" << std::endl;
         ReadResult r;
         try {
-            r = readOnce();
+            r = card ? readOnce(*card) : readOnce();
         } catch (const std::exception& e) {
             r.outcome = Outcome::Failed;
             r.message = e.what();
         }
         std::cout << kTag << outcomeName(r.outcome) << ", " << r.stored << " session(s) stored"
                   << (r.message.empty() ? "" : " (" + r.message + ")") << std::endl;
-        std::lock_guard<std::mutex> lk(mu_);
-        running_ = false;
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            running_ = false;
+        }
+        for (auto& w : waiters) w->set_value(r);
     }
 }
 
@@ -318,8 +367,11 @@ int OscarCardReader::storeFrom(OscarDb& db, const std::string& profile, const st
 }
 
 OscarCardReader::ReadResult OscarCardReader::readOnce() {
+    return readOnce(opt_.card_root ? opt_.card_root() : "");
+}
+
+OscarCardReader::ReadResult OscarCardReader::readOnce(const std::string& root) {
     ReadResult r;
-    const std::string root = opt_.card_root ? opt_.card_root() : "";
     // SDD-081 D5: while a helper is remembered, the read is its.
     if (opt_.remote && opt_.remote->remembered()) return readRemote(root);
 
@@ -340,6 +392,7 @@ OscarCardReader::ReadResult OscarCardReader::readOnce() {
     std::optional<CPAPSession> newest;
     std::vector<std::chrono::system_clock::time_point> landed;
     r.stored = storeFrom(*db, s.profile, root, removed, newest, landed);
+    r.landed = landed;
     if (r.stored > 0 && opt_.db) {
         opt_.db->aggregateDailySummaryFromSessions(opt_.device_id);   // SDD-026
         night_landed::announceStarts(landed);                         // SDD-013 D-701-3
@@ -395,6 +448,7 @@ OscarCardReader::ReadResult OscarCardReader::readRemote(const std::string& root)
     std::optional<CPAPSession> newest;
     std::vector<std::chrono::system_clock::time_point> landed;
     if (!ps.empty()) r.stored = storeFrom(*db, ps.front(), root, removed, newest, landed);
+    r.landed = landed;
     db.reset();
     cleanup();
     if (r.stored > 0 && opt_.db) {

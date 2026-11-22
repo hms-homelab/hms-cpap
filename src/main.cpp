@@ -1758,6 +1758,33 @@ int main(int argc, char** argv) {
                         // SDD-061: a .cpapcard's layout went to the Sleep Bridge
                         // when it was uploaded; it is not a file of the card.
                         hms_cpap::removeCardLayout(staging.string());
+                        // SDD-083: a DreamStation 2 card whose files are
+                        // encrypted is read by the OSCAR the user paired, the
+                        // read its card from a Sleep Bridge Lite or a folder
+                        // gets; with none paired it is refused and nothing is
+                        // kept. hms-cpap never decrypts it.
+                        if (const auto ds2 = hms_cpap::encryptedPhilipsCardIn(staging.string())) {
+                            if (!burst_service || !burst_service->oscarSourcePaired()) {
+                                fs::remove_all(staging, ec);
+                                return hms_cpap::philipsUploadRefusal(
+                                    hms_cpap::SetupService::isContainerised());
+                            }
+                            const std::string store =
+                                hms_cpap::AppConfig::dataDir() + "/uploads/philips";
+                            std::string keep_error;
+                            const bool kept = hms_cpap::keepPhilipsUpload(*ds2, store, keep_error);
+                            fs::remove_all(staging, ec);
+                            if (!kept) {
+                                r["error"] = keep_error;
+                                return r;
+                            }
+                            std::cout << "Upload: an encrypted DreamStation 2 card, read through OSCAR"
+                                      << std::endl;
+                            const auto read = burst_service->readUploadedOscarCard(store);
+                            if (!read) return hms_cpap::philipsUploadRefusal(
+                                hms_cpap::SetupService::isContainerised());
+                            return hms_cpap::philipsUploadReply(*read, burst_service->oscarHelperPaired());
+                        }
                         // SDD-031 (#28): read the card it was given. A Sefam or
                         // Löwenstein card is kept under uploads/<format>/ (D2) and
                         // every session the database lacks is imported on the

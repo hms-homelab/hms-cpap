@@ -1,0 +1,345 @@
+// SDD-083: a DreamStation 2 card whose files are encrypted, uploaded on the
+// upload page, is read by the OSCAR the user paired; with none paired it is
+// refused and nothing is kept.
+//
+// No OSCAR here and no OSCAR-made file: the fake OSCAR and the synthetic
+// oscar.db of OscarFakes.h, and the made-up card of
+// tests/fixtures/philips (bytes of nothing, never a real card). Nothing is
+// decrypted.
+
+#include "database/SQLiteDatabase.h"
+#include "services/BurstCollectorService.h"
+#include "services/CardUpload.h"
+#include "services/DataPublisherService.h"
+#include "services/OscarCard.h"
+#include "services/OscarCardReader.h"
+#include "OscarFakes.h"
+
+#include <gtest/gtest.h>
+#include <json/json.h>
+
+#include <chrono>
+#include <condition_variable>
+#include <filesystem>
+#include <fstream>
+#include <mutex>
+
+using namespace hms_cpap;
+using namespace hms_cpap::oscar;
+using namespace oscar_fakes;
+namespace fs = std::filesystem;
+
+namespace {
+
+fs::path fixtures() { return fs::path(__FILE__).parent_path().parent_path() / "fixtures/philips"; }
+
+/// A helper that is paired and answers with [outcome], never importing.
+class FakeRemote : public IRemoteOscar {
+public:
+    Outcome outcome{Outcome::HelperOffline};
+    std::string message{"waiting for HOME-PC"};
+    int reads{0};
+    std::string last_root;
+    bool remembered() const override { return true; }
+    Json::Value status() const override {
+        Json::Value v(Json::objectValue);
+        v["remembered"] = true;
+        v["name"] = "HOME-PC";
+        return v;
+    }
+    RemoteRead read(const std::string& card_root, const Want&, const std::string&) override {
+        ++reads;
+        last_root = card_root;
+        RemoteRead r;
+        r.outcome = outcome;
+        r.message = message;
+        return r;
+    }
+};
+
+class OscarUploadTest : public ::testing::Test {
+protected:
+    fs::path dir_, data_, staging_, store_;
+    std::shared_ptr<SQLiteDatabase> db_;
+    std::unique_ptr<FakeOscarDb> oscar_;
+    std::shared_ptr<FakeOscar> fake_ = std::make_shared<FakeOscar>();
+    Settings settings_;
+
+    void SetUp() override {
+        dir_ = fs::temp_directory_path() /
+               ("oscar_sdd083_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+        data_ = dir_ / "OSCAR_Data";
+        staging_ = dir_ / "cpap_stage_1";
+        store_ = dir_ / "uploads" / "philips";
+        oscar_ = std::make_unique<FakeOscarDb>(data_);
+        db_ = std::make_shared<SQLiteDatabase>((dir_ / "hms.db").string());
+        ASSERT_TRUE(db_->connect());
+        settings_.program = "/opt/oscar/OSCAR20";
+        settings_.data_dir = data_.string();
+        settings_.profile = kDefaultProfile;
+    }
+    void TearDown() override {
+        db_->disconnect();
+        oscar_.reset();
+        std::error_code ec;
+        fs::remove_all(dir_, ec);
+    }
+
+    /// The encrypted fixture, extracted as a zip would be, under [wrapper].
+    fs::path encryptedZip(const std::string& wrapper = "") {
+        const fs::path to = wrapper.empty() ? staging_ : staging_ / wrapper;
+        fs::create_directories(to);
+        fs::copy(fixtures() / "ds2_encrypted", to, fs::copy_options::recursive);
+        cardFile(to, "P-SERIES/PXENC001/P0/00000041.B01", "made-up closing bytes");
+        return to;
+    }
+
+    std::unique_ptr<BurstCollectorService> collector() {
+        auto svc = std::make_unique<BurstCollectorService>(60);
+        svc->injectDependenciesForTest(db_, nullptr,
+                                       std::make_unique<DataPublisherService>(std::shared_ptr<hms::MqttClient>{}, db_));
+        svc->setOscarRunnerForTest(fake_);
+        return svc;
+    }
+};
+
+}  // namespace
+
+// ── what the upload is ─────────────────────────────────────────────────────
+
+TEST_F(OscarUploadTest, AnEncryptedDreamStationCardIsFoundEvenInsideAWrapperFolder) {
+    if (!fs::exists(fixtures() / "ds2_encrypted")) GTEST_SKIP() << "fixture not found";
+    encryptedZip("cpap files");
+    const auto card = encryptedPhilipsCardIn(staging_.string());
+    ASSERT_TRUE(card.has_value());
+    EXPECT_EQ(fs::path(*card).filename().string(), "PXENC001");
+}
+
+TEST_F(OscarUploadTest, APlainDreamStationCardOrAResmedCardIsNotAnEncryptedOne) {
+    if (!fs::exists(fixtures() / "ds2_live")) GTEST_SKIP() << "fixture not found";
+    fs::create_directories(staging_);
+    fs::copy(fixtures() / "ds2_live", staging_, fs::copy_options::recursive);
+    EXPECT_FALSE(encryptedPhilipsCardIn(staging_.string()).has_value()) << "plain files keep today's path";
+
+    const fs::path resmed = dir_ / "resmed";
+    cardFile(resmed, "DATALOG/20300101/20300101_000000_BRP.edf");
+    cardFile(resmed, "STR.edf");
+    EXPECT_FALSE(encryptedPhilipsCardIn(resmed.string()).has_value());
+}
+
+// ── where it is kept ───────────────────────────────────────────────────────
+
+TEST_F(OscarUploadTest, TheCardIsKeptAsOscarTakesACardWhicheverWayItWasZipped) {
+    // A zip of the card: P-SERIES comes whole, LAST.TXT with it.
+    cardFile(staging_, "P-SERIES/LAST.TXT", "AAAA0000");
+    cardFile(staging_, "P-SERIES/AAAA0000/PROP.BIN");
+    cardFile(staging_, "P-SERIES/AAAA0000/P0/00000001.B01");
+    std::string err;
+    ASSERT_TRUE(keepPhilipsUpload((staging_ / "P-SERIES/AAAA0000").string(), store_.string(), err)) << err;
+    EXPECT_TRUE(fs::exists(store_ / "P-SERIES/LAST.TXT"));
+    EXPECT_TRUE(fs::exists(store_ / "P-SERIES/AAAA0000/P0/00000001.B01"));
+
+    // A zip of the machine folder alone keeps its name.
+    const fs::path m = dir_ / "z2" / "BBBB0000";
+    cardFile(m, "PROP.BIN");
+    cardFile(m, "P0/00000002.B01");
+    ASSERT_TRUE(keepPhilipsUpload(m.string(), store_.string(), err)) << err;
+    EXPECT_TRUE(fs::exists(store_ / "P-SERIES/BBBB0000/P0/00000002.B01"));
+
+    // Its contents at the zip's root have no name of their own.
+    const fs::path c = dir_ / "cpap_stage_9";
+    cardFile(c, "PROP.BIN");
+    cardFile(c, "P0/00000003.B01");
+    ASSERT_TRUE(keepPhilipsUpload(c.string(), store_.string(), err)) << err;
+    EXPECT_TRUE(fs::exists(store_ / "P-SERIES/UPLOAD/P0/00000003.B01"));
+
+    // A later upload merges; the earlier files stay.
+    EXPECT_TRUE(fs::exists(store_ / "P-SERIES/AAAA0000/P0/00000001.B01"));
+}
+
+// ── the read, on the reader's own thread ───────────────────────────────────
+
+TEST_F(OscarUploadTest, ReadCardReadsTheGivenRootOnTheWorkerAndSaysWhatLanded) {
+    const fs::path live = dir_ / "live";   // the source's card: not this read's
+    cardFile(live, "P-SERIES/1A2B3C4D/PROP.BIN");
+    cardFile(store_, "P-SERIES/PXENC001/PROP.BIN");
+    cardFile(store_, "P-SERIES/PXENC001/P0/00000041.B01");
+    fake_->on_run = [&](const std::vector<std::string>& argv) {
+        EXPECT_EQ(argv.back(), store_.string()) << "the uploaded card root";
+        oscar_->session(oscar_->hms_, 0x41, kT0, 10);
+        return exited(0);
+    };
+    OscarCardReader::Options o;
+    o.settings = [this] { return settings_; };
+    o.card_root = [&] { return live.string(); };
+    o.db = db_;
+    o.device_id = kDevice;
+    o.device_name = "DreamStation 2";
+    o.runner = fake_;
+    OscarCardReader reader(o);
+
+    // Not running: said at once, nothing run.
+    EXPECT_EQ(reader.readCard(store_.string(), "upload").get().outcome, Outcome::Failed);
+    EXPECT_TRUE(fake_->runs.empty());
+
+    reader.start();
+    const auto r = reader.readCard(store_.string(), "upload").get();
+    reader.stop();
+    EXPECT_EQ(r.outcome, Outcome::Imported) << r.message;
+    EXPECT_EQ(r.stored, 1);
+    ASSERT_EQ(r.landed.size(), 1u);
+    EXPECT_EQ(fake_->runs.size(), 1u);
+    EXPECT_TRUE(db_->sessionExists(kDevice, sessionClock(kT0)));
+}
+
+TEST_F(OscarUploadTest, AsksForTheSameCardWhileOscarRunsAreOneMoreReadNeverAQueue) {
+    cardFile(store_, "P-SERIES/PXENC001/PROP.BIN");
+    std::mutex mu;
+    std::condition_variable cv;
+    bool entered = false, release = false;
+    int runs = 0;
+    fake_->on_run = [&](const std::vector<std::string>&) {
+        std::unique_lock<std::mutex> lk(mu);
+        ++runs;
+        entered = true;
+        cv.notify_all();
+        cv.wait(lk, [&] { return release || runs > 1; });
+        return exited(0);
+    };
+    OscarCardReader::Options o;
+    o.settings = [this] { return settings_; };
+    o.card_root = [this] { return store_.string(); };
+    o.db = db_;
+    o.device_id = kDevice;
+    o.runner = fake_;
+    OscarCardReader reader(o);
+    reader.start();
+    auto first = reader.readCard(store_.string(), "upload");
+    {
+        std::unique_lock<std::mutex> lk(mu);
+        cv.wait(lk, [&] { return entered; });
+    }
+    auto second = reader.readCard(store_.string(), "upload");
+    auto third = reader.readCard(store_.string(), "upload");
+    {
+        std::lock_guard<std::mutex> lk(mu);
+        release = true;
+    }
+    cv.notify_all();
+    first.wait();
+    second.wait();
+    third.wait();
+    reader.stop();
+    EXPECT_EQ(runs, 2) << "one read after the one running covers both asks";
+}
+
+// ── paired or not ──────────────────────────────────────────────────────────
+
+TEST_F(OscarUploadTest, WithNoOscarPairedNothingIsReadAndTheRefusalSaysHowToPairOne) {
+    auto svc = collector();
+    Settings none;
+    none.program = "/opt/oscar/OSCAR20";   // a program alone is not a set-up OSCAR
+    none.data_dir.clear();
+    svc->setOscarSettings(none);
+    EXPECT_FALSE(svc->oscarSourcePaired());
+    cardFile(store_, "P-SERIES/PXENC001/PROP.BIN");
+    EXPECT_FALSE(svc->readUploadedOscarCard(store_.string()).has_value());
+    EXPECT_TRUE(fake_->runs.empty()) << "OSCAR never started";
+    EXPECT_FALSE(svc->oscarReaderForTest()) << "no reader is built for a refusal";
+
+    for (bool containerised : {false, true}) {
+        const auto r = philipsUploadRefusal(containerised);
+        const std::string e = r["error"].asString();
+        EXPECT_NE(e.find("encrypted"), std::string::npos);
+        EXPECT_NE(e.find("does not decrypt"), std::string::npos);
+        EXPECT_NE(e.find("OSCAR helper"), std::string::npos);
+        EXPECT_NE(e.find("Nothing was kept"), std::string::npos);
+        EXPECT_EQ(r["oscar"].asString(), "not_paired");
+        if (!containerised) EXPECT_NE(e.find("Settings, Data Source"), std::string::npos);
+        if (!containerised) EXPECT_NE(e.find("hms-cpap"), std::string::npos);
+    }
+}
+
+TEST_F(OscarUploadTest, OscarOnThisComputerReadsTheUploadedCardAndItsNightsLand) {
+    if (!fs::exists(fixtures() / "ds2_encrypted")) GTEST_SKIP() << "fixture not found";
+    encryptedZip();
+    const auto card = encryptedPhilipsCardIn(staging_.string());
+    ASSERT_TRUE(card);
+    std::string err;
+    ASSERT_TRUE(keepPhilipsUpload(*card, store_.string(), err)) << err;
+    fake_->on_run = [&](const std::vector<std::string>& argv) {
+        EXPECT_EQ(argv, importCommand(settings_, store_.string()));
+        oscar_->session(oscar_->hms_, 0x41, kT0, 10);
+        return exited(0);
+    };
+    auto svc = collector();
+    svc->setOscarSettings(settings_);
+    ASSERT_TRUE(svc->oscarSourcePaired());
+    const auto read = svc->readUploadedOscarCard(store_.string());
+    ASSERT_TRUE(read.has_value());
+    const auto reply = philipsUploadReply(*read, svc->oscarHelperPaired());
+    EXPECT_FALSE(reply.isMember("error")) << reply.toStyledString();
+    EXPECT_EQ(reply["status"].asString(), "done");
+    EXPECT_EQ(reply["read_by"].asString(), "oscar");
+    EXPECT_EQ(reply["sessions_found"].asInt(), 1);
+    EXPECT_EQ(reply["dates"].size(), 1u);
+    EXPECT_TRUE(db_->sessionExists(svc->deviceIdForTest(), sessionClock(kT0)));
+    // The card's own files are the session's (SDD-077 D1), under the upload.
+    const auto rows = db_->executeQuery(
+        "SELECT COUNT(*) AS v FROM cpap_session_files f JOIN cpap_sessions s ON s.id = f.session_id "
+        "WHERE s.device_id = ? AND f.source = 'card'",
+        {svc->deviceIdForTest()});
+    const Json::Value& v = rows[0]["v"];
+    EXPECT_GT(v.isString() ? std::stoi(v.asString()) : v.asInt(), 0);
+
+    // The same card again: nothing new, and no error.
+    const auto again = philipsUploadReply(*svc->readUploadedOscarCard(store_.string()), false);
+    EXPECT_FALSE(again.isMember("error"));
+    EXPECT_EQ(again["sessions_found"].asInt(), 0);
+    svc->oscarReaderForTest()->stop();
+}
+
+TEST_F(OscarUploadTest, APairedHelperIsAnOscarSourceAndAnOfflineOneIsSaidSo) {
+    auto svc = collector();
+    auto remote = std::make_shared<FakeRemote>();
+    svc->setOscarRemote(remote, (dir_ / "slice").string());
+    Settings none;
+    none.data_dir.clear();
+    svc->setOscarSettings(none);
+    ASSERT_TRUE(svc->oscarSourcePaired()) << "a remembered helper is paired, with no OSCAR here";
+    EXPECT_TRUE(svc->oscarHelperPaired());
+    cardFile(store_, "P-SERIES/PXENC001/PROP.BIN");
+    const auto read = svc->readUploadedOscarCard(store_.string());
+    ASSERT_TRUE(read.has_value());
+    EXPECT_EQ(remote->reads, 1);
+    EXPECT_EQ(remote->last_root, store_.string());
+    EXPECT_TRUE(fake_->runs.empty()) << "the helper's read, not OSCAR here";
+    const auto reply = philipsUploadReply(*read, true);
+    EXPECT_EQ(reply["oscar"].asString(), "helper_offline");
+    EXPECT_NE(reply["error"].asString().find("not connected"), std::string::npos);
+    EXPECT_NE(reply["error"].asString().find("waiting for HOME-PC"), std::string::npos);
+
+    remote->outcome = Outcome::NothingNew;
+    const auto ok = philipsUploadReply(*svc->readUploadedOscarCard(store_.string()), true);
+    EXPECT_FALSE(ok.isMember("error"));
+    EXPECT_EQ(ok["read_by"].asString(), "oscar_helper");
+    svc->oscarReaderForTest()->stop();
+}
+
+TEST(OscarUploadReply, EveryOutcomeButAnImportIsAnErrorThatSaysWhatToDo) {
+    for (Outcome o : {Outcome::NotSetUp, Outcome::NoProgram, Outcome::NotSupported, Outcome::NoProfile,
+                      Outcome::Busy, Outcome::Timeout, Outcome::ReadNothing, Outcome::Failed,
+                      Outcome::HelperOffline, Outcome::HelperUpdate}) {
+        OscarCardReader::ReadResult r;
+        r.outcome = o;
+        r.message = "why";
+        const auto reply = philipsUploadReply(r, false);
+        EXPECT_FALSE(reply["error"].asString().empty()) << outcomeName(o);
+        EXPECT_EQ(reply["oscar"].asString(), outcomeName(o));
+        EXPECT_FALSE(reply.isMember("dates")) << outcomeName(o);
+    }
+    OscarCardReader::ReadResult r;
+    r.outcome = Outcome::NoProfile;
+    EXPECT_NE(philipsUploadReply(r, false)["error"].asString().find("create a profile named hms-cpap"),
+              std::string::npos);
+}
