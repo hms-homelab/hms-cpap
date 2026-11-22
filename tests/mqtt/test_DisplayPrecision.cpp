@@ -2,6 +2,8 @@
 
 #include "mqtt/DisplayPrecision.h"
 
+#include <tuple>
+
 using hms_cpap::displayPrecision;
 
 namespace {
@@ -67,4 +69,38 @@ TEST(DisplayPrecision, TextAndModesGetNoHint) {
 
 TEST(DisplayPrecision, AUnitWeHaveNoViewOnIsLeftAlone) {
     EXPECT_EQ(p("something", "furlongs"), -1);
+}
+
+// The frontend formats a state as a number only with a unit or a state class.
+TEST(DisplayHints, AUnitlessNumberGetsAStateClassSoItIsRounded) {
+    Json::Value c(Json::objectValue);
+    hms_cpap::addDisplayHints(c, "current_snore", "", "");
+    EXPECT_EQ(c["suggested_display_precision"].asInt(), 2);
+    EXPECT_EQ(c["state_class"].asString(), "measurement")
+        << "without a unit or a state class the frontend shows the raw text, 0.000000";
+}
+
+TEST(DisplayHints, ANumberWithAUnitNeedsNoStateClass) {
+    Json::Value c(Json::objectValue);
+    hms_cpap::addDisplayHints(c, "avg_leak_rate", "L/min", "");
+    EXPECT_EQ(c["suggested_display_precision"].asInt(), 1);
+    EXPECT_FALSE(c.isMember("state_class"));
+}
+
+TEST(DisplayHints, AStateClassAlreadyThereIsKept) {
+    Json::Value c(Json::objectValue);
+    c["state_class"] = "total";
+    hms_cpap::addDisplayHints(c, "total_events", "", "");
+    EXPECT_EQ(c["state_class"].asString(), "total");
+}
+
+TEST(DisplayHints, TextAndTimesGetNothing) {
+    for (auto [name, unit, dc] : {std::tuple<const char*, const char*, const char*>{"session_summary", "", ""},
+                                  {"session_status", "", ""},
+                                  {"last_session_time", "", "timestamp"},
+                                  {"usage_hours", "h", "duration"}}) {
+        Json::Value c(Json::objectValue);
+        hms_cpap::addDisplayHints(c, name, unit, dc);
+        EXPECT_TRUE(c.empty()) << name;
+    }
 }

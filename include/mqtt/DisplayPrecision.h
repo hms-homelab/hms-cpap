@@ -21,6 +21,8 @@
 // Nothing for a time (device_class duration or timestamp: Home Assistant
 // converts those itself) or for a sensor that is text.
 //
+#include <json/json.h>
+
 #include <optional>
 #include <string>
 
@@ -44,6 +46,20 @@ inline std::optional<int> displayPrecision(const std::string& name, const std::s
         has("mask_events") || name == "sleep_index" || name == "str_sleep_index" || name == "motion")
         return 0;
     return std::nullopt;   // text (a summary, a band, a status) or a mode
+}
+
+/// Puts the precision on a discovery config, and what the frontend needs to
+/// honour it. Home Assistant's frontend formats a state as a number only when
+/// the entity has a unit of measurement or a state class; a unitless number
+/// (the snore level, a count) with neither is shown as the raw text
+/// ("0.000000"), whatever precision it suggests. So a unitless one with a
+/// precision and no state class gets "measurement".
+inline void addDisplayHints(Json::Value& config, const std::string& name, const std::string& unit,
+                            const std::string& device_class) {
+    const auto p = displayPrecision(name, unit, device_class);
+    if (!p) return;
+    config["suggested_display_precision"] = *p;
+    if (unit.empty() && !config.isMember("state_class")) config["state_class"] = "measurement";
 }
 
 }  // namespace hms_cpap
