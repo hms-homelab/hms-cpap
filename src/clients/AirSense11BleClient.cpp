@@ -643,6 +643,7 @@ std::vector<uint8_t> AirSense11BleClient::fetchSummary(const std::string& from) 
     bool recording = false;
     as11::Result r = openSession(*creds, after_night ? kAfterNightScanMs : kScanMs, &serial, &recording);
     if (r == as11::Result::Connect || r == as11::Result::RadioOff) return {};   // connectLink said why
+    if (pairing_lost_) return {};   // #108: openSession said "pair it again"; that stays the last word
     after_night_ = false;
     if (r == as11::Result::Ok && writer_ && session_.getIdentification(&ident) == as11::Result::Ok)
         writeIdentification(writer_->rootFor(serial), ident);
