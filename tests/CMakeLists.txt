@@ -178,6 +178,7 @@ set(TEST_SOURCES
     clients/test_O2RingBleProtocol.cpp
     clients/test_BlueZAdapter.cpp
     clients/test_BleClientsFakeTransport.cpp
+    clients/test_As11PairedMachine.cpp
     clients/test_Ds2BleReader.cpp
     clients/test_Ds2CaptureReplay.cpp
     utils/test_KeepAwake.cpp
