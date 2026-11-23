@@ -628,6 +628,28 @@ TEST(LiveSources, SleepBridgeRestartMidNightStaysOn) {
     EXPECT_EQ(rec.last("mask"), "ON");
 }
 
+// The therapy sensor says off before any night has streamed, not "unknown",
+// and a machine found already streaming is not declared off.
+TEST(LiveSources, TheTherapySensorStartsOffAndKeepsAMachineFoundMidNight) {
+    Recorder rec;
+    auto lastTherapy = [&] {
+        std::string v;
+        for (const auto& s : rec.out)
+            if (s.topic == "cpap/cpap_test/live/therapy") v = s.payload;
+        return v;
+    };
+    LivePublisher idle(rec.publish(), "cpap_test", "Test CPAP");
+    idle.announce();
+    EXPECT_EQ(lastTherapy(), "OFF");
+
+    Recorder rec2;
+    rec = rec2;
+    LivePublisher mid(rec.publish(), "cpap_test", "Test CPAP");
+    mid.therapy("23000000001", "23000000001", true, /*restated=*/true);
+    mid.announce();
+    EXPECT_EQ(lastTherapy(), "ON");
+}
+
 // The AirSense 11 over this computer's Bluetooth: no live/* topics of its own,
 // the shared ones only.
 TEST(LiveSources, As11BluetoothOnAtTheStreamOffAtItsEndAndEventsWithTheirMoment) {
