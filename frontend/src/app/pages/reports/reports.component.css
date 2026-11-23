@@ -64,6 +64,108 @@ h3 { color: #ccc; font-size: 0.95rem; font-weight: 600; margin: 0 0 1rem; }
 
 .error-msg { color: #ef9a9a; font-size: 0.8rem; margin-top: 0.75rem; }
 
+/* SDD-082: the kind toggle, the span choice, the rule and the list badges. */
+.kind-toggle {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  background: #13131f;
+  border: 1px solid #333;
+  border-radius: 8px;
+  margin-bottom: 0.9rem;
+  max-width: 100%;
+}
+
+.kind-toggle button,
+.span-toggle button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: transparent;
+  border: 1px solid transparent;
+  color: #aaa;
+  padding: 0.4rem 0.85rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+
+.kind-toggle button:hover,
+.span-toggle button:hover { color: #e0e0e0; }
+
+.kind-toggle button.active,
+.span-toggle button.active {
+  background: var(--btn-blue);
+  border-color: var(--btn-blue);
+  color: #fff;
+}
+
+.kind-desc {
+  color: #9aa0b4;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  margin: 0 0 1rem;
+  max-width: 62ch;
+}
+
+.span-field { margin-bottom: 0.9rem; }
+
+.span-toggle {
+  display: inline-flex;
+  gap: 0.25rem;
+  padding: 0.2rem;
+  background: #13131f;
+  border: 1px solid #333;
+  border-radius: 8px;
+  width: fit-content;
+}
+
+.span-toggle button { padding: 0.3rem 0.9rem; }
+
+.field input.rule-input {
+  background: #13131f;
+  border: 1px solid #333;
+  color: #e0e0e0;
+  padding: 0.45rem 0.7rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  outline: none;
+  width: 6.5rem;
+}
+
+.field input.rule-input:focus { border-color: #64b5f6; }
+
+.rule-sentence { color: #c5cae9; font-size: 0.85rem; margin: 0.9rem 0 0; }
+
+.table-scroll { overflow-x: auto; }
+
+.kind-badge {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 10px;
+  background: rgba(100, 181, 246, 0.15);
+  color: #90caf9;
+  font-family: inherit;
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.rule-note { margin-left: 0.4rem; color: #888; font-family: inherit; font-size: 0.72rem; }
+
+@media (max-width: 600px) {
+  .reports-page { padding: 1rem; }
+  .kind-toggle { display: flex; }
+  .kind-toggle button { flex: 1 1 auto; justify-content: center; }
+  .form-row { align-items: stretch; }
+  .form-row .field { flex: 1 1 45%; }
+  .field input[type="date"], .field input.rule-input { width: 100%; box-sizing: border-box; }
+  .generate-btn { flex: 1 1 100%; justify-content: center; }
+}
+
 .table-section { }
 
 .empty { color: #555; font-size: 0.9rem; padding: 1rem 0; }

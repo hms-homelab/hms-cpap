@@ -2,6 +2,7 @@
 #include "database/NightWrite.h"
 #include "database/SqlDialect.h"
 #include "database/StrPercentile.h"
+#include "database/StrSettings.h"
 #include "utils/MachineClocks.h"
 #include "utils/Desaturation.h"
 #include "utils/OximetryDevice.h"
@@ -547,6 +548,15 @@ void SQLiteDatabase::createSchema() {
         sqlite3_exec(db_, (std::string("ALTER TABLE cpap_daily_summary ADD COLUMN ") + col).c_str(),
                      nullptr, nullptr, nullptr);
     }
+    // SDD-082 B10: the STR's settings the clinician report's settings table
+    // reads, which the parser always read and this table never kept. Filled
+    // by the next STR read; NULL (family 0) until then.
+    for (const char* col : {"family INTEGER DEFAULT 0", "apap_min_pressure REAL",
+                            "apap_max_pressure REAL", "bl_min_epap REAL", "bl_max_ipap REAL",
+                            "bl_ps REAL", "bl_ipap REAL", "bl_epap REAL"}) {
+        sqlite3_exec(db_, (std::string("ALTER TABLE cpap_daily_summary ADD COLUMN ") + col).c_str(),
+                     nullptr, nullptr, nullptr);
+    }
     sqlite3_exec(db_,
                  "UPDATE cpap_daily_summary"
                  "   SET machine_hours = patient_hours,"
@@ -833,6 +843,8 @@ void SQLiteDatabase::createSchema() {
     // listReports() is per device, newest first.
     exec("CREATE INDEX IF NOT EXISTS idx_cpap_reports_device_created "
          "ON cpap_reports(device_id, created_at DESC)");
+    // SDD-082: the rule a compliance report was judged against (JSON text).
+    sqlite3_exec(db_, "ALTER TABLE cpap_reports ADD COLUMN rule TEXT", nullptr, nullptr, nullptr);
 
     exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_eq_profile_uuid "
          "ON cpap_equipment_profiles(client_uuid) WHERE client_uuid IS NOT NULL");
@@ -2415,7 +2427,10 @@ bool SQLiteDatabase::saveSTRDailyRecords(const std::vector<STRDailyRecord>& reco
                  ahi_str, hi_str, ai_str, oai_str, cai_str, uai_str, rin_str,
                  duration_minutes_str, index_source, updated_at,
                  -- SDD-033 D1: appended, for the same reason.
-                 leak_50_str, leak_95_str, mask_press_50_str, spo2_50_str)
+                 leak_50_str, leak_95_str, mask_press_50_str, spo2_50_str,
+                 -- SDD-082 B10: the settings, appended for the same reason.
+                 family, apap_min_pressure, apap_max_pressure,
+                 bl_min_epap, bl_max_ipap, bl_ps, bl_ipap, bl_epap)
             VALUES (?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?,
@@ -2427,8 +2442,16 @@ bool SQLiteDatabase::saveSTRDailyRecords(const std::vector<STRDailyRecord>& reco
                     ?,
                     ?, ?, ?, ?, ?, ?, ?,
                     ?, 'str', datetime('now'),
-                    ?, ?, ?, ?)
+                    ?, ?, ?, ?,
+                    ?, ?, ?,
+                    ?, ?, ?, ?, ?)
             ON CONFLICT (device_id, record_date) DO UPDATE SET
+                -- SDD-082 B10: the STR is the only writer of the settings.
+                family = excluded.family,
+                apap_min_pressure = excluded.apap_min_pressure,
+                apap_max_pressure = excluded.apap_max_pressure,
+                bl_min_epap = excluded.bl_min_epap, bl_max_ipap = excluded.bl_max_ipap,
+                bl_ps = excluded.bl_ps, bl_ipap = excluded.bl_ipap, bl_epap = excluded.bl_epap,
                 mask_pairs       = excluded.mask_pairs,
                 mask_events      = excluded.mask_events,
                 machine_hours    = excluded.machine_hours,
@@ -2559,6 +2582,17 @@ bool SQLiteDatabase::saveSTRDailyRecords(const std::vector<STRDailyRecord>& reco
             bind_pct(41, strPercentile(r.leak_95, true));
             bind_pct(42, strPercentile(r.mask_press_50, false));
             bind_pct(43, strPercentile(r.spo2_50, false));
+            // SDD-082 B10: the family and the prescribed pressures, NULL where
+            // the STR has none (an AutoSet limit of 0 is no limit).
+            const StrSettings st = strSettingsOf(r);
+            bind_int(g.stmt, 44, st.family);
+            bind_pct(45, st.apap_min);
+            bind_pct(46, st.apap_max);
+            bind_pct(47, st.bl_min_epap);
+            bind_pct(48, st.bl_max_ipap);
+            bind_pct(49, st.bl_ps);
+            bind_pct(50, st.bl_ipap);
+            bind_pct(51, st.bl_epap);
 
             if (sqlite3_step(g.stmt) != SQLITE_DONE) {
                 std::cerr << "SQLite: saveSTRDailyRecords error: " << sqlite3_errmsg(db_) << std::endl;

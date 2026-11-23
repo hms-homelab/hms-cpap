@@ -372,7 +372,9 @@ if(MSVC)
     list(FILTER SOURCES EXCLUDE REGEX ".*/PdfRenderer\\.cpp$")
     list(FILTER SOURCES EXCLUDE REGEX ".*/GnuplotService\\.cpp$")
     list(FILTER SOURCES EXCLUDE REGEX ".*/ReportGeneratorService\\.cpp$")
-    list(FILTER SOURCES EXCLUDE REGEX ".*/services/reports/.*\\.cpp$")
+    # The generators only: services/reports/figures/ is pure arithmetic that
+    # QueryService links on every platform (SDD-082).
+    list(FILTER SOURCES EXCLUDE REGEX ".*/services/reports/[^/]*\\.cpp$")
 endif()
 
 # Executable

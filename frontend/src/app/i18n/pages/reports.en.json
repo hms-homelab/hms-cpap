@@ -1,5 +1,27 @@
 {
   "reports": {
+    "form": {
+      "summary": "Summary report",
+      "clinician": "Clinician report",
+      "compliance": "Compliance report"
+    },
+    "compliance": {
+      "nights": "Nights",
+      "hours": "Hours",
+      "share": "Percent of nights",
+      "ruleSentence": "At least {{hours}} hours on at least {{share}} % of nights."
+    },
+    "pdf": {
+      "clinicianDesc": "A detailed PDF for your doctor: your therapy statistics by period and by month, changes to your machine's settings, the CMS adherence check, and a page for your last night and your worst night.",
+      "clinicianBadge": "Clinician",
+      "complianceDesc": "A PDF with one verdict: did you meet your rule over the range. Every night in the range counts, and a night without use is a miss. With a calendar of the nights and the numbers behind it.",
+      "complianceBadge": "Compliance",
+      "ruleShort": "{{h}} h on {{p}} %"
+    },
+    "messages": {
+      "generateFailed": "Failed to generate report",
+      "ruleOutOfRange": "Hours must be 0.5 to 24 and the percent 1 to 100."
+    },
     "title": "PDF Reports",
     "generate": {
       "heading": "Generate Report",

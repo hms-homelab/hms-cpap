@@ -107,6 +107,39 @@ TEST_F(AppConfigTest, UsageTargetDefaultsToFourRoundTripsAndIsBounded) {
     EXPECT_EQ(low.usage_target_hours, 1);
 }
 
+// SDD-082 D-082-2: the last compliance rule is remembered like a setting.
+TEST_F(AppConfigTest, TheComplianceRuleIsRememberedAndStartsFromTheUsageTarget) {
+    AppConfig fresh;
+    fresh.usage_target_hours = 5;
+    EXPECT_EQ(fresh.compliance_rule_hours, 0) << "never set";
+    EXPECT_DOUBLE_EQ(fresh.complianceRuleHoursOrTarget(), 5.0) << "the usage target until one is set";
+    EXPECT_EQ(fresh.compliance_rule_share, 70);
+    EXPECT_DOUBLE_EQ(fresh.toJson()["compliance_rule_hours"].get<double>(), 5.0);
+    fresh.save(config_path_);
+    {
+        std::ifstream in(config_path_);
+        const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        EXPECT_EQ(text.find("compliance_rule_hours"), std::string::npos) << "no key nobody set";
+    }
+
+    AppConfig original;
+    original.compliance_rule_hours = 6.5;
+    original.compliance_rule_share = 90;
+    original.save(config_path_);
+    AppConfig loaded;
+    ASSERT_TRUE(AppConfig::load(config_path_, loaded));
+    EXPECT_DOUBLE_EQ(loaded.compliance_rule_hours, 6.5);
+    EXPECT_EQ(loaded.compliance_rule_share, 90);
+    EXPECT_DOUBLE_EQ(loaded.complianceRuleHoursOrTarget(), 6.5);
+    EXPECT_EQ(loaded.toJson()["compliance_rule_share"].get<int>(), 90) << "the Reports page reads it";
+
+    writeConfig(R"({"compliance_rule_hours": 30, "compliance_rule_share": 0})");
+    AppConfig bad;
+    AppConfig::load(config_path_, bad);
+    EXPECT_EQ(bad.compliance_rule_hours, 0) << "out of bounds reads as not set";
+    EXPECT_EQ(bad.compliance_rule_share, 70);
+}
+
 TEST_F(AppConfigTest, DefaultDbType) {
     AppConfig config;
     EXPECT_EQ(config.database.type, "sqlite");

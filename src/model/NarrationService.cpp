@@ -69,6 +69,44 @@ std::string templateSummary(const NightFacts& n) {
         sentences.push_back(o.str());
     };
     say([&](auto& o) { o << "Night of " << n.sleep_day << "."; });
+    if (!n.daily_only.empty()) {
+        // Issue #74: a summary-only night says so, and says only its daily figures.
+        say([&](auto& o) {
+            o << "Summary only: no detailed session data was recorded for this night, so these are "
+              << (n.daily_only == "myair" ? "the daily figures from ResMed myAir."
+                                          : "the daily figures from the machine's own record.");
+        });
+        if (n.usage_hours)
+            say([&](auto& o) { o << "Usage was " << *n.usage_hours << " hours."; });
+        else
+            say([&](auto& o) { o << "Usage was not recorded."; });
+        if (n.graded)
+            say([&](auto& o) { o << "AHI was " << n.index << " events per hour."; });
+        else
+            say([&](auto& o) {
+                o << "This machine does not detect hypopneas, so no AHI is available; its apnea index was "
+                  << n.index << " per hour.";
+            });
+        if (n.leak_p95)
+            say([&](auto& o) { o << "Leak at the 95th percentile was " << *n.leak_p95 << " L/min."; });
+        if (n.pressure_p95)
+            say([&](auto& o) { o << "Pressure at the 95th percentile was " << *n.pressure_p95 << " cmH2O."; });
+        if (n.myair && n.myair->score)
+            say([&](auto& o) { o << "The myAir score was " << *n.myair->score << " of 100."; });
+        if (n.myair && n.myair->mask_pairs)
+            say([&](auto& o) {
+                if (*n.myair->mask_pairs == 1) o << "The mask was put on and taken off once.";
+                else o << "The mask was put on and taken off " << *n.myair->mask_pairs << " times.";
+            });
+        const auto block = factBlock(n);
+        std::string out;
+        for (const auto& s : sentences) {
+            if (!violations(s, block).empty()) continue;
+            if (!out.empty()) out += " ";
+            out += s;
+        }
+        return out;
+    }
     if (n.usage_hours)
         say([&](auto& o) { o << "Usage was " << *n.usage_hours << " hours."; });
     else
@@ -120,6 +158,16 @@ Narration narrate(const NightFacts& night, ILocalModel& model) {
     }
     const auto block = factBlock(night);
 
+    // Issue #74: narrator-v1 was trained on full nights' fact blocks; a
+    // summary-only night's block is not one, so its template writes it.
+    if (!night.daily_only.empty()) {
+        r.written = true;
+        r.text = templateSummary(night);
+        r.how = "template";
+        r.why = "a summary-only night (" + night.daily_only + "): the model was trained on full nights";
+        return r;
+    }
+
     std::string why;
     GenerateParams p;
     p.temperature = kTemperature;
@@ -159,11 +207,18 @@ Narration narrateAndStore(IDatabase& db, const std::string& device_id, const std
         return r;
     }
     const auto metrics = night_facts::nightMetrics(db, device_id, sleep_day);
-    if (!metrics) {
+    std::optional<NightFacts> loaded;
+    if (metrics) {
+        loaded = modelNight(*metrics, str, night_facts::oximetryForNight(db, sleep_day));
+    } else {
+        // Issue #74: no session night, but a daily record (the card's STR, or myAir).
+        loaded = night_facts::loadDailyOnlyNight(db, device_id, sleep_day);
+    }
+    if (!loaded) {
         r.why = "no closed night " + sleep_day + " in the database";
         return r;
     }
-    const auto night = modelNight(*metrics, str, night_facts::oximetryForNight(db, sleep_day));
+    const NightFacts night = *loaded;
     const auto block = factBlock(night);
 
     // D-701-3: a night announced again (a re-read, a second upload of the

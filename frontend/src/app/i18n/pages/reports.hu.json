@@ -1,5 +1,27 @@
 {
   "reports": {
+    "form": {
+      "summary": "Összefoglaló jelentés",
+      "clinician": "Klinikai jelentés",
+      "compliance": "Terápiahűségi jelentés"
+    },
+    "compliance": {
+      "nights": "Éjszakák",
+      "hours": "Óra",
+      "share": "Az éjszakák százaléka",
+      "ruleSentence": "Legalább {{hours}} óra az éjszakák legalább {{share}} %-án."
+    },
+    "pdf": {
+      "clinicianDesc": "Részletes PDF az orvosa számára: a terápiás statisztikái időszakonként és havonta, a készüléke beállításainak változásai, a CMS terápiahűségi ellenőrzés, valamint egy-egy oldal az utolsó és a legrosszabb éjszakájáról.",
+      "clinicianBadge": "Klinikai",
+      "complianceDesc": "Egy PDF egyetlen ítélettel: teljesítette-e a szabályát az időszakban. Az időszak minden éjszakája számít, a használat nélküli éjszaka pedig hiányzás. Az éjszakák naptárával és a mögöttük álló számokkal.",
+      "complianceBadge": "Terápiahűség",
+      "ruleShort": "{{h}} óra az éjszakák {{p}} %-án"
+    },
+    "messages": {
+      "generateFailed": "A jelentést nem sikerült elkészíteni",
+      "ruleOutOfRange": "Az óraszám 0,5 és 24 között, a százalék 1 és 100 között legyen."
+    },
     "title": "PDF-jelentések",
     "generate": {
       "heading": "Jelentés készítése",

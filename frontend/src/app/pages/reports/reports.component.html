@@ -3,21 +3,60 @@
 
   <div class="generate-card">
     <h3>{{ 'reports.generate.heading' | translate }}</h3>
+
+    <!-- SDD-082: CpapDash's three report kinds, each with its own icon. -->
+    <div class="kind-toggle" role="group" [attr.aria-label]="'reports.generate.heading' | translate">
+      <button type="button" [class.active]="kind === 'standard'" (click)="pickKind('standard')">
+        <i class="fa-regular fa-file-lines" aria-hidden="true"></i> {{ 'reports.form.summary' | translate }}
+      </button>
+      <button type="button" [class.active]="kind === 'clinician'" (click)="pickKind('clinician')">
+        <i class="fa-solid fa-briefcase-medical" aria-hidden="true"></i> {{ 'reports.form.clinician' | translate }}
+      </button>
+      <button type="button" [class.active]="kind === 'compliance'" (click)="pickKind('compliance')">
+        <i class="fa-solid fa-certificate" aria-hidden="true"></i> {{ 'reports.form.compliance' | translate }}
+      </button>
+    </div>
+
+    <p class="kind-desc" *ngIf="kind === 'clinician'">{{ 'reports.pdf.clinicianDesc' | translate }}</p>
+    <p class="kind-desc" *ngIf="kind === 'compliance'">{{ 'reports.pdf.complianceDesc' | translate }}</p>
+
+    <!-- 30, 60 or 90 nights ending at the latest night fill the dates below;
+         a date edited by hand puts the choice back to none. -->
+    <div class="field span-field" *ngIf="kind === 'compliance'">
+      <label>{{ 'reports.compliance.nights' | translate }}</label>
+      <div class="span-toggle">
+        <button type="button" *ngFor="let n of spans" [class.active]="complianceSpan === n" (click)="pickSpan(n)">{{ n }}</button>
+      </div>
+    </div>
+
     <div class="form-row">
       <div class="field">
         <label>{{ 'reports.generate.startDate' | translate }}</label>
-        <input type="date" [(ngModel)]="startDate" />
+        <input type="date" [(ngModel)]="startDate" (ngModelChange)="dateEdited()" />
       </div>
       <div class="field">
         <label>{{ 'reports.generate.endDate' | translate }}</label>
-        <input type="date" [(ngModel)]="endDate" />
+        <input type="date" [(ngModel)]="endDate" (ngModelChange)="dateEdited()" />
       </div>
+      <ng-container *ngIf="kind === 'compliance'">
+        <div class="field">
+          <label>{{ 'reports.compliance.hours' | translate }}</label>
+          <input type="number" class="rule-input" min="0.5" max="24" step="0.5" [(ngModel)]="ruleHours" />
+        </div>
+        <div class="field">
+          <label>{{ 'reports.compliance.share' | translate }}</label>
+          <input type="number" class="rule-input" min="1" max="100" step="1" [(ngModel)]="ruleShare" />
+        </div>
+      </ng-container>
       <button class="generate-btn" (click)="generate()" [disabled]="generating || !startDate || !endDate">
         <i class="fa-solid fa-file-pdf" *ngIf="!generating"></i>
         <i class="fa-solid fa-circle-notch fa-spin" *ngIf="generating"></i>
         {{ (generating ? 'reports.generate.generating' : 'reports.generate.button') | translate }}
       </button>
     </div>
+    <p class="rule-sentence" *ngIf="kind === 'compliance'">
+      {{ 'reports.compliance.ruleSentence' | translate:{ hours: ruleHoursLabel, share: ruleShare } }}
+    </p>
     <!-- Server error text from /api/reports; the backend has no i18n. -->
     <div class="error-msg" *ngIf="generateError">{{ generateError }}</div>
   </div>
@@ -25,7 +64,8 @@
   <div class="table-section">
     <h3>{{ 'reports.table.heading' | translate }}</h3>
     <div class="empty" *ngIf="reports.length === 0">{{ 'reports.table.empty' | translate }}</div>
-    <table class="reports-table" *ngIf="reports.length > 0">
+    <div class="table-scroll" *ngIf="reports.length > 0">
+    <table class="reports-table">
       <thead>
         <tr>
           <th>{{ 'reports.table.period' | translate }}</th>
@@ -39,11 +79,15 @@
         <tr *ngFor="let r of reports" [class.generating-row]="isGenerating(r)">
           <td class="period-cell">
             {{ r.range_start }} &rarr; {{ r.range_end }}
+            <!-- SDD-082: the kind and, for a compliance report, the rule it was judged against -->
+            <span class="kind-badge" *ngIf="r.kind === 'clinician'">{{ 'reports.pdf.clinicianBadge' | translate }}</span>
+            <span class="kind-badge" *ngIf="r.kind === 'compliance'">{{ 'reports.pdf.complianceBadge' | translate }}</span>
+            <span class="rule-note" *ngIf="r.kind === 'compliance' && r.rule">{{ 'reports.pdf.ruleShort' | translate:{ h: r.rule.hours, p: r.rule.share } }}</span>
           </td>
           <td>{{ r.nights_count ?? '—' }}</td>
           <td>{{ fmtDate(r.created_at) }}</td>
           <td>
-            <span class="status-badge" [class]="'status-' + r.status">
+            <span class="status-badge" [class]="'status-' + r.status" [title]="r.error_msg || ''">
               <i class="fa-solid fa-circle-notch fa-spin" *ngIf="isGenerating(r)"></i>
               {{ statusKey(r.status) | translate }}
             </span>
@@ -59,5 +103,6 @@
         </tr>
       </tbody>
     </table>
+    </div>
   </div>
 </div>

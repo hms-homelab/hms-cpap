@@ -7,6 +7,18 @@ namespace hms_cpap {
 
 struct PdfRow {
     std::vector<std::string> cells;
+    // SDD-082: a section row in a grid table (its first cell spans the table,
+    // bold, on grey): the "CPAP usage" / "Therapy efficacy" bands.
+    bool section{false};
+};
+
+// SDD-082: one calendar night in the compliance calendar.
+struct CalendarCell {
+    std::string date;    // what the cell's corner reads ("09-17", or "17")
+    std::string hours;   // what the cell's middle reads ("6.5")
+    // 0 blank (a day outside the range), 1 no use, 2 under the rule's hours,
+    // 3 at or over them: the three colours.
+    int state{0};
 };
 
 // Stateful PDF builder. Call sections in order, then save().
@@ -33,6 +45,33 @@ public:
     void addInsightBlock(const std::string& title, const std::string& body,
                          const std::string& category); // category: positive/warning/info/actionable
     void addChart(const std::string& png_path, const std::string& caption);
+    // SDD-082 ------------------------------------------------------------------
+    // A metric table: the first column `first_col` points wide and left
+    // aligned, the rest share what is left and are right aligned. A header may
+    // hold a second line after '\n' (a window's dates), drawn smaller.
+    void addGridTable(const std::vector<std::string>& headers, const std::vector<PdfRow>& rows,
+                      float first_col = 150.0f, float font_size = 8.0f);
+    // The same with every column's width given, as proportions of the page.
+    void addGridTable(const std::vector<std::string>& headers, const std::vector<PdfRow>& rows,
+                      const std::vector<float>& widths, float font_size);
+    // Vertical space, e.g. between a table and the next heading.
+    void addSpacer(float pts);
+    // A chart at a chosen height (an event strip is short, a waveform tall).
+    void addChartSized(const std::string& png_path, const std::string& caption, float height);
+    // Small grey text: a footnote under a table.
+    void addNote(const std::string& text);
+    // The disclaimer a report ends with: a rule, then small grey text, at the
+    // bottom of the last page.
+    void addDisclaimer(const std::string& text);
+    // The verdict in the largest type on the page, centred on a band: green
+    // when met, red otherwise. Shrinks to fit the width in any language.
+    void addVerdict(const std::string& text, bool met);
+    // One cell per calendar night, seven to a row under `weekdays` (seven
+    // headers, Monday first), the first cell `first_column` cells in (the
+    // first night's weekday), each coloured by its state. Drawn whole on one
+    // page; a caption above it when given.
+    void addCalendar(const std::string& caption, const std::vector<std::string>& weekdays,
+                     int first_column, const std::vector<CalendarCell>& cells);
     void addPageBreak();
 
     bool save(const std::string& path);

@@ -1,7 +1,12 @@
 #include "services/MyAirService.h"
 
 #include "database/SqlDialect.h"
+#include "services/NightLanded.h"
 #include "utils/AppConfig.h"
+
+#include <cmath>
+#include <map>
+#include <set>
 
 #include <iostream>
 #include <sstream>
@@ -23,6 +28,22 @@ bool nightHasData(const MyAirSleepRecord& r) {
 std::string num(double v) {
     std::ostringstream oss;
     oss << v;
+    return oss.str();
+}
+
+/// Issue #74: a night's stored figures as one comparable string, the same on
+/// every engine (each column read as a number, whatever type it came back as).
+std::string myairSignature(const Json::Value& row) {
+    std::ostringstream oss;
+    for (const char* k : {"total_usage_min", "ahi", "leak_percentile", "sleep_score", "has_data"}) {
+        const auto v = row.get(k, Json::nullValue);
+        double d = 0;
+        if (v.isNumeric()) d = v.asDouble();
+        else if (v.isString() && !v.asString().empty()) {
+            try { d = std::stod(v.asString()); } catch (...) {}
+        }
+        oss << k << "=" << std::round(d * 100.0) / 100.0 << ";";
+    }
     return oss.str();
 }
 
@@ -256,6 +277,18 @@ int MyAirService::store(const std::vector<MyAirSleepRecord>& records, std::strin
         if (r.start_date > last) last = r.start_date;
     }
 
+    // Issue #74: what the window held before, so the nights whose figures are
+    // new or changed can be announced once they are stored (and the hourly
+    // refetch of the same figures announces nothing).
+    std::map<std::string, std::string> before;
+    for (const auto& row : db_->executeQuery(
+             "SELECT record_date, total_usage_min, ahi, leak_percentile, sleep_score, has_data"
+             " FROM cpap_myair_records WHERE record_date >= " + sql::castDate(1, dt) +
+                 " AND record_date <= " + sql::castDate(2, dt),
+             {first, last})) {
+        before[row.get("record_date", "").asString().substr(0, 10)] = myairSignature(row);
+    }
+
     db_->executeQuery("DELETE FROM cpap_myair_records WHERE record_date >= " +
                           sql::castDate(1, dt) + " AND record_date <= " + sql::castDate(2, dt),
                       {first, last});
@@ -286,6 +319,26 @@ int MyAirService::store(const std::vector<MyAirSleepRecord>& records, std::strin
         });
         ++stored;
     }
+
+    // Issue #74: myAir data landed. Each night ResMed has data for whose
+    // figures are new or changed is announced, as every path that stores a
+    // night does (services/NightLanded.h); a listener that writes a summary
+    // decides from the night's facts whether it has one already.
+    std::set<std::string> landed;
+    for (const auto& row : db_->executeQuery(
+             "SELECT record_date, total_usage_min, ahi, leak_percentile, sleep_score, has_data"
+             " FROM cpap_myair_records WHERE record_date >= " + sql::castDate(1, dt) +
+                 " AND record_date <= " + sql::castDate(2, dt),
+             {first, last})) {
+        const std::string day = row.get("record_date", "").asString().substr(0, 10);
+        const auto has = row.get("has_data", Json::nullValue);
+        const bool data = has.isNumeric() ? has.asInt() != 0
+                                          : (has.isString() && has.asString() != "0" && !has.asString().empty());
+        if (!data) continue;
+        const auto it = before.find(day);
+        if (it == before.end() || it->second != myairSignature(row)) landed.insert(day);
+    }
+    if (!landed.empty()) night_landed::announceDays(landed);
     return stored;
 }
 

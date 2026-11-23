@@ -1221,7 +1221,12 @@ bool BurstCollectorService::generateSummaryForDate(const std::string& sleep_day)
     }
     auto session_start = db_service_->getSessionStartForSleepDay(device_id_, sleep_day, false);
     if (!session_start) {
-        std::cerr << "generateSummaryForDate: no session found for " << sleep_day << std::endl;
+        // Issue #74: no session, but maybe a daily record (myAir, or the STR).
+        // D-082-6: Regenerate always writes a new text.
+        const auto r = summarizeDailyOnlyNight(sleep_day, /*force=*/true);
+        if (r.written || r.skipped) return true;
+        std::cerr << "generateSummaryForDate: no session found for " << sleep_day << " (" << r.why
+                  << ")" << std::endl;
         return false;
     }
     auto metrics = db_service_->getNightlyMetrics(device_id_, session_start.value());
@@ -1234,6 +1239,18 @@ bool BurstCollectorService::generateSummaryForDate(const std::string& sleep_day)
     const STRDailyRecord* str_rec = strRecordForNight(session_start.value());
     generateAndPublishSummary(metrics.value(), str_rec, sleep_day);
     return true;
+}
+
+daily_only::Result BurstCollectorService::summarizeDailyOnlyNight(const std::string& sleep_day, bool force) {
+    daily_only::Result r;
+    if (!llm_enabled_ || !llm_client_ || !db_service_) {
+        r.why = "LLM not enabled";
+        return r;
+    }
+    r = daily_only::summarize(*db_service_, device_id_, sleep_day, summaryPromptTemplate(app_config_),
+                              [this](const std::string& p) { return llm_client_->generate(p); }, force);
+    if (r.written && data_publisher_) data_publisher_->publishSessionSummary(r.text);
+    return r;
 }
 
 bool BurstCollectorService::downloadSessionFiles(
@@ -2090,7 +2107,8 @@ bool BurstCollectorService::processSTRFile() {
         // SDD-029: minus the nights an operator removed. This write re-asserts
         // the WHOLE history every local burst, so without the filter a removed
         // day's summary row is back on the next one (#31).
-        db_service_->saveSTRDailyRecords(
+        // Issue #74: and an STR-only night it closed is announced.
+        night_landed::saveStrDaysAndAnnounce(*db_service_,
             withoutRemovedNights(all_records, removedNightSet(*db_service_, device_id_)));
 
         // SDD-008: an STR that parses is the ONLY thing that clears the STR
@@ -5089,6 +5107,10 @@ void BurstCollectorService::generateAndPublishSummary(const SessionMetrics& metr
         db_service_->saveSummary(
             device_id_, "daily", sleep_day, sleep_day,
             1, metrics.ahi, hours, compliance, summary.value());
+        // SDD-082 D-082-7: the full night replaces what its daily record gave.
+        if (const int n = daily_only::dropSummaryOnly(*db_service_, device_id_, sleep_day); n > 0)
+            std::cout << "LLM: " << sleep_day << "'s summary-only summary replaced by the full night's"
+                      << std::endl;
 
         // Publish O2Ring session-level summary (avg_spo2, avg_hr) as retained MQTT topics
         if (data_publisher_) {

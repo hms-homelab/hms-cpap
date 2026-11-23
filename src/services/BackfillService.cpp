@@ -622,7 +622,8 @@ bool BackfillService::processSTRFile(std::vector<STRDailyRecord>* parsed) {
             return false;
         }
         // SDD-029: never the removed nights' summary rows.
-        db_->saveSTRDailyRecords(
+        // Issue #74: and an STR-only night it closed is announced.
+        night_landed::saveStrDaysAndAnnounce(*db_,
             withoutRemovedNights(records, removedNightSet(*db_, config_.device_id)));
         spdlog::info("BackfillService: STR.edf processed — {} daily record(s)",
                      records.size());

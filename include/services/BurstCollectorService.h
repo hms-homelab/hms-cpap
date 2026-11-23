@@ -33,6 +33,7 @@
 #include "mule/LivePublisher.h"
 #include "mqtt_client.h"
 #include "database/IDatabase.h"
+#include "services/DailyOnlySummary.h"
 #include "utils/AppConfig.h"
 #include "utils/CardLayout.h"
 #include "utils/FailureLogThrottle.h"
@@ -186,6 +187,13 @@ public:
     bool isRunning() const;
     bool forceCompleteSession(const std::string& sleep_day);
     bool generateSummaryForDate(const std::string& sleep_day);
+
+    /// Issue #74: the configured LLM's summary of a summary-only night (no
+    /// session files, a myAir or STR daily record), skipped when written
+    /// before from the same facts. Called from Regenerate and from the
+    /// summary-only queue a landed night feeds.
+    /// [force]: D-082-6, Regenerate writes a new text from unchanged facts.
+    daily_only::Result summarizeDailyOnlyNight(const std::string& sleep_day, bool force = false);
 
     // ── SDD-005: sync now ────────────────────────────────────────────────
     /// What a "sync now" request did.
