@@ -5,9 +5,36 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [7.1.0] - 2026-11-22
 
 ### Added
+- **Compliance and Clinician reports, as CpapDash's (SDD-082).** Reports has
+  three kinds now. The compliance report counts every calendar night, a night
+  without use being a miss, against a rule of hours per night and percent of
+  nights (30, 60 or 90 nights); the last rule used is remembered. The
+  clinician report has the statistics grid, the CMS check, a monthly page,
+  the settings changes and the last and worst nights, computed from this
+  install's own per-minute rows and events. Pressure rows show the pressure
+  the machine delivered (#56), and night pages use the machine's clock. Both
+  in the five UI languages, on SQLite, MySQL and PostgreSQL. The STR's machine
+  family, AutoSet limits and bi-level settings are now stored, so the settings
+  table shows the right pressures; they fill on the next STR read.
+- **A night with only a daily summary gets its AI summary (#74).** A night
+  with no session files, only myAir's daily figures or the card's STR record,
+  is summarized from those figures and says so ("summary only"): by the
+  configured AI, or by the local sleep model's checked template. It is written
+  when myAir's data or the STR night lands, never on a timer. When the night's
+  sessions arrive later, the full night's summary replaces it. Summary-only
+  nights are not counted in the weekly and monthly summaries.
+- **An encrypted DreamStation 2 card can be uploaded (SDD-083).** With an
+  OSCAR paired (OSCAR on this computer, or the OSCAR helper), a zip of a
+  DreamStation 2 card is read through that OSCAR, as a Sleep Bridge Lite card
+  is, and the page says how many nights were stored; uploading it again
+  brings back nights you removed, as a ResMed card does. With no OSCAR paired
+  it is refused and says how to pair. hms-cpap still decrypts nothing itself.
+  Proven with OSCAR 2.1.1 on a real DreamStation 2 card. A plain (not
+  encrypted) DreamStation card zip is read like a card folder. The upload
+  page's hint names the DreamStation 2.
 - **Settings, AirSense 11 over Bluetooth: "Split the waveform at stream
   gaps".** Off (the default), a gap under a minute between the blocks of an
   AirSense 11 Bluetooth stream is joined and its samples written as zero, as
@@ -18,10 +45,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   install without the Settings page (Docker, the Home Assistant add-on).
   Closes #103 (#106, thanks @djbill99-hue).
 
+### Changed
+- **"Regenerate AI summary" always writes a new text,** even when the night's
+  figures have not changed. The automatic summaries still skip a night already
+  summarized from the same figures.
+
 ### Fixed
 - **The session page's metric cards are one size.** The cards in a row share
   its width and height, so the SpO2 card's ODI line no longer makes it taller
   than its neighbours (#107, thanks @rccoleman).
+- **A DreamStation 2 night read through OSCAR is dated on the machine's
+  clock.** OSCAR's times were stored as UTC, so a session starting in the
+  morning could become a night of its own. Every OSCAR read is fixed (this
+  computer, the OSCAR helper, a Sleep Bridge Lite card).
+- **The central apnea index counts clear airway apneas,** as the AHI does. A
+  DreamStation and a Luna record their central apneas as clear airway, so
+  their CAI read 0. A night picks it up when it is next read or reparsed.
+- **A refused upload leaves nothing behind.** A card zip that is refused no
+  longer leaves its files in the card folder.
 
 ## [7.0.2] - 2026-11-22
 
