@@ -37,6 +37,9 @@ class AirSense11BleClient : public IAirSense11Client, public IAirSense11Pairing 
 public:
     /// `address`: the machine's Bluetooth address (on macOS, the system's
     /// identifier for it), or empty for the first AirSense 11 the scan finds.
+    /// Issue #108: empty, the first machine whose session opens with the
+    /// pairing's keys becomes the saved one (setMachineSavedHook), and only
+    /// it is connected to from then on.
     /// `transport`: the host's when null; a test passes a fake.
     explicit AirSense11BleClient(std::string data_dir, std::string address = "",
                                  std::shared_ptr<ble::ITransport> transport = nullptr,
@@ -74,6 +77,18 @@ public:
     bool busy() const override;
     void forgetMachine() override;
     BluetoothReset resetBluetooth() override;
+    Machines machines() const override;
+
+    /// Issue #108: the saved machine's serial (airsense11_ble.paired_serial),
+    /// before the night loop starts. With no address, the scan passes over a
+    /// machine whose advert names another serial.
+    void setPairedSerial(const std::string& serial);
+    /// Issue #108: called when the machine the pairing belongs to becomes
+    /// known or its serial does: after a pairing (address, serial still
+    /// empty) and on the first session that opens with the keys. The caller
+    /// saves it in the config. On the thread that talked to the machine.
+    using MachineSaved = std::function<void(const std::string& address, const std::string& serial)>;
+    void setMachineSavedHook(MachineSaved hook) { machine_saved_ = std::move(hook); }
 
     static constexpr int kScanMs = 15000;
     /// The Summary pull that follows a night: the machine may not advertise for
@@ -151,8 +166,35 @@ private:
     std::condition_variable wake_;
 
     std::string data_dir_;
+    // The machine to connect to: set by hand, or saved after the pairing or
+    // the first session (#108). Changed under op_mtx_ and seen_mtx_ both.
     std::string address_;
+    std::string serial_;
     std::shared_ptr<ble::ITransport> transport_;
+
+    // ── issue #108: one machine, the paired one ──
+    MachineSaved machine_saved_;
+    // The saved machine said it no longer knows the pairing: nothing asks
+    // it again until a pairing, a forget or a restart.
+    std::atomic<bool> pairing_lost_{false};
+    // Other ResMed machines the scans saw, by lowercased address; `refused`
+    // ones said they do not know the pairing and are passed over this run.
+    mutable std::mutex seen_mtx_;
+    std::vector<Machines::Other> others_;
+    // True while a pairing scans: a refusal from an earlier session does not
+    // hide a machine from it (the person may be pairing that very one).
+    std::atomic<bool> pairing_scan_{false};
+    bool ours(const ble::Device& d) const;
+    bool refused(const ble::Device& d) const;
+    void noteOther(const ble::Device& d, bool refused);
+    // Connects and opens the session with `creds`, then reads the serial
+    // and the therapy state. A machine that does not know the pairing is
+    // passed over and the scan goes on for the paired one; the saved one
+    // refusing is pairing_lost_. On anything but Ok the link is down.
+    as11::Result openSession(const as11::Credentials& creds, int scan_ms, std::string* serial, bool* flag);
+    void sessionOpened(const std::string& serial);
+    void forgetSavedMachine();
+    static constexpr int kMaxRefusalsPerConnect = 4;
 
     ble::Device device_;
     bool have_device_ = false;

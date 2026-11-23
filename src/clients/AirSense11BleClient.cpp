@@ -72,6 +72,139 @@ IAirSense11Pairing::Presence AirSense11BleClient::presence() const {
     return p;
 }
 
+// ── issue #108: one machine, the paired one ──
+
+namespace {
+// "ResMed 535441" names the machine by its serial's tail. True when the
+// advert's name could be the machine with `serial` (an advert without the
+// name, or with another form of name, is not ruled out by it).
+bool nameFitsSerial(const std::string& name, const std::string& serial) {
+    static const std::string kPrefix = "ResMed ";
+    if (serial.empty() || name.size() <= kPrefix.size() || name.compare(0, kPrefix.size(), kPrefix) != 0)
+        return true;
+    const std::string tail = name.substr(kPrefix.size());
+    return tail.size() <= serial.size() && serial.compare(serial.size() - tail.size(), tail.size(), tail) == 0;
+}
+} // namespace
+
+void AirSense11BleClient::setPairedSerial(const std::string& serial) {
+    std::lock_guard<std::timed_mutex> op(op_mtx_);
+    std::lock_guard<std::mutex> lk(seen_mtx_);
+    serial_ = serial;
+}
+
+bool AirSense11BleClient::ours(const ble::Device& d) const {
+    if (!address_.empty()) return ble::lower(d.address) == address_;
+    return nameFitsSerial(d.name, serial_);
+}
+
+bool AirSense11BleClient::refused(const ble::Device& d) const {
+    if (pairing_scan_) return false;
+    std::lock_guard<std::mutex> lk(seen_mtx_);
+    const std::string a = ble::lower(d.address);
+    return std::any_of(others_.begin(), others_.end(),
+                       [&](const Machines::Other& o) { return o.refused && o.address == a; });
+}
+
+void AirSense11BleClient::noteOther(const ble::Device& d, bool refusal) {
+    const std::string a = ble::lower(d.address);
+    const std::string name = d.name.empty() ? "<unnamed AirSense 11>" : d.name;
+    const auto now = static_cast<long long>(std::time(nullptr));
+    bool first = false;
+    bool newly_refused = false;
+    {
+        std::lock_guard<std::mutex> lk(seen_mtx_);
+        auto it = std::find_if(others_.begin(), others_.end(),
+                               [&](const Machines::Other& o) { return o.address == a; });
+        if (it == others_.end()) {
+            others_.push_back({name, a, now, refusal});
+            first = true;
+            newly_refused = refusal;
+        } else {
+            if (!d.name.empty()) it->name = d.name;
+            it->last_seen = now;
+            newly_refused = refusal && !it->refused;
+            it->refused = it->refused || refusal;
+        }
+    }
+    // Once per machine per run, not on every scan.
+    if (newly_refused)
+        std::cerr << kTag << name << " (" << a << ") does not know this pairing: it is another machine, "
+                  << "passed over from now on; looking for the paired one" << std::endl;
+    else if (first)
+        std::cout << kTag << "another ResMed machine is in range, " << name << " (" << a
+                  << "): only the paired one is used" << std::endl;
+}
+
+IAirSense11Pairing::Machines AirSense11BleClient::machines() const {
+    Machines m;
+    std::lock_guard<std::mutex> lk(seen_mtx_);
+    m.address = address_;
+    m.serial = serial_;
+    m.pairing_lost = pairing_lost_;
+    for (const auto& o : others_)
+        if (o.address != address_) m.others.push_back(o);
+    return m;
+}
+
+void AirSense11BleClient::sessionOpened(const std::string& serial) {
+    const std::string a = ble::lower(device_.address);
+    bool changed = false;
+    std::string address, saved_serial;
+    {
+        std::lock_guard<std::mutex> lk(seen_mtx_);
+        if (address_.empty() && !a.empty()) { address_ = a; changed = true; }
+        if (!serial.empty() && serial_ != serial) { serial_ = serial; changed = true; }
+        address = address_;
+        saved_serial = serial_;
+        // A machine that opened a session knows the pairing: not an "other".
+        others_.erase(std::remove_if(others_.begin(), others_.end(),
+                                     [&](const Machines::Other& o) { return o.address == a; }),
+                      others_.end());
+    }
+    pairing_lost_ = false;
+    if (!changed) return;
+    std::cout << kTag << device_.name << " (serial " << saved_serial << ", " << address
+              << ") opened a session with this pairing: it is the saved machine now, and other ResMed "
+              << "machines are passed over" << std::endl;
+    if (machine_saved_) machine_saved_(address, saved_serial);
+}
+
+as11::Result AirSense11BleClient::openSession(const as11::Credentials& creds, int scan_ms, std::string* serial,
+                                              bool* flag) {
+    for (int refusals = 0;; ++refusals) {
+        if (!connectLink(kConnectMs, scan_ms)) return link_failure_;
+        as11::Result r = session_.open(creds);
+        if (r == as11::Result::Verify) {
+            const std::string why = session_.lastError();
+            const bool saved = !address_.empty() || !serial_.empty();
+            dropLink();
+            if (saved) {
+                // The paired machine itself: a real lost pairing. Said once,
+                // and it is not asked again until it is paired again.
+                pairing_lost_ = true;
+                note("the paired machine " + device_.name + " no longer knows this pairing (" + why +
+                     "): pair it again from the Devices page");
+                return r;
+            }
+            // No machine saved yet and this one does not know the keys: a
+            // neighbour's machine. Passed over; the scan goes on.
+            note(device_.name + " refused the session: " + why);
+            noteOther(device_, true);
+            if (refusals + 1 >= kMaxRefusalsPerConnect) return r;
+            continue;
+        }
+        if (r == as11::Result::Ok) r = session_.getState(serial, flag);
+        if (r != as11::Result::Ok) {
+            note(std::string("session failed: ") + session_.lastError());
+            dropLink();
+            return r;
+        }
+        sessionOpened(*serial);
+        return r;
+    }
+}
+
 bool AirSense11BleClient::busy() const {
     if (pairPending()) return true;
     // A pull or a pairing holds the operation lock while it talks to the machine.
@@ -103,9 +236,15 @@ bool AirSense11BleClient::scan(int timeout_ms) {
     // cache counts too, but only under the machine's own name once that is
     // known.
     auto wanted = [this](const ble::Device& d, bool advertising) {
-        if (!address_.empty() && ble::lower(d.address) != address_) return false;
         if (!as11::advertIsAirSense(d.name, d.uuids)) return false;
         if (advertising && !d.advertising) return false;
+        // #108: only the paired machine. Another ResMed machine in range is
+        // noted (said once per run) and passed over, and so is one that
+        // refused this pairing earlier in the run.
+        if (!ours(d) || refused(d)) {
+            if (advertising) noteOther(d, false);
+            return false;
+        }
         if (!advertising && !machine_name_.empty() && d.name != machine_name_) return false;
         // #67: recovering, the fresh advert must be the same machine.
         if (advertising && match_name_ && !machine_name_.empty() && !d.name.empty() && d.name != machine_name_)
@@ -154,6 +293,7 @@ bool AirSense11BleClient::connectLink(int timeout_ms, int scan_ms) {
     if (forget_pending_.exchange(false)) {
         forgetCachedMachine();
         rediscover_ = true;
+        forgetSavedMachine();
     }
     if (!scan(scan_ms)) return false;
 
@@ -324,7 +464,19 @@ void AirSense11BleClient::forgetMachine() {
     }
     const int n = forgetCachedMachine();
     rediscover_ = true;
+    forgetSavedMachine();
     std::cout << kTag << "the pairing was removed: " << n << " cached object(s) for the machine forgotten" << std::endl;
+}
+
+void AirSense11BleClient::forgetSavedMachine() {
+    // #108: "Forget / pair a different machine": the next pairing may find
+    // another one. Under op_mtx_.
+    std::lock_guard<std::mutex> lk(seen_mtx_);
+    address_.clear();
+    serial_.clear();
+    machine_name_.clear();
+    pairing_lost_ = false;
+    for (auto& o : others_) o.refused = false;
 }
 
 IAirSense11Pairing::BluetoothReset AirSense11BleClient::resetBluetooth() {
@@ -442,18 +594,23 @@ std::vector<uint8_t> AirSense11BleClient::fetchSummary(const std::string& from) 
         note("not paired with the machine yet");
         return {};
     }
+    // #108: the saved machine said it no longer knows the pairing: it is not
+    // asked again until it is paired again.
+    if (pairing_lost_) {
+        note("the paired machine no longer knows this pairing: pair it again from the Devices page");
+        return {};
+    }
     // After a night the machine can be silent for a while: wait for its
     // advert rather than giving the night's Summary up after one short scan.
     const bool after_night = after_night_.load();
     if (after_night) std::cout << kTag << "the night ended: waiting for the machine to advertise for its summary" << std::endl;
-    if (!connectLink(kConnectMs, after_night ? kAfterNightScanMs : kScanMs)) return {};
-    after_night_ = false;
 
     std::vector<uint8_t> out;
     std::string serial, ident;
     bool recording = false;
-    as11::Result r = session_.open(*creds);
-    if (r == as11::Result::Ok) r = session_.getState(&serial, &recording);
+    as11::Result r = openSession(*creds, after_night ? kAfterNightScanMs : kScanMs, &serial, &recording);
+    if (r == as11::Result::Connect || r == as11::Result::RadioOff) return {};   // connectLink said why
+    after_night_ = false;
     if (r == as11::Result::Ok && writer_ && session_.getIdentification(&ident) == as11::Result::Ok)
         writeIdentification(writer_->rootFor(serial), ident);
     // The settings, for the STR.edf the Summary is laid into: not needed for
@@ -539,7 +696,11 @@ as11::Result AirSense11BleClient::pairStart() {
         session_.pairCancel();
         dropLink();
     }
-    if (!connectLink(kConnectMs)) return link_failure_;
+    // #108: a machine that refused the old keys may be the one being paired.
+    pairing_scan_ = true;
+    const bool linked = connectLink(kConnectMs);
+    pairing_scan_ = false;
+    if (!linked) return link_failure_;
     const as11::Result r = session_.pairStart();
     if (r != as11::Result::WaitCode) {
         note(std::string("pairing could not start: ") + session_.lastError());
@@ -575,6 +736,27 @@ as11::Result AirSense11BleClient::pairConfirm(const std::string& code) {
         return as11::Result::Protocol;
     }
     std::cout << kTag << "paired with " << device_.name << std::endl;
+    // #108: this machine is the saved one from now on (an address set by
+    // hand stays); its serial follows from its first session. New keys: no
+    // machine has refused them yet.
+    std::string address;
+    {
+        std::lock_guard<std::mutex> lk(seen_mtx_);
+        const std::string a = ble::lower(device_.address);
+        if (address_.empty() && !a.empty()) {
+            address_ = a;
+            serial_.clear();   // its own comes with its first session
+        }
+        address = address_;
+        for (auto& o : others_) o.refused = false;
+        others_.erase(std::remove_if(others_.begin(), others_.end(),
+                                     [&](const Machines::Other& o) { return o.address == a; }),
+                      others_.end());
+    }
+    pairing_lost_ = false;
+    std::cout << kTag << "the paired machine is saved (" << address
+              << "): only it is connected to from now on" << std::endl;
+    if (machine_saved_) machine_saved_(address, "");
     return r;
 }
 
@@ -664,14 +846,15 @@ void AirSense11BleClient::nightLoop() {
     while (running_) {
         {
             // Out of the way while a pull or a pairing has the radio, or
-            // before there is a pairing to open a session with.
+            // before there is a pairing to open a session with, or (#108)
+            // while the saved machine says it no longer knows the pairing.
             std::unique_lock<std::mutex> lk(wake_mtx_);
             wake_.wait_for(lk, std::chrono::seconds(5), [this] {
-                return !running_ || (!want_radio_ && !session_.pairPending() && paired());
+                return !running_ || (!want_radio_ && !session_.pairPending() && !pairing_lost_ && paired());
             });
         }
         if (!running_) break;
-        if (want_radio_ || session_.pairPending() || !paired()) continue;
+        if (want_radio_ || session_.pairPending() || pairing_lost_ || !paired()) continue;
         const bool reached = streamOnce();
         if (!reached && running_) {
             // Asleep, out of range or in use elsewhere: look again later.
@@ -685,16 +868,13 @@ bool AirSense11BleClient::streamOnce() {
     std::unique_lock<std::timed_mutex> op(op_mtx_);
     if (want_radio_ || session_.pairPending()) return true;
     auto creds = as11::loadCredentials(as11::credentialsPath(data_dir_));
-    if (!creds) return true;
-    if (!connectLink(kConnectMs)) return false;
+    if (!creds || pairing_lost_) return true;   // the loop waits for a pairing
 
     std::string serial;
     bool therapy = false;
-    if (session_.open(*creds) != as11::Result::Ok || session_.getState(&serial, &therapy) != as11::Result::Ok) {
-        note(std::string("session for the night failed: ") + session_.lastError());
-        dropLink();
-        return false;
-    }
+    // #108: only the paired machine; one that does not know the pairing is
+    // passed over for the run, never asked again every 30 s.
+    if (openSession(*creds, kScanMs, &serial, &therapy) != as11::Result::Ok) return false;   // it said why
     // SDD-071: a capture night records from here, once the session is open
     // (nothing of the pairing or the session's opening is ever seen). A new
     // connect is a new file; one that never reached a stream leaves none.

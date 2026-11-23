@@ -42,6 +42,27 @@ public:
         bool      bluetooth_stuck = false;
     };
     virtual Presence presence() const { return {}; }
+
+    /// Issue #108: the machine the pairing belongs to, and the other ResMed
+    /// machines the scans have seen, for Settings.
+    struct Machines {
+        std::string address;   // the saved machine's address ("" none yet)
+        std::string serial;    // its serial ("" until its first session)
+        /// The saved machine itself said it no longer knows this pairing: it
+        /// is not asked again until it is paired again (or the pairing is
+        /// removed, or hms-cpap restarts).
+        bool pairing_lost = false;
+        struct Other {
+            std::string name;      // as it advertises: "ResMed <serial tail>"
+            std::string address;
+            long long last_seen = 0;   // epoch s
+            /// It said it does not know this pairing: not connected to again
+            /// in this run.
+            bool refused = false;
+        };
+        std::vector<Other> others;
+    };
+    virtual Machines machines() const { return {}; }
     /// Something is talking to the machine now (a pairing, a pull): the
     /// pairing is not removed under it.
     virtual bool busy() const { return pairPending(); }

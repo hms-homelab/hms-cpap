@@ -294,7 +294,17 @@ struct AppConfig {
     // machine holds one pairing at a time.
     struct AirSense11Ble {
         bool enabled = false;
-        std::string address;            // empty: the first AirSense 11 the scan finds
+        // Issue #108: the machine this install is paired with. Set by hand,
+        // or filled in by hms-cpap after the pairing (or, on an install paired
+        // before 7.1.1, by the first machine that opens a session with the
+        // pairing's keys). From then on only that machine is connected to.
+        // Empty, before either: the first AirSense 11 the scan finds. An
+        // address set by hand is never replaced.
+        std::string address;
+        // Issue #108: that machine's serial, from its first session. Lets
+        // the scan pass over other ResMed machines by their advert name
+        // ("ResMed <serial tail>") even without an address.
+        std::string paired_serial;
         // SDD-071: record every message of each night's stream, as the machine
         // sent it, to <data_dir>/as11/<serial>/capture/. Off: nothing changes.
         // Applies live from the next stream, no restart.
@@ -307,6 +317,32 @@ struct AppConfig {
         // Applies live from the next block; written files are not changed.
         bool strict_stream_gaps = false;
     } airsense11_ble;
+
+    /// Issue #108: the machine the pairing belongs to, as the Bluetooth
+    /// client found it. The address is taken only when none is set (one set
+    /// by hand wins); the serial whenever it is known and differs. True when
+    /// anything changed, so the caller saves.
+    bool rememberAs11Machine(const std::string& address, const std::string& serial) {
+        bool changed = false;
+        if (airsense11_ble.address.empty() && !address.empty()) {
+            airsense11_ble.address = address;
+            changed = true;
+        }
+        if (!serial.empty() && airsense11_ble.paired_serial != serial) {
+            airsense11_ble.paired_serial = serial;
+            changed = true;
+        }
+        return changed;
+    }
+    /// Issue #108: "Forget / pair a different machine": the saved machine
+    /// goes with the pairing, so the next pairing may find another one. True
+    /// when anything changed.
+    bool forgetAs11Machine() {
+        const bool had = !airsense11_ble.address.empty() || !airsense11_ble.paired_serial.empty();
+        airsense11_ble.address.clear();
+        airsense11_ble.paired_serial.clear();
+        return had;
+    }
 
     // A Philips DreamStation 2 read over its own Bluetooth by this host,
     // after the night (SDD-064). Needs a Bluetooth build. The pairing is the
@@ -867,6 +903,7 @@ struct AppConfig {
                 auto& b = j["airsense11_ble"];
                 if (b.contains("enabled"))              config.airsense11_ble.enabled = b["enabled"];
                 if (b.contains("address"))              config.airsense11_ble.address = b["address"];
+                if (b.contains("paired_serial"))        config.airsense11_ble.paired_serial = b["paired_serial"];
                 if (b.contains("capture"))              config.airsense11_ble.capture = b["capture"];
                 if (b.contains("strict_stream_gaps"))   config.airsense11_ble.strict_stream_gaps = b["strict_stream_gaps"];
             }
@@ -1053,6 +1090,7 @@ struct AppConfig {
 
             j["airsense11_ble"]["enabled"] = airsense11_ble.enabled;
             j["airsense11_ble"]["address"] = airsense11_ble.address;
+            j["airsense11_ble"]["paired_serial"] = airsense11_ble.paired_serial;
             j["airsense11_ble"]["capture"] = airsense11_ble.capture;
             j["airsense11_ble"]["strict_stream_gaps"] = airsense11_ble.strict_stream_gaps;
 
@@ -1225,6 +1263,7 @@ struct AppConfig {
 
         j["airsense11_ble"]["enabled"] = airsense11_ble.enabled;
         j["airsense11_ble"]["address"] = airsense11_ble.address;
+        j["airsense11_ble"]["paired_serial"] = airsense11_ble.paired_serial;
         j["airsense11_ble"]["capture"] = airsense11_ble.capture;
         j["airsense11_ble"]["strict_stream_gaps"] = airsense11_ble.strict_stream_gaps;
 

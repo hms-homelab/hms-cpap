@@ -16,7 +16,9 @@ namespace hms_cpap::as11api {
  *   GET  /api/airsense11/ble/status
  *        {compiled, enabled, available, paired, pairing, connected,
  *         therapy (null unless connected), streaming, last_contact,
- *         last_summary_at, last_summary_day}
+ *         last_summary_at, last_summary_day,
+ *         paired_machine ({address, serial} or null), pairing_lost,
+ *         others_nearby [{name, address, last_seen, refused}]}   (#108)
  *   DELETE /api/airsense11/ble/pairing
  *        {ok, removed}; 409 while a pairing or a pull runs
  *   POST /api/airsense11/ble/pull

@@ -94,6 +94,9 @@ public:
 
     /// Set live config pointer for hot-reload only (does NOT reinit subsystems)
     void setAppConfig(AppConfig* cfg) { app_config_ = cfg; }
+    /// Where the config is saved when the service itself changes it (#108:
+    /// the AirSense 11 the pairing belongs to). Empty: <data dir>/config.json.
+    void setConfigPath(std::string path) { config_path_ = std::move(path); }
 
     /// SDD-041 §3.5: did any session data arrive within [window]? True through
     /// a night being recorded and through a first import, which is exactly when
@@ -637,6 +640,17 @@ private:
     /// and whenever this is set, after the Summary so the STR day is there.
     std::atomic<bool> as11_import_due_{false};
     std::unique_ptr<As11NightImport> as11_import_;
+    /// Issue #108: the machine the Bluetooth client found the pairing
+    /// belongs to, handed over from its thread; the worker saves it in the
+    /// config (saveAs11Machine), on the thread that owns last_config_.
+    std::mutex as11_machine_mtx_;
+    std::string as11_machine_address_;
+    std::string as11_machine_serial_;
+    std::atomic<bool> as11_machine_due_{false};
+public:
+    /// Worker thread only. Public for the suite.
+    void saveAs11Machine();
+private:
     /// Import every Bluetooth night not yet stored (or grown) and publish the
     /// newest the way a card night is published. Worker thread only.
     As11NightImport::Result importAs11Nights();
@@ -1324,6 +1338,7 @@ private:
 
     // ── Hot-reload ──────────────────────────────────────────────────────
     AppConfig* app_config_ = nullptr;
+    std::string config_path_;   // #108; empty: <data dir>/config.json
     std::atomic<bool> config_dirty_{false};
     /// steady_clock ticks of the last cycle that stored session data; 0 = none yet.
     std::atomic<std::chrono::steady_clock::rep> last_data_at_{0};

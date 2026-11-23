@@ -1097,6 +1097,17 @@ void BurstCollectorService::initAirSense11() {
         auto client = std::make_shared<AirSense11BleClient>(AppConfig::dataDir(),
                                                             app_config_->airsense11_ble.address);
         client->setCapture(app_config_->airsense11_ble.capture);   // SDD-071
+        // #108: only the paired machine. The one the pairing turns out to
+        // belong to is saved in the config by the worker.
+        client->setPairedSerial(app_config_->airsense11_ble.paired_serial);
+        client->setMachineSavedHook([this](const std::string& address, const std::string& serial) {
+            {
+                std::lock_guard<std::mutex> lk(as11_machine_mtx_);
+                as11_machine_address_ = address;
+                as11_machine_serial_ = serial;
+            }
+            as11_machine_due_ = true;
+        });
         getAs11NightSink();   // makes the shared writer
         {
             std::lock_guard<std::mutex> lk(airsense11_mtx_);
@@ -4927,6 +4938,8 @@ void BurstCollectorService::runLoop() {
             // After the Summary above, so its STR day is there for the
             // summary the night publishes with.
             if (as11_import_due_.exchange(false)) importAs11Nights();
+            // #108: the machine the pairing belongs to, into the config.
+            if (as11_machine_due_.exchange(false)) saveAs11Machine();
 
             // SDD-064: a night ended somewhere: the DreamStation 2 is read;
             // and the nights a read stored are imported.
@@ -5246,6 +5259,30 @@ void BurstCollectorService::snapshotConfig(ConfigSnapshot& snap) {
     snap.airsense11_strict_stream_gaps = app_config_->airsense11_ble.strict_stream_gaps;
     snap.ds2_ble_enabled = app_config_->ds2_ble.enabled;
     snap.ds2_ble_address = app_config_->ds2_ble.address;
+}
+
+void BurstCollectorService::saveAs11Machine() {
+    if (!app_config_) return;
+    std::string address, serial;
+    {
+        std::lock_guard<std::mutex> lk(as11_machine_mtx_);
+        address = as11_machine_address_;
+        serial = as11_machine_serial_;
+    }
+    if (!app_config_->rememberAs11Machine(address, serial)) return;
+    const std::string path = config_path_.empty() ? AppConfig::dataDir() + "/config.json" : config_path_;
+    if (!app_config_->save(path)) {
+        std::cerr << "AirSense11: the paired machine could not be saved in " << path << std::endl;
+        return;
+    }
+    // The client already connects only to it: a reload must not remake the
+    // client (and cut a night) because the address it found reached the file.
+    last_config_.airsense11_ble_address = app_config_->airsense11_ble.address;
+    std::cout << "AirSense11: the paired machine is saved in the config (address "
+              << app_config_->airsense11_ble.address << ", serial "
+              << (app_config_->airsense11_ble.paired_serial.empty() ? "not known yet"
+                                                                     : app_config_->airsense11_ble.paired_serial)
+              << ")" << std::endl;
 }
 
 void BurstCollectorService::reloadConfig() {

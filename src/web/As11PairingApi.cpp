@@ -75,6 +75,29 @@ Reply status(const IAirSense11Pairing* p, bool compiled, bool enabled) {
     r.body["last_contact"] = static_cast<Json::Int64>(pr.last_contact);
     // #67: in sight but will not link, after the forget and the reset.
     r.body["bluetooth_stuck"] = pr.bluetooth_stuck;
+    // #108: the machine the pairing belongs to (null until one is known),
+    // whether it said it no longer knows the pairing, and the other ResMed
+    // machines seen nearby, which are never connected to.
+    const auto m = p ? p->machines() : IAirSense11Pairing::Machines{};
+    if (m.address.empty() && m.serial.empty()) {
+        r.body["paired_machine"] = Json::Value(Json::nullValue);
+    } else {
+        Json::Value pm(Json::objectValue);
+        pm["address"] = m.address;
+        pm["serial"] = m.serial;
+        r.body["paired_machine"] = pm;
+    }
+    r.body["pairing_lost"] = m.pairing_lost;
+    Json::Value others(Json::arrayValue);
+    for (const auto& o : m.others) {
+        Json::Value v(Json::objectValue);
+        v["name"] = o.name;
+        v["address"] = o.address;
+        v["last_seen"] = static_cast<Json::Int64>(o.last_seen);
+        v["refused"] = o.refused;
+        others.append(v);
+    }
+    r.body["others_nearby"] = others;
     return r;
 }
 
