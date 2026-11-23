@@ -5,6 +5,38 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.1.1] - 2026-11-23
+
+### Fixed
+- **AirSense 11 over Bluetooth uses only your own machine.** With
+  `airsense11_ble.address` blank (the default), the Bluetooth loop connected
+  to any ResMed machine advertising. A neighbour's machine in range was
+  connected to every 30 seconds, each time refusing the pairing, and the
+  owner's nights were not streamed. Now:
+  - After a pairing, the machine's address is saved in
+    `airsense11_ble.address`, and its serial in the new
+    `airsense11_ble.paired_serial` after its first session. Only that machine
+    is connected to from then on. On an install paired before 7.1.1, the
+    first machine that opens a session with the pairing is saved (said once
+    in the log). An address set by hand is never replaced.
+  - Another ResMed machine in range is named once in the log and never
+    connected to. One that refuses the pairing is passed over for the rest of
+    the run instead of being asked again every 30 seconds.
+  - When the saved machine itself no longer knows the pairing, it is said
+    once ("pair it again from the Devices page"), the status and Settings
+    show it, and the machine is not asked again until it is paired again.
+    Removing the pairing keeps the saved machine, so pairing again goes to
+    it.
+  - Settings, AirSense 11 over Bluetooth, shows the paired machine (serial
+    and address), a lost pairing, and other ResMed machines seen nearby
+    ("only yours is used"), with **Pair a different machine** (an inline
+    confirm; `DELETE /api/airsense11/ble/machine`), in the five UI languages.
+    `GET /api/airsense11/ble/status` carries `paired_machine`,
+    `pairing_lost` and `others_nearby`.
+  - Saving Settings no longer sends the address back, so a page opened
+    before the machine was saved cannot blank it.
+  Closes #108 (thanks @TLaren).
+
 ## [7.1.0] - 2026-11-22
 
 ### Added
