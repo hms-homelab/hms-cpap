@@ -88,6 +88,10 @@ export interface AppConfig {
     enabled: boolean;
     address: string;       // empty: the first AirSense 11 the scan finds
     capture?: boolean;     // SDD-071: record each night as the machine sends it
+    /** PR #106: split the streamed waveform at every gap instead of joining
+     *  gaps under 60 s with zeros. Every AirSense 11 stream, this host's
+     *  Bluetooth or a bridge's. Applied live. */
+    strict_stream_gaps?: boolean;
   };
   /** SDD-064: a DreamStation 2 read over this host's own Bluetooth, after the
    *  night (when another source says the night ended, or on Read now). The

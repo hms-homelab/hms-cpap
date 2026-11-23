@@ -5,6 +5,24 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Settings, AirSense 11 over Bluetooth: "Split the waveform at stream
+  gaps".** Off (the default), a gap under a minute between the blocks of an
+  AirSense 11 Bluetooth stream is joined and its samples written as zero, as
+  before. On, the waveform is split at every gap, so nothing missing is drawn.
+  It covers every AirSense 11 stream, this host's Bluetooth or a bridge's,
+  applies to new blocks at once with no restart, and leaves nights already
+  written as they are. `HMS_CPAP_STRICT_STREAM_GAPS=1` switches it on for an
+  install without the Settings page (Docker, the Home Assistant add-on).
+  Closes #103 (#106, thanks @djbill99-hue).
+
+### Fixed
+- **The session page's metric cards are one size.** The cards in a row share
+  its width and height, so the SpO2 card's ODI line no longer makes it taller
+  than its neighbours (#107, thanks @rccoleman).
+
 ## [7.0.2] - 2026-11-22
 
 ### Fixed

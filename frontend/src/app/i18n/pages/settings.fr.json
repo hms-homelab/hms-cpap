@@ -117,7 +117,9 @@
       "capture": "Enregistrer chaque nuit pour l'assistance",
       "captureHint": "Enregistre dans un fichier tout ce que l'appareil envoie pendant chaque nuit, pour que vous puissiez nous l'envoyer avec le dossier de la carte SD de cette nuit. Vos nuits sont lues comme sans cette option. Désactivez-la quand vous avez terminé.",
       "captureFile": "Enregistrement dans {{path}} ({{size}}).",
-      "captureNone": "Rien d'enregistré pour l'instant : le fichier commence avec la prochaine nuit."
+      "captureNone": "Rien d'enregistré pour l'instant : le fichier commence avec la prochaine nuit.",
+      "strictGaps": "Couper la courbe aux trous du flux",
+      "strictGapsHint": "Désactivé : les trous courts (moins d'une minute) dans le flux Bluetooth d'un AirSense 11 sont comblés et affichés à zéro. Activé : la courbe est coupée à chaque trou, rien de manquant n'est dessiné. S'applique tout de suite aux nouvelles données ; les nuits déjà enregistrées ne changent pas."
     },
     "ds2": {
       "heading": "DreamStation 2 en Bluetooth",

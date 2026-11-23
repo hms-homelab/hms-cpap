@@ -117,7 +117,9 @@
       "capture": "Grabar cada noche para soporte",
       "captureHint": "Guarda en un archivo todo lo que el equipo envía durante cada noche, para que nos lo envíe junto con la carpeta de la tarjeta SD de esa noche. Sus noches se leen igual que sin esta opción. Desactívela cuando termine.",
       "captureFile": "Grabando en {{path}} ({{size}}).",
-      "captureNone": "Aún no hay nada grabado: el archivo empieza con la próxima noche."
+      "captureNone": "Aún no hay nada grabado: el archivo empieza con la próxima noche.",
+      "strictGaps": "Dividir la curva en los huecos del flujo",
+      "strictGapsHint": "Desactivado: los huecos cortos (menos de un minuto) en el flujo Bluetooth de un AirSense 11 se unen y se muestran como cero. Activado: la curva se divide en cada hueco, así no se dibuja nada que falte. Se aplica de inmediato a los datos nuevos; las noches ya guardadas no cambian."
     },
     "ds2": {
       "heading": "DreamStation 2 por Bluetooth",

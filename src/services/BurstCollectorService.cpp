@@ -532,7 +532,11 @@ bool BurstCollectorService::airSense11BleCompiled() {
 std::shared_ptr<IAs11NightSink> BurstCollectorService::getAs11NightSink() {
     std::lock_guard<std::mutex> lk(airsense11_mtx_);
     if (!as11_night_writer_) {
-        as11_night_writer_ = std::make_shared<As11NightWriter>(AppConfig::dataDir(), hostLocalClock());
+        // PR #106: the gap policy from Settings (or HMS_CPAP_STRICT_STREAM_GAPS,
+        // through AppConfig::applyEnvFallbacks); a change reaches it live in
+        // reloadConfig().
+        as11_night_writer_ = std::make_shared<As11NightWriter>(AppConfig::dataDir(), hostLocalClock(),
+            app_config_ && app_config_->airsense11_ble.strict_stream_gaps);
         // SDD-057 D9: a night whose files are complete is imported by the
         // worker, whichever source streamed it. Only a flag here: the hook
         // runs on the stream's thread.
@@ -5239,6 +5243,7 @@ void BurstCollectorService::snapshotConfig(ConfigSnapshot& snap) {
     snap.airsense11_ble_enabled = app_config_->airsense11_ble.enabled;
     snap.airsense11_ble_address = app_config_->airsense11_ble.address;
     snap.airsense11_ble_capture = app_config_->airsense11_ble.capture;
+    snap.airsense11_strict_stream_gaps = app_config_->airsense11_ble.strict_stream_gaps;
     snap.ds2_ble_enabled = app_config_->ds2_ble.enabled;
     snap.ds2_ble_address = app_config_->ds2_ble.address;
 }
@@ -5533,6 +5538,21 @@ void BurstCollectorService::reloadConfig() {
         // night streaming now is not cut). It applies from the next stream
         // (AirSense11BleClient::streamOnce reads it before StartStream).
         applyAirSense11Capture(nc.airsense11_ble_capture);
+    }
+
+    // PR #106: the gap policy is the shared writer's own, set on the writer
+    // that is there (every stream source keeps feeding it): from the next
+    // block on. A writer made later takes it from the config.
+    if (nc.airsense11_strict_stream_gaps != last_config_.airsense11_strict_stream_gaps) {
+        std::shared_ptr<As11NightWriter> writer;
+        {
+            std::lock_guard<std::mutex> lk(airsense11_mtx_);
+            writer = as11_night_writer_;
+        }
+        if (writer) writer->setPreserveGaps(nc.airsense11_strict_stream_gaps);
+        std::cout << "Config reload: AirSense11 stream gaps -> "
+                  << (nc.airsense11_strict_stream_gaps ? "split at every gap" : "short gaps joined")
+                  << ", from the next block" << std::endl;
     }
 
     // SDD-064: the DreamStation 2 reader is remade when it is switched or its

@@ -117,7 +117,9 @@
       "capture": "Minden éjszaka rögzítése az ügyfélszolgálatnak",
       "captureHint": "Fájlba menti mindazt, amit a készülék éjszakánként küld, hogy elküldhesse nekünk az adott éjszaka SD-kártya mappájával együtt. Az éjszakái ugyanúgy beolvasódnak, mint nélküle. Ha végzett, kapcsolja ki.",
       "captureFile": "Rögzítés ide: {{path}} ({{size}}).",
-      "captureNone": "Még nincs rögzítve semmi: a fájl a következő éjszakával kezdődik."
+      "captureNone": "Még nincs rögzítve semmi: a fájl a következő éjszakával kezdődik.",
+      "strictGaps": "A görbe szétvágása az adatfolyam kimaradásainál",
+      "strictGapsHint": "Kikapcsolva: az AirSense 11 Bluetooth-adatfolyamának rövid (egy percnél rövidebb) kimaradásai összevonva, nullaként jelennek meg. Bekapcsolva: a görbe minden kimaradásnál megszakad, így semmi hiányzó nem lesz kirajzolva. Az új adatokra azonnal érvényes; a már mentett éjszakák nem változnak."
     },
     "ds2": {
       "heading": "DreamStation 2 Bluetooth-on",

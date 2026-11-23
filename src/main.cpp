@@ -2227,7 +2227,8 @@ int main(int argc, char** argv) {
                     std::shared_ptr<hms_cpap::IAs11NightSink> night =
                         burst_service ? burst_service->getAs11NightSink()
                                       : std::make_shared<hms_cpap::As11NightWriter>(
-                                            mo.data_dir, hms_cpap::hostLocalClock());
+                                            mo.data_dir, hms_cpap::hostLocalClock(),
+                                            config.airsense11_ble.strict_stream_gaps);
                     mule_stream = std::make_unique<hms_cpap::mule::MuleService>(mo, night);
                     hms_cpap::mule::FirmwareUpdater::Options fo;
                     if (const char* m = std::getenv("HMS_CPAP_MULE_RELEASE_BASE"); m && *m) fo.release_base = m;
