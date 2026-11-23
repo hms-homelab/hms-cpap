@@ -130,6 +130,30 @@ TEST_F(NightTest, ASubSampleGapIsLaidToTheNearestSampleAndDoesNotDrift) {
     EXPECT_EQ(records(night() / "20261016_220000_BRP.edf"), 52);
 }
 
+// The machine stamps its seconds about 1000 ms apart, a few ms either way.
+// Seen on a real night: the offset settled at exactly half a sample (20 ms)
+// from the segment's first block, and every second then rounded the other
+// way for a quarter of an hour: a real sample dropped, then a 0 cmH2O
+// invented. A wander well under a sample must lay every sample, once.
+TEST_F(NightTest, AWanderUnderASampleDropsNothingAndInventsNothing) {
+    auto w = writer();
+    for (int i = 0; i < 40; i++) {
+        const int64_t off = i < 10 ? 0 : (i < 20 ? -16 : -20);
+        w.onBlock(second(kT0 + i * 1000 + off));
+    }
+    w.onStreamEnd(kSerial);
+
+    const auto f = night() / "20261016_220000_BRP.edf";
+    EXPECT_EQ(records(f), 40);
+    cpapdash::parser::EDFFile edf;
+    ASSERT_TRUE(edf.open(f.string()));
+    ASSERT_EQ(edf.signals[1].label, "Press.40ms");
+    std::vector<double> press;
+    edf.readSignal(1, press);
+    ASSERT_EQ(press.size(), 1000u);
+    for (size_t i = 0; i < press.size(); i++) EXPECT_GT(press[i], 5.0) << "sample " << i;
+}
+
 TEST_F(NightTest, AResentBlockIsKeptOnceAndSurvivesARestart) {
     {
         auto w = writer();
