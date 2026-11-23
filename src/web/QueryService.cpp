@@ -362,11 +362,23 @@ Json::Value QueryService::getSessions(int limit, int offset) {
         " SUM(CASE WHEN t.hr > 0 THEN t.hr * t.dur END)"
         " / NULLIF(SUM(CASE WHEN t.hr > 0 THEN t.dur END), 0) as hr"
         " FROM (SELECT o.start_time as start_time, o.duration_seconds as dur,"
-        " COALESCE(NULLIF(o.avg_spo2, 0), (SELECT AVG(x.spo2) FROM oximetry_samples x"
-        " WHERE x.oximetry_session_id = o.id AND " + valid + " AND x.spo2 > 0 AND x.spo2 < 255)) as sp,"
-        " COALESCE(NULLIF(o.avg_hr, 0), (SELECT AVG(x.heart_rate) FROM oximetry_samples x"
-        " WHERE x.oximetry_session_id = o.id AND " + valid + " AND x.heart_rate > 20 AND x.heart_rate < 250)) as hr"
-        " FROM oximetry_sessions o WHERE " + sql::oxiNotSuperseded("o", dt_) + ") t"
+        " COALESCE(NULLIF(o.avg_spo2, 0), smp.sp) as sp,"
+        " COALESCE(NULLIF(o.avg_hr, 0), smp.hr) as hr"
+        " FROM oximetry_sessions o"
+        // The samples are read once, for the live stand-ins that have no stored
+        // average, and not by a subquery per session: a correlated subquery over
+        // this table (a million rows) makes PostgreSQL cost the whole statement
+        // at millions, and it spends two seconds compiling it (JIT) for a query
+        // that runs in milliseconds.
+        " LEFT JOIN (SELECT x.oximetry_session_id as sid,"
+        " AVG(CASE WHEN x.spo2 > 0 AND x.spo2 < 255 THEN x.spo2 END) as sp,"
+        " AVG(CASE WHEN x.heart_rate > 20 AND x.heart_rate < 250 THEN x.heart_rate END) as hr"
+        " FROM oximetry_samples x"
+        " WHERE " + valid + " AND x.oximetry_session_id IN ("
+        "SELECT l.id FROM oximetry_sessions l WHERE SUBSTR(l.filename, 1, 5) = 'live_'"
+        " AND (l.avg_spo2 IS NULL OR l.avg_spo2 = 0))"
+        " GROUP BY x.oximetry_session_id) smp ON smp.sid = o.id"
+        " WHERE " + sql::oxiNotSuperseded("o", dt_) + ") t"
         " GROUP BY " + sql::sleepDay("t.start_time", dt_) + ") ox"
         " ON ox.ox_day = " + sql::sleepDay("s.session_start", dt_) +
         " WHERE s.device_id = " + sql::param(1, dt_) +
