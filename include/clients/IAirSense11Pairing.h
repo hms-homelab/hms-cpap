@@ -63,6 +63,10 @@ public:
         std::vector<Other> others;
     };
     virtual Machines machines() const { return {}; }
+    /// Issue #108: "Pair a different machine": the saved machine (address,
+    /// serial) is forgotten, so the next pairing takes the machine it
+    /// reaches. The pairing's keys are removed by the caller (forget).
+    virtual void forgetPairedMachine() {}
     /// Something is talking to the machine now (a pairing, a pull): the
     /// pairing is not removed under it.
     virtual bool busy() const { return pairPending(); }

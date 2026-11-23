@@ -98,6 +98,15 @@ bool AirSense11BleClient::ours(const ble::Device& d) const {
     return nameFitsSerial(d.name, serial_);
 }
 
+bool AirSense11BleClient::isSavedMachine(const ble::Device& d) const {
+    // Positively the saved one: its address, or (no address saved) an advert
+    // name that carries the saved serial's tail. An unnamed advert with only
+    // a serial saved is not proof: its refusal is a neighbour's.
+    if (!address_.empty()) return ble::lower(d.address) == address_;
+    if (serial_.empty() || d.name.rfind("ResMed ", 0) != 0) return false;
+    return nameFitsSerial(d.name, serial_);
+}
+
 bool AirSense11BleClient::refused(const ble::Device& d) const {
     if (pairing_scan_) return false;
     std::lock_guard<std::mutex> lk(seen_mtx_);
@@ -177,7 +186,7 @@ as11::Result AirSense11BleClient::openSession(const as11::Credentials& creds, in
         as11::Result r = session_.open(creds);
         if (r == as11::Result::Verify) {
             const std::string why = session_.lastError();
-            const bool saved = !address_.empty() || !serial_.empty();
+            const bool saved = isSavedMachine(device_);
             dropLink();
             if (saved) {
                 // The paired machine itself: a real lost pairing. Said once,
@@ -187,8 +196,9 @@ as11::Result AirSense11BleClient::openSession(const as11::Credentials& creds, in
                      "): pair it again from the Devices page");
                 return r;
             }
-            // No machine saved yet and this one does not know the keys: a
-            // neighbour's machine. Passed over; the scan goes on.
+            // Not the saved machine (none is saved yet, on an install paired
+            // before 7.1.1) and it does not know the keys: a neighbour's
+            // machine. Passed over for the run; the scan goes on.
             note(device_.name + " refused the session: " + why);
             noteOther(device_, true);
             if (refusals + 1 >= kMaxRefusalsPerConnect) return r;
@@ -293,8 +303,9 @@ bool AirSense11BleClient::connectLink(int timeout_ms, int scan_ms) {
     if (forget_pending_.exchange(false)) {
         forgetCachedMachine();
         rediscover_ = true;
-        forgetSavedMachine();
+        clearRefusals();
     }
+    if (forget_saved_pending_.exchange(false)) forgetSavedMachine();
     if (!scan(scan_ms)) return false;
 
     auto attempt = [this, timeout_ms] {
@@ -464,19 +475,41 @@ void AirSense11BleClient::forgetMachine() {
     }
     const int n = forgetCachedMachine();
     rediscover_ = true;
-    forgetSavedMachine();
+    // #108: the saved machine stays: the next pairing goes to it (the usual
+    // case is pairing it again after it lost the pairing). A different
+    // machine is forgetPairedMachine.
+    clearRefusals();
     std::cout << kTag << "the pairing was removed: " << n << " cached object(s) for the machine forgotten" << std::endl;
 }
 
-void AirSense11BleClient::forgetSavedMachine() {
-    // #108: "Forget / pair a different machine": the next pairing may find
-    // another one. Under op_mtx_.
+void AirSense11BleClient::clearRefusals() {
+    // New keys, or none: no machine has refused them yet.
     std::lock_guard<std::mutex> lk(seen_mtx_);
-    address_.clear();
-    serial_.clear();
-    machine_name_.clear();
     pairing_lost_ = false;
     for (auto& o : others_) o.refused = false;
+}
+
+void AirSense11BleClient::forgetPairedMachine() {
+    std::unique_lock<std::timed_mutex> lk(op_mtx_, std::try_to_lock);
+    if (!lk.owns_lock()) {
+        forget_saved_pending_ = true;
+        return;
+    }
+    forgetSavedMachine();
+}
+
+void AirSense11BleClient::forgetSavedMachine() {
+    // #108: "Pair a different machine": the next pairing may find another
+    // one. Under op_mtx_.
+    {
+        std::lock_guard<std::mutex> lk(seen_mtx_);
+        address_.clear();
+        serial_.clear();
+    }
+    machine_name_.clear();
+    clearRefusals();
+    std::cout << kTag << "the saved machine was forgotten: the next pairing takes the machine it reaches"
+              << std::endl;
 }
 
 IAirSense11Pairing::BluetoothReset AirSense11BleClient::resetBluetooth() {

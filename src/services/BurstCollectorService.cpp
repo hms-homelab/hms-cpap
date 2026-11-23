@@ -4938,7 +4938,10 @@ void BurstCollectorService::runLoop() {
             // After the Summary above, so its STR day is there for the
             // summary the night publishes with.
             if (as11_import_due_.exchange(false)) importAs11Nights();
-            // #108: the machine the pairing belongs to, into the config.
+            // #108: "Pair a different machine", then the machine the pairing
+            // belongs to, into the config. In that order: a pairing made
+            // right after the forget is saved, not forgotten.
+            if (as11_forget_machine_due_.exchange(false)) forgetAs11MachineNow();
             if (as11_machine_due_.exchange(false)) saveAs11Machine();
 
             // SDD-064: a night ended somewhere: the DreamStation 2 is read;
@@ -5283,6 +5286,25 @@ void BurstCollectorService::saveAs11Machine() {
               << (app_config_->airsense11_ble.paired_serial.empty() ? "not known yet"
                                                                      : app_config_->airsense11_ble.paired_serial)
               << ")" << std::endl;
+}
+
+void BurstCollectorService::forgetAs11Machine() {
+    as11_forget_machine_due_ = true;
+}
+
+void BurstCollectorService::forgetAs11MachineNow() {
+    if (!app_config_ || !app_config_->forgetAs11Machine()) return;
+    const std::string path = config_path_.empty() ? AppConfig::dataDir() + "/config.json" : config_path_;
+    if (!app_config_->save(path)) {
+        std::cerr << "AirSense11: the saved machine could not be removed from " << path << std::endl;
+        return;
+    }
+    // The client has forgotten it already: no remake for the address that
+    // left the file.
+    last_config_.airsense11_ble_address.clear();
+    std::cout << "AirSense11: the saved machine was removed from the config: the next pairing takes the "
+                 "machine it reaches"
+              << std::endl;
 }
 
 void BurstCollectorService::reloadConfig() {

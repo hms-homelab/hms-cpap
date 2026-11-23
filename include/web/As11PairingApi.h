@@ -20,7 +20,10 @@ namespace hms_cpap::as11api {
  *         paired_machine ({address, serial} or null), pairing_lost,
  *         others_nearby [{name, address, last_seen, refused}]}   (#108)
  *   DELETE /api/airsense11/ble/pairing
- *        {ok, removed}; 409 while a pairing or a pull runs
+ *        {ok, removed, machine_forgotten}; 409 while a pairing or a pull runs
+ *   DELETE /api/airsense11/ble/machine   (#108, "Pair a different machine")
+ *        the pairing as above, and the saved machine (config address and
+ *        paired_serial) too
  *   POST /api/airsense11/ble/pull
  *        {ok}: the summary pulled now, out of turn
  *   POST /api/airsense11/ble/reset
@@ -57,7 +60,10 @@ Reply cancel(IAirSense11Pairing* p);
 /// Removes the saved pairing (the keys the pairing made) and the OS's object
 /// for the machine (#67). The machine keeps hms-cpap in its own paired list
 /// until removed there. 409 while `p` is busy or a pull is due.
-Reply forget(IAirSense11Pairing* p, const std::string& credentials_path, bool pull_due);
+/// #108: the saved machine (address, serial) stays, so pairing again goes to
+/// it; `machine_too` ("Pair a different machine") forgets it as well.
+Reply forget(IAirSense11Pairing* p, const std::string& credentials_path, bool pull_due,
+             bool machine_too = false);
 /// #67: "Reset Bluetooth": forgets the OS's object for the machine and
 /// power-cycles the adapter now. {ok, forgot, adapter_reset,
 /// others_connected, reason?, error?}; 409 while a night streams, a pairing

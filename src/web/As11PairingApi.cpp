@@ -120,7 +120,7 @@ Reply resetBluetooth(IAirSense11Pairing* p, bool compiled, bool enabled) {
     return r;
 }
 
-Reply forget(IAirSense11Pairing* p, const std::string& credentials_path, bool pull_due) {
+Reply forget(IAirSense11Pairing* p, const std::string& credentials_path, bool pull_due, bool machine_too) {
     Reply r;
     if ((p && p->busy()) || pull_due) {
         r.status = 409;
@@ -138,8 +138,12 @@ Reply forget(IAirSense11Pairing* p, const std::string& credentials_path, bool pu
     }
     // #67: the OS's object for the machine goes with it.
     if (p) p->forgetMachine();
+    // #108: "Pair a different machine": the saved machine goes too, so the
+    // next pairing takes the machine it reaches.
+    if (p && machine_too) p->forgetPairedMachine();
     r.body["ok"] = true;
     r.body["removed"] = had;
+    r.body["machine_forgotten"] = machine_too;
     return r;
 }
 

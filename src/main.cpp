@@ -1100,6 +1100,8 @@ int main(int argc, char** argv) {
         int burst_interval = hms_cpap::ConfigManager::getInt("BURST_INTERVAL", 120);
 
         burst_service = std::make_unique<hms_cpap::BurstCollectorService>(burst_interval);
+        // #108: the AirSense 11 the pairing belongs to is saved into this file.
+        burst_service->setConfigPath(config_path);
         burst_service->initialize(&config);
         // SDD-081: a DreamStation 2 card read by an OSCAR helper on a home
         // PC. It connects to the Sleep Bridge's port, so it is there while

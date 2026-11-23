@@ -78,6 +78,7 @@ public:
     void forgetMachine() override;
     BluetoothReset resetBluetooth() override;
     Machines machines() const override;
+    void forgetPairedMachine() override;
 
     /// Issue #108: the saved machine's serial (airsense11_ble.paired_serial),
     /// before the night loop starts. With no address, the scan passes over a
@@ -185,6 +186,9 @@ private:
     // hide a machine from it (the person may be pairing that very one).
     std::atomic<bool> pairing_scan_{false};
     bool ours(const ble::Device& d) const;
+    // Positively the saved machine (its address, or its serial in the advert
+    // name): only its refusal is a lost pairing.
+    bool isSavedMachine(const ble::Device& d) const;
     bool refused(const ble::Device& d) const;
     void noteOther(const ble::Device& d, bool refused);
     // Connects and opens the session with `creds`, then reads the serial
@@ -194,6 +198,10 @@ private:
     as11::Result openSession(const as11::Credentials& creds, int scan_ms, std::string* serial, bool* flag);
     void sessionOpened(const std::string& serial);
     void forgetSavedMachine();
+    void clearRefusals();
+    // forgetPairedMachine while the operation lock was held: done at the
+    // next connect.
+    std::atomic<bool> forget_saved_pending_{false};
     static constexpr int kMaxRefusalsPerConnect = 4;
 
     ble::Device device_;

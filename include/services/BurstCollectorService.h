@@ -647,9 +647,14 @@ private:
     std::string as11_machine_address_;
     std::string as11_machine_serial_;
     std::atomic<bool> as11_machine_due_{false};
+    std::atomic<bool> as11_forget_machine_due_{false};
 public:
     /// Worker thread only. Public for the suite.
     void saveAs11Machine();
+    void forgetAs11MachineNow();
+    /// #108: "Pair a different machine": the saved machine leaves the config
+    /// on the worker's next tick (within a second). Any thread.
+    void forgetAs11Machine();
 private:
     /// Import every Bluetooth night not yet stored (or grown) and publish the
     /// newest the way a card night is published. Worker thread only.

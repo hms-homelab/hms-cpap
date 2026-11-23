@@ -400,6 +400,24 @@ void installRoutes(const RouteDeps& deps) {
         },
         {drogon::Delete});
 
+    // #108: "Pair a different machine": the pairing and the saved machine
+    // (address, serial) go, so the next pairing takes the machine it reaches.
+    drogon::app().registerHandler(
+        "/api/airsense11/ble/machine",
+        [](const drogon::HttpRequestPtr&, Callback&& cb) {
+            auto p = g.burst ? g.burst->getAirSense11Pairing() : nullptr;
+            const bool due = g.burst && g.burst->as11Facts().pull_due;
+            const auto r = as11api::forget(p.get(), as11::credentialsPath(AppConfig::dataDir()), due, true);
+            if (r.status == 200) {
+                if (g.burst) g.burst->forgetAs11Machine();
+                std::cout << "AirSense11: the pairing and the saved machine were removed, to pair a different "
+                             "machine (Settings)"
+                          << std::endl;
+            }
+            cb(json(r.body, r.status));
+        },
+        {drogon::Delete});
+
     // #67: "Reset Bluetooth": forget the machine's OS object and power-cycle
     // the adapter, on demand.
     drogon::app().registerHandler(
