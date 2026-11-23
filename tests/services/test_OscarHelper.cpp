@@ -509,7 +509,7 @@ TEST_F(OscarHelperTest, AReadSendsTheCardImportsOnThePcAndStoresWhatCameBackAsCa
     EXPECT_EQ(r.stored, 1);
     EXPECT_EQ(r.version, "2.1.1+00000000");
     EXPECT_EQ(sessions(), 1);
-    EXPECT_TRUE(db_->sessionExists(kDevice, sessionClock(kT0)));
+    EXPECT_TRUE(db_->sessionExists(kDevice, sessionLabel(kT0, kDevice)));   // SDD-083 F1
     // Stored as the card's (SDD-080 D5): its files are this card's own.
     const auto rows = db_->executeQuery(
         "SELECT COUNT(*) AS v FROM cpap_session_files f JOIN cpap_sessions s ON s.id = f.session_id "

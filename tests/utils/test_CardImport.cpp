@@ -147,9 +147,11 @@ TEST_F(CardMirror, AZipWithNoDateFoldersReportsNoDatesRatherThanPretending) {
     auto r = run();
 
     EXPECT_TRUE(r.dates.empty()) << "the caller must be able to tell the user";
-    // The root files are still mirrored: they are what the next upload needs.
-    EXPECT_TRUE(onCard("STR.edf"));
-    EXPECT_TRUE(r.saw_str);
+    // SDD-083 D11 (Albin, 2026-11-22): the caller refuses this zip, and no
+    // refusal leaves files in the card folder. The root files used to be
+    // mirrored all the same.
+    EXPECT_FALSE(onCard("STR.edf"));
+    EXPECT_FALSE(onCard("Identification.tgt"));
 }
 
 // Re-uploading the same card must not fail or duplicate.
@@ -163,4 +165,28 @@ TEST_F(CardMirror, ReimportingTheSameCardOverwritesInPlace) {
     std::ifstream in(card_ / "DATALOG" / "20250812" / "20250812_233427_BRP.edf");
     std::string body((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     EXPECT_EQ(body, "second") << "a re-upload did not refresh the file";
+}
+
+// SDD-083 D11: a zip the caller refuses (no date folder) leaves the card
+// folder exactly as it was. It used to copy every file first and refuse after.
+TEST_F(CardMirror, AZipWithNoDateFolderCopiesNothing) {
+    write(zip_ / "P-SERIES" / "PXLIVE01" / "PROP.BIN", "made-up");
+    write(zip_ / "P-SERIES" / "PXLIVE01" / "P0" / "00000040.B01", "made-up");
+    write(zip_ / "STR.edf");
+    const auto r = run();
+    EXPECT_TRUE(r.dates.empty());
+    EXPECT_EQ(r.copied, 0);
+    EXPECT_FALSE(onCard("P-SERIES"));
+    EXPECT_FALSE(onCard("STR.edf"));
+}
+
+// An empty date folder, or one holding only what the copy skips, is no date
+// folder either.
+TEST_F(CardMirror, AnEmptyDateFolderIsNotACardAndCopiesNothing) {
+    fs::create_directories(zip_ / "DATALOG" / "20250812");
+    write(zip_ / "DATALOG" / "20250812" / ".DS_Store");
+    write(zip_ / "STR.edf");
+    const auto r = run();
+    EXPECT_TRUE(r.dates.empty());
+    EXPECT_FALSE(onCard("STR.edf"));
 }

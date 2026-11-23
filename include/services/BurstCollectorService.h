@@ -538,6 +538,10 @@ private:
     /// The card is encrypted: the reader exists for [card_root], and every
     /// session close on it not yet noted starts a read.
     void oscarCardSeen(const std::string& card_root);
+    /// The reader, built on first use (oscar_mu_ held). Null with no database.
+    std::shared_ptr<oscar::OscarCardReader> oscarReaderLocked();
+    /// SDD-083: the uploaded card's root, read when the source has none.
+    std::string oscar_upload_root_;
     /// On the worker: the newest stored session is published, as a
     /// Bluetooth DreamStation 2 night is.
     void publishOscarNight();
@@ -691,6 +695,17 @@ public:
     /// "Read now" (D7), or SDD-081 D6's helper hello. False when no encrypted
     /// card has been found.
     bool requestOscarRead(const std::string& why = "Read now");
+    /// SDD-083: an OSCAR source is paired: a helper remembered (SDD-081), or,
+    /// outside a container, OSCAR's program, data folder and profile known
+    /// (SDD-080).
+    bool oscarSourcePaired() const;
+    /// SDD-083: the paired source is the helper.
+    bool oscarHelperPaired() const;
+    /// SDD-083: an uploaded encrypted card at `card_root` (it holds
+    /// P-SERIES/), read through the paired OSCAR on the reader's thread; the
+    /// removed nights holding its sessions are restored first. Blocks
+    /// until that read ends. nullopt, and nothing read, when none is paired.
+    std::optional<oscar::OscarCardReader::ReadResult> readUploadedOscarCard(const std::string& card_root);
     /// SDD-081: the OSCAR helper, used for the read while one is remembered,
     /// and the folder its returned file is kept in for one pass. Before the
     /// first burst.

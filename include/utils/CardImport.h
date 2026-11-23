@@ -35,6 +35,8 @@ struct CardImportResult {
  * @param card_dir        the card ROOT under the archive (config.local_dir)
  * @param archive_dir     the archive's DATALOG directory
  */
+// SDD-083 D11: with no file under a date folder, nothing is copied (the
+// caller refuses such a zip, and a refusal leaves the card folder as it was).
 CardImportResult mirrorCardInto(const std::string& extracted_root,
                                 const std::string& card_dir,
                                 const std::string& archive_dir);

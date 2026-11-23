@@ -16,6 +16,10 @@
 // it, never a queue. There is no timer, no poll and no schedule: the close
 // starts a read, OSCAR's exit ends it.
 //
+// SDD-083: a card uploaded on the upload page is read on this same thread
+// (readCard), so OSCAR never runs twice at once on one data folder; the
+// upload waits on the read's own end.
+//
 #include "database/IDatabase.h"
 #include "parsers/CpapdashBridge.h"
 #include "services/OscarCard.h"
@@ -28,6 +32,7 @@
 #include <cstdint>
 #include <ctime>
 #include <functional>
+#include <future>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -103,6 +108,10 @@ public:
         int         stored{0};     ///< sessions saved this read (new or grown)
         std::string version;       ///< the OSCAR that made the database
         std::string message;       ///< for the log and the tile
+        /// SDD-083: each stored session's start, for the upload's nights.
+        std::vector<std::chrono::system_clock::time_point> landed;
+        /// SDD-083: removed nights this read restored (YYYY-MM-DD).
+        std::vector<std::string> restored;
     };
 
     explicit OscarCardReader(Options o);
@@ -126,8 +135,19 @@ public:
     /// The Devices tile's OSCAR line.
     Json::Value status() const;
 
+    /// SDD-083: one read of `card_root` (an uploaded card, not the source's)
+    /// on the worker, after the one running if one is. Asks for the same root
+    /// while it waits are covered by that one read. The future holds its
+    /// result; Failed at once when the worker is not running, or at stop().
+    std::shared_future<ReadResult> readCard(const std::string& card_root, const std::string& why);
+
     /// One read, on the calling thread (the worker's body; tests drive it).
     ReadResult readOnce();
+    /// The same, of `card_root` instead of the source's. `restore_removed`
+    /// (an uploaded card, SDD-083): a night the user removed that holds a
+    /// session of this card is restored first and its sessions stored again,
+    /// as a re-upload of any other card does (SDD-036 D2).
+    ReadResult readOnce(const std::string& card_root, bool restore_removed = false);
 
     /// D7's check on save: the program answers --help with its batch import,
     /// the folder holds an oscar.db that passes D6's gate, the profile is in
@@ -147,7 +167,11 @@ private:
     int storeFrom(OscarDb& db, const std::string& profile, const std::string& card_root,
                   const std::set<std::string>& removed, std::optional<CPAPSession>& newest,
                   std::vector<std::chrono::system_clock::time_point>& landed);
-    ReadResult readRemote(const std::string& root);
+    ReadResult readRemote(const std::string& root, bool restore_removed);
+    /// SDD-083: the removed night of a head of the uploaded card, restored;
+    /// its key forgotten so it is stored again. Worker only.
+    void restoreHead(const std::string& key, long long start_ms, const std::set<std::string>& removed_now,
+                     std::set<std::string>& restored);
     ReadResult finish(ReadResult r, Outcome o, std::string msg);
     /// Stores one decoded session. True when saved.
     bool storeOne(CPAPSession& s, long long session_number, const std::string& card_root);
@@ -161,6 +185,8 @@ private:
     bool stop_{false};
     bool running_{false};
     std::string why_;
+    /// SDD-083: card roots asked for by readCard, each with its waiters.
+    std::map<std::string, std::vector<std::shared_ptr<std::promise<ReadResult>>>> card_reads_;
 
     // What the tile shows.
     std::string last_state_{"never"};

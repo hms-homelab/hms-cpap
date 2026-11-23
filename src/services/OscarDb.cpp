@@ -1,5 +1,9 @@
 #include "services/OscarDb.h"
 
+#include "utils/MachineClocks.h"
+#include "utils/MachineZone.h"
+#include "utils/SessionLabels.h"
+
 #include <sqlite3.h>
 
 #include <algorithm>
@@ -28,6 +32,12 @@ std::string sessionKey(const SessionHead& s) { return s.serial + "/" + std::to_s
 
 system_clock::time_point sessionClock(long long oscar_ms) {
     return system_clock::time_point(milliseconds(oscar_ms));
+}
+
+system_clock::time_point sessionLabel(long long oscar_ms, const std::string& device_id) {
+    const long long whole = oscar_ms >= 0 ? oscar_ms / 1000 : -((-oscar_ms + 999) / 1000);
+    const long long frac = oscar_ms - whole * 1000;
+    return wall::point(machine_clocks::zoneFor(device_id).toWall(whole)) + milliseconds(frac);
 }
 
 namespace {
@@ -593,6 +603,10 @@ std::unique_ptr<CPAPSession> OscarDb::read(const SessionHead& head, const std::s
                       << head.rera << std::endl;
         }
     }
+    // SDD-083 F1 (SDD-074 D4/D6): OSCAR's times are instants; held as labels
+    // on the machine's clock, as the Bluetooth and plain card readers hold a
+    // DreamStation's, so a night splits at the machine's noon.
+    putOnMachineClock(*session, machine_clocks::zoneFor(device_id));
     return session;
 }
 

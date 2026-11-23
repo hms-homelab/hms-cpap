@@ -23,7 +23,7 @@
     "title": "Enviar dados",
     "zip": {
       "heading": "Dados do CPAP (.zip ou .cpapcard)",
-      "hint": "Envie um zip do seu cartão SD: ResMed (as pastas DATALOG), Sefam S.Box, Löwenstein Prisma ou BMC / React Health Luna. O cartão é reconhecido pelos arquivos, e cada noite ainda não guardada é adicionada e processada automaticamente. Um arquivo .cpapcard do CpapDash Desktop (Exportar para HMS CPAP) também ensina a estrutura do cartão a um Sleep Bridge que transmite para cá.",
+      "hint": "Envie um zip do seu cartão SD: ResMed (as pastas DATALOG), Sefam S.Box, Löwenstein Prisma, BMC / React Health Luna ou Philips DreamStation 2 (a pasta P-SERIES; os arquivos são criptografados, então ele é lido pelo seu próprio OSCAR, configurado em Configurações, Fonte de dados). O cartão é reconhecido pelos arquivos, e cada noite ainda não guardada é adicionada e processada automaticamente. Um arquivo .cpapcard do CpapDash Desktop (Exportar para HMS CPAP) também ensina a estrutura do cartão a um Sleep Bridge que transmite para cá.",
       "idle": "Arraste um .zip ou .cpapcard aqui ou clique para escolher",
       "uploading": "Enviando...",
       "imported": "{{count}} noite(s) importada(s)",

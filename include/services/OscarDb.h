@@ -127,11 +127,13 @@ private:
     bool in_tx_{false};
 };
 
-/// SDD-074 seam: an OSCAR time (ms since the epoch, as OSCAR stores the card's
-/// own clock) on the clock hms-cpap groups nights by. Today the same instant,
-/// read exactly as the plain Philips card reader reads the card's timestamps,
-/// so a night groups as every other Philips night does; SDD-074's machine
-/// clock replaces this one function.
+/// An OSCAR time (ms since the epoch, a real instant) as that instant.
 std::chrono::system_clock::time_point sessionClock(long long oscar_ms);
+
+/// SDD-083 F1 (SDD-074 D4/D6): an OSCAR time on the machine's clock, the
+/// label every session is held as, as the Bluetooth and plain card readers
+/// hold a DreamStation's (putOnMachineClock). Nights split at the machine's
+/// noon. OscarDb::read returns its sessions on this clock.
+std::chrono::system_clock::time_point sessionLabel(long long oscar_ms, const std::string& device_id);
 
 }  // namespace hms_cpap::oscar

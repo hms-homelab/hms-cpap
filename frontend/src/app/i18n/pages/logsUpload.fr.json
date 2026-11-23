@@ -23,7 +23,7 @@
     "title": "Importer des données",
     "zip": {
       "heading": "Données CPAP (.zip ou .cpapcard)",
-      "hint": "Importez un zip de votre carte SD : ResMed (ses dossiers DATALOG), Sefam S.Box, Löwenstein Prisma ou BMC / React Health Luna. La carte est reconnue par ses fichiers, et chaque nuit pas encore enregistrée est ajoutée et analysée automatiquement. Un fichier .cpapcard de CpapDash Desktop (Exporter pour HMS CPAP) apprend aussi la structure de la carte à un Sleep Bridge qui transmet ici.",
+      "hint": "Importez un zip de votre carte SD : ResMed (ses dossiers DATALOG), Sefam S.Box, Löwenstein Prisma, BMC / React Health Luna ou Philips DreamStation 2 (son dossier P-SERIES ; ses fichiers sont chiffrés, elle est donc lue par votre propre OSCAR, configuré dans Paramètres, Source de données). La carte est reconnue par ses fichiers, et chaque nuit pas encore enregistrée est ajoutée et analysée automatiquement. Un fichier .cpapcard de CpapDash Desktop (Exporter pour HMS CPAP) apprend aussi la structure de la carte à un Sleep Bridge qui transmet ici.",
       "idle": "Glissez un .zip ou un .cpapcard ici ou cliquez pour choisir",
       "uploading": "Envoi en cours...",
       "imported": "{{count}} nuit(s) importée(s)",

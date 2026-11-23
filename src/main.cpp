@@ -1773,46 +1773,91 @@ int main(int argc, char** argv) {
                         // SDD-061: a .cpapcard's layout went to the Sleep Bridge
                         // when it was uploaded; it is not a file of the card.
                         hms_cpap::removeCardLayout(staging.string());
+                        // SDD-083: a DreamStation 2 card whose files are
+                        // encrypted is read by the OSCAR the user paired, the
+                        // read its card from a Sleep Bridge Lite or a folder
+                        // gets; with none paired it is refused and nothing is
+                        // kept. hms-cpap never decrypts it.
+                        if (const auto ds2 = hms_cpap::encryptedPhilipsCardIn(staging.string())) {
+                            if (!burst_service || !burst_service->oscarSourcePaired()) {
+                                fs::remove_all(staging, ec);
+                                return hms_cpap::philipsUploadRefusal(
+                                    hms_cpap::SetupService::isContainerised());
+                            }
+                            // Apart from a plain card's uploads/philips (D10).
+                            const std::string store =
+                                hms_cpap::AppConfig::dataDir() + "/uploads/philips-encrypted";
+                            std::string keep_error;
+                            const bool kept = hms_cpap::keepPhilipsUpload(*ds2, store, keep_error);
+                            fs::remove_all(staging, ec);
+                            if (!kept) {
+                                r["error"] = keep_error;
+                                return r;
+                            }
+                            std::cout << "Upload: an encrypted DreamStation 2 card, read through OSCAR"
+                                      << std::endl;
+                            const auto read = burst_service->readUploadedOscarCard(store);
+                            if (!read) return hms_cpap::philipsUploadRefusal(
+                                hms_cpap::SetupService::isContainerised());
+                            return hms_cpap::philipsUploadReply(*read, burst_service->oscarHelperPaired());
+                        }
                         // SDD-031 (#28): read the card it was given. A Sefam or
                         // Löwenstein card is kept under uploads/<format>/ (D2) and
                         // every session the database lacks is imported on the
                         // backfill worker (D3), which the upload page already polls.
-                        const auto kind = hms_cpap::classifyUploadedCard(staging.string());
+                        // SDD-083 D10: a DreamStation card whose files are plain
+                        // is read as a plain card in a folder is.
+                        const auto plain_ds = hms_cpap::plainPhilipsCardIn(staging.string());
+                        const auto kind = plain_ds ? hms_cpap::UploadedCard::Philips
+                                                   : hms_cpap::classifyUploadedCard(staging.string());
                         if (kind == hms_cpap::UploadedCard::Sefam ||
                             kind == hms_cpap::UploadedCard::Lowenstein ||
-                            kind == hms_cpap::UploadedCard::Bmc) {   // SDD-049
+                            kind == hms_cpap::UploadedCard::Bmc ||        // SDD-049
+                            kind == hms_cpap::UploadedCard::Philips) {    // SDD-083 D10
                             const std::string fmt = hms_cpap::uploadedCardName(kind);
                             const std::string store =
                                 hms_cpap::AppConfig::dataDir() + "/uploads/" + fmt;
+                            // SDD-083 D11: the nights are read BEFORE anything is
+                            // kept, so a refusal leaves the store as it was.
                             std::set<std::string> nights;
                             std::string merge_error;
-                            bool merged = false;
+                            fs::path ready = staging;   // what goes into the store
                             if (kind == hms_cpap::UploadedCard::Sefam ||
                                 kind == hms_cpap::UploadedCard::Bmc) {
                                 nights = hms_cpap::cardNights(kind, staging.string());
-                                merged = hms_cpap::mergeCardInto(staging.string(), store,
-                                                                 merge_error);
+                            } else if (kind == hms_cpap::UploadedCard::Philips) {
+                                nights = hms_cpap::cardNights(kind, *plain_ds);
                             } else {
                                 // A .pdat is opened into its own folder, never kept
                                 // as one (CardUpload.h says why); the nights are
-                                // this upload's, not the whole store's.
+                                // this upload's, not the whole store's. Opened
+                                // beside the staging, merged only once it holds one.
+                                ready = staging.string() + "_lowenstein";
                                 const auto roots = hms_cpap::prepareLowensteinUpload(
-                                    staging.string(), store, merge_error);
-                                merged = !roots.empty();
+                                    staging.string(), ready.string(), merge_error);
                                 for (const auto& root : roots)
                                     for (const auto& n : hms_cpap::cardNights(kind, root))
                                         nights.insert(n);
-                                if (!merged && merge_error.empty())
+                                if (roots.empty() && merge_error.empty())
                                     merge_error = "No Löwenstein sessions found in zip";
                             }
+                            bool merged = false;
+                            if (!nights.empty()) {
+                                merged = kind == hms_cpap::UploadedCard::Philips
+                                    ? hms_cpap::keepPhilipsUpload(*plain_ds, store, merge_error)
+                                    : hms_cpap::mergeCardInto(ready.string(), store, merge_error);
+                            }
                             fs::remove_all(staging, ec);
-                            if (!merged) {
-                                r["error"] = merge_error;
+                            if (ready != staging) fs::remove_all(ready, ec);
+                            if (nights.empty()) {
+                                r["error"] = !merge_error.empty()
+                                    ? merge_error
+                                    : "The zip looks like a " + fmt +
+                                          " card but holds no session this build can read";
                                 return r;
                             }
-                            if (nights.empty()) {
-                                r["error"] = "The zip looks like a " + fmt +
-                                             " card but holds no session this build can read";
+                            if (!merged) {
+                                r["error"] = merge_error;
                                 return r;
                             }
                             restoreUploaded(nights, r);
@@ -1839,7 +1884,8 @@ int main(int argc, char** argv) {
                         if (dates.empty()) {
                             r["error"] = "Not a card this build reads: no ResMed DATALOG "
                                          "date folders (YYYYMMDD), no Sefam S.Box sessions, "
-                                         "no Löwenstein Prisma data and no BMC card in the zip";
+                                         "no Löwenstein Prisma data, no BMC card and no "
+                                         "DreamStation card in the zip";
                             return r;
                         }
                         auto dash = [](const std::string& d) {

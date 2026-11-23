@@ -3,6 +3,7 @@
 #include "database/IDatabase.h"
 #include "parsers/CpapdashBridge.h"
 #include "services/BmcIngestion.h"
+#include "services/PhilipsCardIngestion.h"
 #include "services/PrismaIngestion.h"
 #include "services/RemovedNights.h"
 #include "services/SefamIngestion.h"
@@ -11,6 +12,9 @@
 
 #include <cpapdash/parser/SefamParser.h>
 #include <cpapdash/parser/WallClock.h>
+#ifdef CPAPDASH_WITH_PHILIPS
+#include <cpapdash/parser/PhilipsParser.h>
+#endif
 
 #include <algorithm>
 #include <cctype>
@@ -96,6 +100,7 @@ const char* uploadedCardName(UploadedCard kind) {
         case UploadedCard::Sefam:      return "sefam";
         case UploadedCard::Lowenstein: return "lowenstein";
         case UploadedCard::Bmc:        return "bmc";
+        case UploadedCard::Philips:    return "philips";
         case UploadedCard::Unknown:    break;
     }
     return "unknown";
@@ -132,6 +137,131 @@ bool mergeCardInto(const std::string& from, const std::string& to, std::string& 
         return false;
     }
     return true;
+}
+
+// ── SDD-083: a DreamStation 2 card whose files are encrypted ───────────────
+
+std::optional<std::string> encryptedPhilipsCardIn(const std::string& dir) {
+#ifdef CPAPDASH_WITH_PHILIPS
+    const auto card = PhilipsCardIngestion::findCardDir(dir, kZipDepth);
+    if (!card) return std::nullopt;
+    if (!cpapdash::parser::PhilipsParser::isEncryptedCard(*card)) return std::nullopt;
+    return card;
+#else
+    (void)dir;
+    return std::nullopt;
+#endif
+}
+
+std::optional<std::string> plainPhilipsCardIn(const std::string& dir) {
+#ifdef CPAPDASH_WITH_PHILIPS
+    const auto card = PhilipsCardIngestion::findCardDir(dir, kZipDepth);
+    if (!card) return std::nullopt;
+    if (cpapdash::parser::PhilipsParser::isEncryptedCard(*card)) return std::nullopt;
+    return card;
+#else
+    (void)dir;
+    return std::nullopt;
+#endif
+}
+
+bool keepPhilipsUpload(const std::string& card_dir, const std::string& store, std::string& error) {
+    const fs::path card(card_dir);
+    const fs::path parent = card.parent_path();
+    if (lower(parent.filename().string()) == "p-series")
+        return mergeCardInto(parent.string(), (fs::path(store) / "P-SERIES").string(), error);
+    // A zip of the machine folder alone, or of its contents.
+    std::string name = card.filename().string();
+    if (name.empty() || name.rfind("cpap_stage_", 0) == 0) name = "UPLOAD";
+    return mergeCardInto(card_dir, (fs::path(store) / "P-SERIES" / name).string(), error);
+}
+
+Json::Value philipsUploadRefusal(bool containerised) {
+    Json::Value r(Json::objectValue);
+    r["format"] = "philips";
+    r["encrypted"] = true;
+    r["oscar"] = "not_paired";
+    r["error"] = containerised
+        ? "This is a DreamStation 2 card whose files are encrypted. hms-cpap does not decrypt "
+          "them: in Docker or the Home Assistant add-on it reads them through the OSCAR helper on "
+          "a home PC that has OSCAR 2.1.1, and no helper is paired. Install hms-cpap on that PC, "
+          "choose \"Read OSCAR for hms-cpap\", let it connect here (Devices shows \"OSCAR helper\"), "
+          "then upload the card again. Nothing was kept."
+        : "This is a DreamStation 2 card whose files are encrypted. hms-cpap does not decrypt "
+          "them: it reads them through an OSCAR you install yourself, and none is set up. Install "
+          "OSCAR 2.1.1, create a profile named hms-cpap in it once, and set OSCAR up in Settings, "
+          "Data Source (\"On this computer\", or \"On a home PC\" for the OSCAR helper), then "
+          "upload the card again. Nothing was kept.";
+    return r;
+}
+
+Json::Value philipsUploadReply(const oscar::OscarCardReader::ReadResult& rr, bool helper) {
+    using oscar::Outcome;
+    Json::Value r(Json::objectValue);
+    r["format"] = "philips";
+    r["encrypted"] = true;
+    r["oscar"] = oscar::outcomeName(rr.outcome);
+    r["read_by"] = helper ? "oscar_helper" : "oscar";
+    if (!rr.version.empty()) r["oscar_version"] = rr.version;
+    // SDD-036 D2, as the other cards' replies carry it.
+    Json::Value back(Json::arrayValue);
+    for (const auto& d : rr.restored) back.append(d);
+    r["restored_nights"] = back;
+    const std::string why = rr.message.empty() ? "" : " (" + rr.message + ")";
+    switch (rr.outcome) {
+        case Outcome::Imported:
+        case Outcome::NothingNew: {
+            std::set<std::string> nights;
+            for (const auto& t : rr.landed) nights.insert(nightOf(t));
+            Json::Value arr(Json::arrayValue);
+            for (const auto& d : nights) arr.append(d);
+            r["status"] = "done";
+            r["sessions_found"] = rr.stored;
+            r["dates"] = arr;
+            r["message"] = rr.stored > 0 ? "OSCAR read the card; its new sessions are stored"
+                                         : "OSCAR read the card; every session on it was already stored";
+            return r;
+        }
+        case Outcome::NotSetUp:
+            r["error"] = "OSCAR is not set up: fill in OSCAR's program, data folder and profile in "
+                         "Settings, Data Source, then upload the card again.";
+            break;
+        case Outcome::NoProgram:
+            r["error"] = "OSCAR did not start" + why + ". Check the OSCAR program in Settings, Data Source, "
+                         "then upload the card again.";
+            break;
+        case Outcome::NotSupported:
+            r["error"] = "OSCAR's data folder is from a version hms-cpap has not been proven on" + why +
+                         "; it reads OSCAR 2.1.1. Nothing was stored.";
+            break;
+        case Outcome::NoProfile:
+            r["error"] = "OSCAR has no profile for hms-cpap" + why + ". Open OSCAR, create a profile named "
+                         "hms-cpap once, close OSCAR, then upload the card again.";
+            break;
+        case Outcome::Busy:
+            r["error"] = "The OSCAR that is open could not import the card now. Close OSCAR, then upload "
+                         "the card again.";
+            break;
+        case Outcome::Timeout:
+            r["error"] = "OSCAR did not finish reading the card in time; nothing was stored. Upload the "
+                         "card again.";
+            break;
+        case Outcome::ReadNothing:
+            r["error"] = "OSCAR read nothing from the card" + why + ".";
+            break;
+        case Outcome::HelperOffline:
+            r["error"] = "The OSCAR helper is not connected" + why + ". The card is kept; upload it "
+                         "again once the helper is connected.";
+            break;
+        case Outcome::HelperUpdate:
+            r["error"] = "The OSCAR helper runs another version of hms-cpap" + why + ". Update hms-cpap "
+                         "on that PC, then upload the card again.";
+            break;
+        case Outcome::Failed:
+            r["error"] = "OSCAR could not read the card" + why + ".";
+            break;
+    }
+    return r;
 }
 
 std::vector<std::string> prepareLowensteinUpload(const std::string& from, const std::string& to,
@@ -236,6 +366,11 @@ std::set<std::string> cardNights(UploadedCard kind, const std::string& root) {
         // is small (about 1 MB an hour), so the reply reads it.
         const auto read = BmcIngestion(root).readSessions("upload", "BMC");
         for (const auto& s : read.sessions) nights.insert(nightOf(*s->session_start));
+    } else if (kind == UploadedCard::Philips) {
+        // SDD-083 D10: as a plain card in a folder is read.
+        const auto read = PhilipsCardIngestion(root).readSessions("upload", "DreamStation");
+        for (const auto& s : read.sessions)
+            if (s.parsed && s.parsed->session_start) nights.insert(nightOf(*s.parsed->session_start));
     }
     return nights;
 }
@@ -307,6 +442,24 @@ CardImportCounts importCardSessions(IDatabase& db, UploadedCard kind, const std:
             if (isRemovedNight(removed, start)) { ++c.removed; continue; }
             if (db.sessionExists(device_id, start)) { ++c.already_stored; continue; }
             if (!save(*s, start)) ++c.refused;
+        }
+    } else if (kind == UploadedCard::Philips) {
+        // SDD-083 D10: a DreamStation card whose files are plain, read as the
+        // burst reads one in a folder (PhilipsCardIngestion).
+        const auto read = PhilipsCardIngestion(root).readSessions(device_id, device_name);
+        if (!read.ok) {
+            std::cerr << "CardUpload: " << read.error << std::endl;
+            return c;
+        }
+        c.found = static_cast<int>(read.sessions.size());
+        int done = 0;
+        for (const auto& s : read.sessions) {
+            if (progress) progress(done++, c.found);
+            if (!s.parsed || !s.parsed->session_start) { ++c.refused; continue; }
+            const auto start = *s.parsed->session_start;
+            if (isRemovedNight(removed, start)) { ++c.removed; continue; }
+            if (db.sessionExists(device_id, start)) { ++c.already_stored; continue; }
+            if (!save(*s.parsed, start)) ++c.refused;
         }
     } else {
         return c;

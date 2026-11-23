@@ -211,6 +211,9 @@ set(TEST_SOURCES
     # SDD-081: the OSCAR helper on a home PC, both ends in one process (the
     # same fake OSCAR and synthetic oscar.db, tests/services/OscarFakes.h).
     services/test_OscarHelper.cpp
+    # SDD-083: an encrypted DreamStation 2 card uploaded, read by the paired
+    # OSCAR (the same fakes; synthetic card files).
+    services/test_OscarCardUpload.cpp
     services/test_CardUpload.cpp
     services/test_CpapCard.cpp
     services/test_SefamCardMirror.cpp
