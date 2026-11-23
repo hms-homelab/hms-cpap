@@ -1,6 +1,6 @@
 <div class="sessions-page">
   <div class="sessions-head">
-    <h2>{{ 'sessions.title' | translate:{ count: sessions.length } }}</h2>
+    <h2>{{ loaded ? ('sessions.title' | translate:{ count: sessions.length }) : ('common.loading' | translate) }}</h2>
     <button class="cmp-toggle" [class.active]="compareMode" (click)="toggleCompareMode()">
       <i class="fa-solid" [class.fa-code-compare]="!compareMode" [class.fa-xmark]="compareMode"></i>
       {{ (compareMode ? 'sessions.compare.cancel' : 'sessions.compare.start') | translate }}

@@ -27,6 +27,8 @@ export class SessionsComponent implements OnInit, OnDestroy {
   readonly pageSize = 20;
   hasMore = true;
   loadingMore = false;
+  /** False until the first answer (or failure) of the list: the heading says Loading, not (0). */
+  loaded = false;
 
   // Compare-nights selection.
   compareMode = false;
@@ -101,11 +103,12 @@ export class SessionsComponent implements OnInit, OnDestroy {
     const limit = Math.max(this.pageSize, this.sessions.length);
     this.api.getSessions(limit, 0, opened).subscribe({
       next: s => {
+        this.loaded = true;
         this.sessions = s;
         this.hasMore = s.length === limit;
         this.cdr.detectChanges();
       },
-      error: e => console.error('Sessions error:', e)
+      error: e => { this.loaded = true; console.error('Sessions error:', e); }
     });
     this.loadRemovedNights();
   }
