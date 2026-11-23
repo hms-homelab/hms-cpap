@@ -119,7 +119,20 @@
       "captureFile": "Enregistrement dans {{path}} ({{size}}).",
       "captureNone": "Rien d'enregistré pour l'instant : le fichier commence avec la prochaine nuit.",
       "strictGaps": "Couper la courbe aux trous du flux",
-      "strictGapsHint": "Désactivé : les trous courts (moins d'une minute) dans le flux Bluetooth d'un AirSense 11 sont comblés et affichés à zéro. Activé : la courbe est coupée à chaque trou, rien de manquant n'est dessiné. S'applique tout de suite aux nouvelles données ; les nuits déjà enregistrées ne changent pas."
+      "strictGapsHint": "Désactivé : les trous courts (moins d'une minute) dans le flux Bluetooth d'un AirSense 11 sont comblés et affichés à zéro. Activé : la courbe est coupée à chaque trou, rien de manquant n'est dessiné. S'applique tout de suite aux nouvelles données ; les nuits déjà enregistrées ne changent pas.",
+      "pairedMachine": "Appareil appairé",
+      "pairedWith": "Numéro de série {{serial}}, adresse {{address}}",
+      "serialPending": "connu après sa première session",
+      "noPairedMachine": "Aucun appareil enregistré pour l'instant. Le premier appareil qui ouvre une session avec cet appairage est enregistré, et seul celui-ci est utilisé ensuite.",
+      "pairingLost": "L'appareil appairé ne reconnaît plus cet appairage. Il n'est plus interrogé tant que vous ne l'appairez pas de nouveau sur la page Appareils.",
+      "othersNearby": "Autres appareils ResMed détectés à proximité : {{machines}}. Seul le vôtre est utilisé.",
+      "otherRefused": "ne reconnaît pas cet appairage",
+      "pairDifferent": "Appairer un autre appareil",
+      "pairDifferentAsk": "Cela supprime l'appairage et l'appareil enregistré. Appairez ensuite le nouvel appareil sur la page Appareils.",
+      "pairDifferentYes": "Supprimer et en appairer un autre",
+      "pairDifferentNo": "Garder celui-ci",
+      "pairDifferentDone": "Supprimé. Appairez le nouvel appareil sur la page Appareils.",
+      "pairDifferentFailed": "Suppression impossible : {{error}}"
     },
     "ds2": {
       "heading": "DreamStation 2 en Bluetooth",

@@ -119,7 +119,20 @@
       "captureFile": "Grabando en {{path}} ({{size}}).",
       "captureNone": "Aún no hay nada grabado: el archivo empieza con la próxima noche.",
       "strictGaps": "Dividir la curva en los huecos del flujo",
-      "strictGapsHint": "Desactivado: los huecos cortos (menos de un minuto) en el flujo Bluetooth de un AirSense 11 se unen y se muestran como cero. Activado: la curva se divide en cada hueco, así no se dibuja nada que falte. Se aplica de inmediato a los datos nuevos; las noches ya guardadas no cambian."
+      "strictGapsHint": "Desactivado: los huecos cortos (menos de un minuto) en el flujo Bluetooth de un AirSense 11 se unen y se muestran como cero. Activado: la curva se divide en cada hueco, así no se dibuja nada que falte. Se aplica de inmediato a los datos nuevos; las noches ya guardadas no cambian.",
+      "pairedMachine": "Equipo emparejado",
+      "pairedWith": "Número de serie {{serial}}, dirección {{address}}",
+      "serialPending": "se conoce tras su primera sesión",
+      "noPairedMachine": "Aún no hay ningún equipo guardado. Se guarda el primer equipo que abra una sesión con este emparejamiento y, desde entonces, solo se usa ese.",
+      "pairingLost": "El equipo emparejado ya no reconoce este emparejamiento. No se le vuelve a preguntar hasta que lo empareje de nuevo en la página Dispositivos.",
+      "othersNearby": "Otros equipos ResMed detectados cerca: {{machines}}. Solo se usa el suyo.",
+      "otherRefused": "no reconoce este emparejamiento",
+      "pairDifferent": "Emparejar otro equipo",
+      "pairDifferentAsk": "Esto elimina el emparejamiento y el equipo guardado. Después, empareje el nuevo equipo en la página Dispositivos.",
+      "pairDifferentYes": "Eliminar y emparejar otro",
+      "pairDifferentNo": "Mantener este",
+      "pairDifferentDone": "Eliminado. Empareje el nuevo equipo en la página Dispositivos.",
+      "pairDifferentFailed": "No se pudo eliminar: {{error}}"
     },
     "ds2": {
       "heading": "DreamStation 2 por Bluetooth",

@@ -249,6 +249,11 @@ export class CpapApiService {
     return this.http.delete('/api/airsense11/ble/pairing');
   }
 
+  /** #108: "Pair a different machine": the pairing and the saved machine removed. */
+  as11ForgetMachine(): Observable<any> {
+    return this.http.delete('/api/airsense11/ble/machine');
+  }
+
   /** #67: the machine's OS object forgotten and the adapter power-cycled, now. */
   as11ResetBluetooth(): Observable<any> {
     return this.http.post('/api/airsense11/ble/reset', {});

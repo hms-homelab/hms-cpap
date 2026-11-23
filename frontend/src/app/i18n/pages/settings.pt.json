@@ -119,7 +119,20 @@
       "captureFile": "A gravar em {{path}} ({{size}}).",
       "captureNone": "Ainda nada gravado: o ficheiro começa com a próxima noite.",
       "strictGaps": "Dividir a curva nas falhas do fluxo",
-      "strictGapsHint": "Desligado: as falhas curtas (menos de um minuto) no fluxo Bluetooth de um AirSense 11 são unidas e mostradas como zero. Ligado: a curva é dividida em cada falha, para que nada em falta seja desenhado. Aplica-se de imediato aos dados novos; as noites já guardadas ficam como estão."
+      "strictGapsHint": "Desligado: as falhas curtas (menos de um minuto) no fluxo Bluetooth de um AirSense 11 são unidas e mostradas como zero. Ligado: a curva é dividida em cada falha, para que nada em falta seja desenhado. Aplica-se de imediato aos dados novos; as noites já guardadas ficam como estão.",
+      "pairedMachine": "Aparelho emparelhado",
+      "pairedWith": "Número de série {{serial}}, endereço {{address}}",
+      "serialPending": "conhecido após a primeira sessão",
+      "noPairedMachine": "Ainda não há nenhum aparelho guardado. O primeiro aparelho que abrir uma sessão com este emparelhamento é guardado e, a partir daí, só ele é usado.",
+      "pairingLost": "O aparelho emparelhado já não reconhece este emparelhamento. Não volta a ser contactado até o emparelhar de novo na página Dispositivos.",
+      "othersNearby": "Outros aparelhos ResMed detetados por perto: {{machines}}. Só o seu é usado.",
+      "otherRefused": "não reconhece este emparelhamento",
+      "pairDifferent": "Emparelhar outro aparelho",
+      "pairDifferentAsk": "Isto remove o emparelhamento e o aparelho guardado. Depois, emparelhe o novo aparelho na página Dispositivos.",
+      "pairDifferentYes": "Remover e emparelhar outro",
+      "pairDifferentNo": "Manter este",
+      "pairDifferentDone": "Removido. Emparelhe o novo aparelho na página Dispositivos.",
+      "pairDifferentFailed": "Não foi possível remover: {{error}}"
     },
     "ds2": {
       "heading": "DreamStation 2 por Bluetooth",

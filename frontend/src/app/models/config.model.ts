@@ -86,7 +86,12 @@ export interface AppConfig {
    *  is made from Settings and never lives in the config. */
   airsense11_ble: {
     enabled: boolean;
-    address: string;       // empty: the first AirSense 11 the scan finds
+    /** #108: the paired machine, set by hand or saved by hms-cpap after the
+     *  pairing; only it is connected to. Empty: the first AirSense 11 the
+     *  scan finds. Settings never sends it back (save() drops it), so a page
+     *  opened before the machine was saved cannot blank it. */
+    address: string;
+    paired_serial?: string;  // #108: saved from the machine's first session
     capture?: boolean;     // SDD-071: record each night as the machine sends it
     /** PR #106: split the streamed waveform at every gap instead of joining
      *  gaps under 60 s with zeros. Every AirSense 11 stream, this host's
@@ -170,4 +175,30 @@ export interface DiscoveredDevice {
   mode: string;           // 'proxy' (serves /dir + /download) or 'cloud'
   local_capable: boolean; // only a proxy-mode unit can feed a local install
   base_url: string;       // what gets written into config.ezshare_url
+}
+
+/** #108: GET /api/airsense11/ble/status, the parts Settings reads. */
+export interface As11BleStatus {
+  paired?: boolean;
+  capture?: { enabled: boolean; path: string; bytes: number };
+  /** The machine the pairing belongs to; null until one is known. */
+  paired_machine?: { address: string; serial: string } | null;
+  /** The saved machine said it no longer knows this pairing. */
+  pairing_lost?: boolean;
+  /** Other ResMed machines seen nearby, never connected to. `refused`: it
+   *  was asked once and does not know this pairing. */
+  others_nearby?: { name: string; address: string; last_seen: number; refused: boolean }[];
+  [key: string]: any;
+}
+
+/** #108: the config as Settings saves it: without the paired AirSense 11
+ *  (address, serial), which hms-cpap saves itself after the pairing. A page
+ *  opened before that would otherwise send the old blank address back. */
+export function withoutAs11Machine(cfg: AppConfig): AppConfig {
+  const out: AppConfig = JSON.parse(JSON.stringify(cfg));
+  if (out.airsense11_ble) {
+    delete (out.airsense11_ble as Partial<AppConfig['airsense11_ble']>).address;
+    delete out.airsense11_ble.paired_serial;
+  }
+  return out;
 }

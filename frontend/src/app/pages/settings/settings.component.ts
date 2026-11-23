@@ -12,7 +12,7 @@ import { usageTargetHoursOf } from '../dashboard/card-data';
 import { BridgeSourceComponent } from '../../components/bridge-source/bridge-source.component';
 import { bridgeInUse } from '../../components/bridge-source/bridge-source-model';
 import { UpdateFlowService } from '../../services/update-flow.service';
-import { AppConfig } from '../../models/config.model';
+import { AppConfig, As11BleStatus, withoutAs11Machine } from '../../models/config.model';
 import { sourceImage } from '../../utils/source-image';
 import { showLocalModelSection } from './local-model';
 
@@ -379,6 +379,37 @@ import { showLocalModelSection } from './local-model';
             </label>
             <p class="devices-link" *ngIf="config.airsense11_ble.enabled">
               <a routerLink="/devices">{{ 'settings.devicesLink' | translate }}</a>
+            </p>
+            <!-- #108: the machine the pairing belongs to (only it is used),
+                 its pairing lost, and other ResMed machines in range. -->
+            <ng-container *ngIf="config.airsense11_ble.enabled && as11Status?.paired">
+              <div class="as11-machine">
+                <span class="as11-machine-label">{{ 'settings.as11.pairedMachine' | translate }}</span>
+                <span class="mono" *ngIf="as11Status!.paired_machine as pm">
+                  {{ 'settings.as11.pairedWith' | translate: { serial: pm.serial || ('settings.as11.serialPending' | translate), address: pm.address } }}
+                </span>
+                <span class="hint" *ngIf="!as11Status!.paired_machine">{{ 'settings.as11.noPairedMachine' | translate }}</span>
+              </div>
+              <p class="as11-warning" role="status" *ngIf="as11Status!.pairing_lost">
+                {{ 'settings.as11.pairingLost' | translate }}
+              </p>
+              <p class="as11-warning" role="status" *ngIf="as11Status!.others_nearby?.length">
+                {{ 'settings.as11.othersNearby' | translate: { machines: othersNearbyText() } }}
+              </p>
+              <div class="as11-different" *ngIf="as11Status!.paired_machine">
+                <button type="button" class="btn btn-secondary" *ngIf="!askPairDifferent"
+                        (click)="askPairDifferent = true; as11Note = ''">{{ 'settings.as11.pairDifferent' | translate }}</button>
+                <div class="as11-ask" role="status" *ngIf="askPairDifferent">
+                  <span>{{ 'settings.as11.pairDifferentAsk' | translate }}</span>
+                  <button type="button" class="btn btn-primary" [disabled]="forgettingMachine"
+                          (click)="pairDifferent()">{{ 'settings.as11.pairDifferentYes' | translate }}</button>
+                  <button type="button" class="btn btn-secondary"
+                          (click)="askPairDifferent = false">{{ 'settings.as11.pairDifferentNo' | translate }}</button>
+                </div>
+              </div>
+            </ng-container>
+            <p class="hint" *ngIf="as11Note" [class.as11-warning]="as11NoteErr">
+              {{ as11Note }} <a routerLink="/devices" *ngIf="!as11NoteErr">{{ 'settings.devicesLink' | translate }}</a>
             </p>
             <!-- SDD-071: record each night as the machine sends it, to send us. -->
             <ng-container *ngIf="config.airsense11_ble.enabled">
@@ -1306,6 +1337,7 @@ import { showLocalModelSection } from './local-model';
       <div class="toast" *ngIf="toast" [class.toast-error]="toastError">{{ toast }}</div>
     </div>
   `,
+  styleUrls: ['./settings-as11.css'],
   styles: [`
     .settings { padding: 1.5rem; max-width: 720px; }
     h2 { color: #e0e0e0; margin-bottom: 1.25rem; }
@@ -1601,8 +1633,45 @@ export class SettingsComponent implements OnInit, OnDestroy {
 
   loadCaptureStatus(): void {
     this.api.getAs11BleStatus().subscribe({
-      next: (s) => { this.captureFile = s.capture ?? null; },
-      error: () => { this.captureFile = null; },
+      next: (s) => { this.captureFile = s.capture ?? null; this.as11Status = s; },
+      error: () => { this.captureFile = null; this.as11Status = null; },
+    });
+  }
+
+  // #108: the paired machine and the other ResMed machines seen nearby, from
+  // the same status read (page open, section opened, after a save).
+  as11Status: As11BleStatus | null = null;
+  askPairDifferent = false;
+  forgettingMachine = false;
+  as11Note = '';
+  as11NoteErr = false;
+
+  /** "ResMed 123418 (does not know this pairing), ResMed 777001". */
+  othersNearbyText(): string {
+    const refused = this.t.instant('settings.as11.otherRefused');
+    return (this.as11Status?.others_nearby ?? [])
+      .map((o) => (o.refused ? `${o.name} (${refused})` : o.name))
+      .join(', ');
+  }
+
+  /** #108: the pairing and the saved machine removed; the new one is paired on the Devices page. */
+  pairDifferent(): void {
+    if (this.forgettingMachine) return;
+    this.forgettingMachine = true;
+    this.api.as11ForgetMachine().subscribe({
+      next: () => {
+        this.forgettingMachine = false;
+        this.askPairDifferent = false;
+        this.as11Note = this.t.instant('settings.as11.pairDifferentDone');
+        this.as11NoteErr = false;
+        this.loadCaptureStatus();
+      },
+      error: (e) => {
+        this.forgettingMachine = false;
+        this.askPairDifferent = false;
+        this.as11Note = this.t.instant('settings.as11.pairDifferentFailed', { error: e?.error?.error ?? e?.message ?? '' });
+        this.as11NoteErr = true;
+      },
     });
   }
 
@@ -1973,7 +2042,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
     if (!this.config || this.saving) return;
     this.saving = true;
     const submitted: AppConfig = JSON.parse(JSON.stringify(this.config));
-    this.api.updateConfig(this.config).subscribe({
+    this.api.updateConfig(withoutAs11Machine(this.config)).subscribe({
       next: () => {
         this.saving = false;
         this.showToast(this.t.instant('settings.actions.saved'), false);

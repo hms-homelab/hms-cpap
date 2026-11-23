@@ -119,7 +119,20 @@
       "captureFile": "Rögzítés ide: {{path}} ({{size}}).",
       "captureNone": "Még nincs rögzítve semmi: a fájl a következő éjszakával kezdődik.",
       "strictGaps": "A görbe szétvágása az adatfolyam kimaradásainál",
-      "strictGapsHint": "Kikapcsolva: az AirSense 11 Bluetooth-adatfolyamának rövid (egy percnél rövidebb) kimaradásai összevonva, nullaként jelennek meg. Bekapcsolva: a görbe minden kimaradásnál megszakad, így semmi hiányzó nem lesz kirajzolva. Az új adatokra azonnal érvényes; a már mentett éjszakák nem változnak."
+      "strictGapsHint": "Kikapcsolva: az AirSense 11 Bluetooth-adatfolyamának rövid (egy percnél rövidebb) kimaradásai összevonva, nullaként jelennek meg. Bekapcsolva: a görbe minden kimaradásnál megszakad, így semmi hiányzó nem lesz kirajzolva. Az új adatokra azonnal érvényes; a már mentett éjszakák nem változnak.",
+      "pairedMachine": "Párosított készülék",
+      "pairedWith": "Sorozatszám: {{serial}}, cím: {{address}}",
+      "serialPending": "az első munkamenet után ismert",
+      "noPairedMachine": "Még nincs mentett készülék. Az első készülék mentésre kerül, amely ezzel a párosítással munkamenetet nyit, és ettől kezdve csak az lesz használva.",
+      "pairingLost": "A párosított készülék már nem ismeri ezt a párosítást. Nem lesz újra megkeresve, amíg újra nem párosítja a Készülékek oldalon.",
+      "othersNearby": "A közelben látott más ResMed készülékek: {{machines}}. Csak az Öné van használatban.",
+      "otherRefused": "nem ismeri ezt a párosítást",
+      "pairDifferent": "Másik készülék párosítása",
+      "pairDifferentAsk": "Ez törli a párosítást és a mentett készüléket. Utána párosítsa az új készüléket a Készülékek oldalon.",
+      "pairDifferentYes": "Törlés és másik párosítása",
+      "pairDifferentNo": "Ez maradjon",
+      "pairDifferentDone": "Törölve. Párosítsa az új készüléket a Készülékek oldalon.",
+      "pairDifferentFailed": "Nem sikerült törölni: {{error}}"
     },
     "ds2": {
       "heading": "DreamStation 2 Bluetooth-on",

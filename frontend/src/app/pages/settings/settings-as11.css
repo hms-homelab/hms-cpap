@@ -1,0 +1,14 @@
+/* #108: the paired AirSense 11, its pairing lost, and other ResMed machines
+   in range. Its own file so the component's inline styles stay inside the
+   per-stylesheet budget. */
+.as11-machine { display: flex; flex-wrap: wrap; gap: .25rem .6rem; align-items: baseline;
+                margin: .3rem 0 .6rem; font-size: .88rem; }
+.as11-machine-label { color: #9e9e9e; }
+.as11-machine .mono { font-family: ui-monospace, Menlo, Consolas, monospace; color: #e0e0e0;
+                      overflow-wrap: anywhere; }
+.as11-warning { border: 1px solid rgba(251, 191, 36, 0.4); background: rgba(251, 191, 36, 0.08);
+                color: #fde68a; border-radius: 6px; padding: .45rem .65rem; margin: 0 0 .6rem;
+                font-size: .85rem; overflow-wrap: anywhere; }
+.as11-different { margin: 0 0 .8rem; }
+.as11-ask { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; font-size: .85rem; }
+.as11-ask span { flex: 1 1 100%; }
