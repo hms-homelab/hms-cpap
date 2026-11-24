@@ -525,6 +525,11 @@ void As11NightWriter::writeSegment(const std::string& serial, const Segment& seg
     // samples stay at their time. Each block is laid at its own time to the
     // nearest sample: a gap of 39 ms is one sample, not none, and what a
     // block's offset rounds to never carries into the next block.
+    // The machine stamps its seconds about 1000 ms apart, a few ms either
+    // way, so against this grid a block can sit anywhere within half a
+    // sample and, at exactly half, round the other way every second: a real
+    // sample dropped, then a 0 one invented. A block within three quarters
+    // of a sample of its place is laid there, not moved.
     StreamedBRP brp;
     brp.start = wc;
     brp.serial = srn;
@@ -536,12 +541,13 @@ void As11NightWriter::writeSegment(const std::string& serial, const Segment& seg
         const int iv = b.interval_ms > 0 ? b.interval_ms : as11::kIntervalMs;
         const int64_t delta = b.start_ms - cursor;
         size_t skip = 0;
-        if (delta > 0) {
+        const int64_t slack = iv * 3 / 4;
+        if (delta > slack) {
             const size_t gap = static_cast<size_t>((delta + iv / 2) / iv);
             brp.flow_lpm.insert(brp.flow_lpm.end(), gap, 0.0);
             brp.press_cmh2o.insert(brp.press_cmh2o.end(), gap, 0.0);
             cursor += static_cast<int64_t>(gap) * iv;
-        } else if (delta < 0) {
+        } else if (delta < -slack) {
             // Samples before the cursor overlap what is already laid: skipped.
             skip = static_cast<size_t>((-delta + iv / 2) / iv);
         }
