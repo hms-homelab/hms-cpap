@@ -1,4 +1,5 @@
 #include "services/DataPublisherService.h"
+#include "mqtt/DisplayPrecision.h"
 #include "utils/OximetryDevice.h"
 #include "utils/MachineClocks.h"
 #include "utils/TimeCompat.h"
@@ -157,6 +158,7 @@ bool DataPublisherService::publishRealtimeDiscovery() {
         if (!sensor.unit.empty()) {
             config["unit_of_measurement"] = sensor.unit;
         }
+        addDisplayHints(config, sensor.name, sensor.unit, sensor.device_class);
         if (!sensor.device_class.empty()) {
             config["device_class"] = sensor.device_class;
         }
@@ -298,6 +300,7 @@ bool DataPublisherService::publishHistoricalDiscovery() {
         if (!sensor.unit.empty()) {
             config["unit_of_measurement"] = sensor.unit;
         }
+        addDisplayHints(config, sensor.name, sensor.unit, sensor.device_class);
         if (!sensor.device_class.empty()) {
             config["device_class"] = sensor.device_class;
         }
@@ -384,6 +387,7 @@ bool DataPublisherService::publishBilevelDiscovery() {
         config["unique_id"] = device_id_ + "_" + d.prefix + d.name;
         config["state_topic"] = "cpap/" + device_id_ + "/" + d.ns + "/" + d.name;
         config["unit_of_measurement"] = d.unit;
+        addDisplayHints(config, d.name, d.unit, "");
         config["icon"] = d.icon;
         config["state_class"] = "measurement";
         Json::CharReaderBuilder rb;
@@ -834,6 +838,7 @@ bool DataPublisherService::publishSTRDiscovery() {
 
         if (!sensor.unit.empty())
             config["unit_of_measurement"] = sensor.unit;
+        addDisplayHints(config, sensor.name, sensor.unit, sensor.device_class);
         if (!sensor.device_class.empty())
             config["device_class"] = sensor.device_class;
         if (!sensor.icon.empty())
@@ -1224,6 +1229,7 @@ bool DataPublisherService::publishOximetryDiscovery() {
         config["unique_id"] = object_id;
         config["state_topic"] = state_topic;
         if (!sensor.unit.empty()) config["unit_of_measurement"] = sensor.unit;
+        addDisplayHints(config, sensor.name, sensor.unit, "");
         config["icon"] = sensor.icon;
 
         Json::CharReaderBuilder reader_builder;
