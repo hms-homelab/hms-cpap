@@ -303,6 +303,9 @@ Json::Value QueryService::getSessions(int limit, int offset) {
     // wrong").
     const std::string night_minutes = "SUM(s.duration_seconds) / 60.0";
 
+    // oximetry_samples.valid: 1 on SQLite, a boolean on the others.
+    const std::string valid = std::string("x.valid = ") + (dt_ == DbType::SQLITE ? "1" : "true");
+
     std::string cpap_arm =
         "SELECT " + sql::sleepDay("MIN(s.session_start)", dt_) + " as sleep_day,"
         " MIN(s.session_start) as session_start,"
@@ -330,18 +333,54 @@ Json::Value QueryService::getSessions(int limit, int offset) {
         " SUM(COALESCE(m.reras, 0)) as reras,"
         // SDD-033: weighted by duration, like the index above. A plain mean
         // let a three-minute session count as much as a seven-hour one.
+        // The machine's own figure when it has one (a machine with an oximeter
+        // port); otherwise the ring's for that night (ox.*, below). The ring's
+        // is read here, in the one query, so the page need not ask for each
+        // night's oximetry to fill these two columns.
         " " + sql::round(
             "COALESCE(SUM(CASE WHEN m.avg_spo2 > 0 THEN m.avg_spo2 * s.duration_seconds END)"
             " / NULLIF(SUM(CASE WHEN m.avg_spo2 > 0 THEN s.duration_seconds END), 0),"
-            " AVG(NULLIF(m.avg_spo2, 0)))", 1, dt_) + " as avg_spo2,"
+            " AVG(NULLIF(m.avg_spo2, 0)), MAX(ox.spo2))", 1, dt_) + " as avg_spo2,"
         " " + sql::round(
             "COALESCE(SUM(CASE WHEN m.avg_heart_rate > 0 THEN m.avg_heart_rate * s.duration_seconds END)"
             " / NULLIF(SUM(CASE WHEN m.avg_heart_rate > 0 THEN s.duration_seconds END), 0),"
-            " AVG(NULLIF(m.avg_heart_rate, 0)))", 0, dt_) + " as avg_heart_rate,"
+            " AVG(NULLIF(m.avg_heart_rate, 0)), MAX(ox.hr))", 0, dt_) + " as avg_heart_rate,"
         " SUM(CASE WHEN s.session_end IS NULL THEN 1 ELSE 0 END) as has_live,"
         " 0 as oximetry_only"
         " FROM cpap_sessions s"
         " LEFT JOIN cpap_session_metrics m ON m.session_id = s.id"
+        // The ring's night, one row per sleep day: its sessions' averages
+        // weighted by their length (as the machine's are above), a live
+        // stand-in left out beside the ring's own file. A session with no
+        // stored average (the bridge's live stand-in, until the ring's own
+        // file lands) is read from its samples. One row per day, so the join
+        // repeats it for each of the night's sessions and the MAX above reads
+        // it back unchanged.
+        " LEFT JOIN (SELECT " + sql::sleepDay("t.start_time", dt_) + " as ox_day,"
+        " SUM(CASE WHEN t.sp > 0 THEN t.sp * t.dur END)"
+        " / NULLIF(SUM(CASE WHEN t.sp > 0 THEN t.dur END), 0) as spo2,"
+        " SUM(CASE WHEN t.hr > 0 THEN t.hr * t.dur END)"
+        " / NULLIF(SUM(CASE WHEN t.hr > 0 THEN t.dur END), 0) as hr"
+        " FROM (SELECT o.start_time as start_time, o.duration_seconds as dur,"
+        " COALESCE(NULLIF(o.avg_spo2, 0), smp.sp) as sp,"
+        " COALESCE(NULLIF(o.avg_hr, 0), smp.hr) as hr"
+        " FROM oximetry_sessions o"
+        // The samples are read once, for the live stand-ins that have no stored
+        // average, and not by a subquery per session: a correlated subquery over
+        // this table (a million rows) makes PostgreSQL cost the whole statement
+        // at millions, and it spends two seconds compiling it (JIT) for a query
+        // that runs in milliseconds.
+        " LEFT JOIN (SELECT x.oximetry_session_id as sid,"
+        " AVG(CASE WHEN x.spo2 > 0 AND x.spo2 < 255 THEN x.spo2 END) as sp,"
+        " AVG(CASE WHEN x.heart_rate > 20 AND x.heart_rate < 250 THEN x.heart_rate END) as hr"
+        " FROM oximetry_samples x"
+        " WHERE " + valid + " AND x.oximetry_session_id IN ("
+        "SELECT l.id FROM oximetry_sessions l WHERE SUBSTR(l.filename, 1, 5) = 'live_'"
+        " AND (l.avg_spo2 IS NULL OR l.avg_spo2 = 0))"
+        " GROUP BY x.oximetry_session_id) smp ON smp.sid = o.id"
+        " WHERE " + sql::oxiNotSuperseded("o", dt_) + ") t"
+        " GROUP BY " + sql::sleepDay("t.start_time", dt_) + ") ox"
+        " ON ox.ox_day = " + sql::sleepDay("s.session_start", dt_) +
         " WHERE s.device_id = " + sql::param(1, dt_) +
         " GROUP BY " + sql::sleepDay("s.session_start", dt_);
 

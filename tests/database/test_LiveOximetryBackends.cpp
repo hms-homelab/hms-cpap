@@ -44,7 +44,9 @@
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
+#include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #ifndef _WIN32
 #include <unistd.h>
@@ -188,12 +190,12 @@ protected:
         const auto p1 = sql::param(1, db_->dbType());
         const auto p2 = sql::param(2, db_->dbType());
         const std::string which =
-            "(device_id = " + p1 + " AND filename LIKE 'live_2099%') OR filename = " + p2;
+            "(device_id = " + p1 + " AND filename LIKE 'live_2099%') OR filename LIKE " + p2;
         db_->executeQuery("DELETE FROM oximetry_samples WHERE oximetry_session_id IN "
                           "(SELECT id FROM oximetry_sessions WHERE " + which + ")",
-                          {kOximetryDeviceId, file_});
+                          {kOximetryDeviceId, file_ + "%"});
         db_->executeQuery("DELETE FROM oximetry_sessions WHERE " + which,
-                          {kOximetryDeviceId, file_});
+                          {kOximetryDeviceId, file_ + "%"});
     }
 
     bool live(std::chrono::system_clock::time_point at, int spo2 = 91) {
@@ -359,6 +361,96 @@ TEST_P(LiveOximetryBackendTest, TheSessionsListCountsTheRingFileOnce) {
             << eng() << ": the live stand-in's hour was added to the night";
     }
     EXPECT_TRUE(found) << eng() << ": the oximetry-only night is missing from the list";
+}
+
+TEST_P(LiveOximetryBackendTest, TheSessionsListReadsTheRingsFiguresForNightsTheMachineHasNone) {
+    // A machine with no oximeter stores no SpO2 or heart rate, so the list
+    // reads the ring's for that night in the same query (the page used to ask
+    // for each night's oximetry, and stopped at the newest seven).
+    const std::string cpap_dev = "o2list-cpap-" + std::to_string(::getpid());
+    const auto clear_cpap = [&] {
+        const auto p = sql::param(1, db_->dbType());
+        db_->executeQuery("DELETE FROM cpap_session_metrics WHERE session_id IN ("
+                          "SELECT id FROM cpap_sessions WHERE device_id = " + p + ")", {cpap_dev});
+        db_->executeQuery("DELETE FROM cpap_sessions WHERE device_id = " + p, {cpap_dev});
+    };
+    clear_cpap();
+    struct Guard {
+        std::function<void()> f;
+        ~Guard() { f(); }
+    } guard{clear_cpap};
+
+    const auto night = [&](int mo, int d, std::optional<double> spo2, std::optional<int> hr) {
+        CPAPSession c;
+        c.device_id = cpap_dev;
+        const auto start = ring(2099, mo, d, 22, 0);
+        c.session_start = start;
+        c.session_end = start + std::chrono::hours(7);
+        c.duration_seconds = 7 * 3600;
+        c.status = CPAPSession::Status::COMPLETED;
+        SessionMetrics m;
+        m.ahi = 1.0;
+        m.avg_spo2 = spo2;
+        m.avg_heart_rate = hr;
+        c.metrics = m;
+        return db_->saveSession(c);
+    };
+    const auto file = [&](const std::string& name, std::chrono::system_clock::time_point at, int n,
+                          double spo2, double hr) {
+        auto f = ringFile(name, at, n);
+        f.metrics.avg_spo2 = spo2;
+        f.metrics.avg_hr = hr;
+        return db_->saveOximetrySession(kOximetryDeviceId, f);
+    };
+
+    // Night A: no machine figures; the ring wore two stretches the same sleep
+    // day, 396 s at 96 % / 60 and 96 s at 90 % / 70.
+    ASSERT_TRUE(night(3, 1, std::nullopt, std::nullopt)) << eng();
+    ASSERT_TRUE(file(file_, ring(2099, 3, 1, 22, 50), 100, 96, 60)) << eng();
+    ASSERT_TRUE(file(file_ + "2", ring(2099, 3, 2, 3, 0), 25, 90, 70)) << eng();
+    // Night B: the machine has its own figures; the ring's do not replace them.
+    ASSERT_TRUE(night(3, 10, 88.0, 55)) << eng();
+    ASSERT_TRUE(file(file_ + "3", ring(2099, 3, 10, 22, 50), 100, 96, 60)) << eng();
+    // Night C: neither the machine nor the ring has any.
+    ASSERT_TRUE(night(3, 20, std::nullopt, std::nullopt)) << eng();
+    // Night D: only the bridge's live stand-in so far (no stored average, the
+    // ring's file has not landed): read from its samples, as the page did.
+    ASSERT_TRUE(night(3, 25, std::nullopt, std::nullopt)) << eng();
+    ASSERT_TRUE(live(ring(2099, 3, 26, 6, 0), 91)) << eng();
+    ASSERT_TRUE(live(ring(2099, 3, 26, 6, 1), 91)) << eng();
+
+    QueryService qs(db_, cpap_dev);
+    const auto rows = qs.getSessions(200, 0);
+    ASSERT_TRUE(rows.isArray()) << eng();
+    const auto find = [&](const std::string& day) -> Json::Value {
+        for (const auto& r : rows)
+            if (r["sleep_day"].asString().rfind(day, 0) == 0 && r["oximetry_only"].asString() != "1") return r;
+        return Json::Value();
+    };
+    const auto num = [](const Json::Value& v) {
+        return v.isString() ? std::stod(v.asString()) : v.asDouble();
+    };
+
+    const auto a = find("2099-03-01");
+    ASSERT_TRUE(a.isObject()) << eng() << ": night A is missing from the list";
+    EXPECT_NEAR(num(a["avg_spo2"]), 94.8, 0.05) << eng() << ": weighted by each stretch's length";
+    EXPECT_NEAR(num(a["avg_heart_rate"]), 62.0, 0.5) << eng();
+    EXPECT_EQ(asNum(a["total_events"]), 0) << eng() << ": the ring join repeated the night's rows";
+
+    const auto b = find("2099-03-10");
+    ASSERT_TRUE(b.isObject()) << eng();
+    EXPECT_NEAR(num(b["avg_spo2"]), 88.0, 0.05) << eng() << ": the machine's figure wins";
+    EXPECT_NEAR(num(b["avg_heart_rate"]), 55.0, 0.5) << eng();
+
+    const auto c = find("2099-03-20");
+    ASSERT_TRUE(c.isObject()) << eng();
+    EXPECT_TRUE(c["avg_spo2"].isNull()) << eng() << ": no figure is not a figure of zero";
+    EXPECT_TRUE(c["avg_heart_rate"].isNull()) << eng();
+
+    const auto d = find("2099-03-25");
+    ASSERT_TRUE(d.isObject()) << eng();
+    EXPECT_NEAR(num(d["avg_spo2"]), 91.0, 0.05) << eng() << ": a live-only night reads its samples";
+    EXPECT_NEAR(num(d["avg_heart_rate"]), 70.0, 0.5) << eng();
 }
 
 INSTANTIATE_TEST_SUITE_P(
