@@ -113,6 +113,9 @@ public:
     struct LiveHooks {
         std::function<void(const std::string& serial, bool on)>                  therapy;
         std::function<void(const std::string& serial, const as11::RespEvent& e)> event;
+        /// Each one-second block, for the live figures. Runs on the
+        /// stream's thread, so it must be quick.
+        std::function<void(const as11::StreamBlock& b)>                          block;
     };
     void setLiveHooks(LiveHooks hooks) { live_ = std::move(hooks); }
 

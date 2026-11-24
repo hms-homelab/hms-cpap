@@ -650,6 +650,37 @@ TEST(LiveSources, TheTherapySensorStartsOffAndKeepsAMachineFoundMidNight) {
     EXPECT_EQ(lastTherapy(), "ON");
 }
 
+// The live AHI is events over the hours the blocks have covered. A night that
+// is never told its blocks has no hours, and one event reads as 12.0/h (the
+// five-minute floor), which is what a Bluetooth night showed before.
+TEST(LiveSources, TheLiveAhiIsCountedOverTheHoursTheBlocksCover) {
+    Recorder rec;
+    auto lastOf = [&](const std::string& leaf) {
+        std::string v;
+        for (const auto& s : rec.out)
+            if (s.topic == "cpap/cpap_test/live/" + leaf) v = s.payload;
+        return v;
+    };
+    LivePublisher p(rec.publish(), "cpap_test", "Test CPAP");
+    const std::string unit = "23000000001";
+    hms_cpap::as11::RespEvent e;
+    e.event = "HypopneaEnd";
+    e.reportTime = "2026-11-05T04:25:16.000Z";
+    e.durationSeconds = 12;
+    e.backdateSeconds = 12;
+
+    p.therapy(unit, unit, true);
+    p.event(unit, unit, e);
+    EXPECT_EQ(lastOf("ahi"), "12.0") << "no blocks yet: counted over the five-minute floor";
+
+    p.therapy(unit, unit, false);
+    p.therapy(unit, unit, true);
+    p.block(unit, kT0 * 1000, kT0 * 1000 + 1000);
+    p.block(unit, kT0 * 1000 + 8 * 3600 * 1000 - 1000, kT0 * 1000 + 8 * 3600 * 1000);   // eight hours on
+    p.event(unit, unit, e);
+    EXPECT_EQ(lastOf("ahi"), "0.1") << "one event over eight hours (0.125)";
+}
+
 // The AirSense 11 over this computer's Bluetooth: no live/* topics of its own,
 // the shared ones only.
 TEST(LiveSources, As11BluetoothOnAtTheStreamOffAtItsEndAndEventsWithTheirMoment) {

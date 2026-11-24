@@ -1136,6 +1136,11 @@ void BurstCollectorService::initAirSense11() {
             [this](const std::string& serial, const as11::RespEvent& e) {
                 if (auto p = as11Live()) p->event(serial, serial, e);
             },
+            // Where the night stands on the machine's clock: the live AHI is
+            // events over the hours so far, and without this it has none.
+            [this](const as11::StreamBlock& b) {
+                if (auto p = as11Live()) p->block(b.serial, b.start_ms, b.endMs());
+            },
         });
         client->startNightLoop(as11_night_writer_, [this] { as11_summary_due_ = true; });
         airsense11_pull_ = std::make_unique<AirSense11Pull>(client, db_service_, device_id_,
