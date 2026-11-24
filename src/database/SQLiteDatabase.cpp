@@ -3653,7 +3653,7 @@ IDatabase::OxiSummary SQLiteDatabase::getOximetrySummary(
     const char* sql = R"(
         SELECT avg_spo2, min_spo2, spo2_baseline, odi_3pct,
                time_below_90, time_below_88, avg_hr, min_hr, max_hr,
-               valid_samples, duration_seconds
+               valid_samples, duration_seconds, desat_count
         FROM oximetry_sessions
         WHERE device_id = ?
           AND (cpap_session_date = ? OR cpap_session_date = ?)
@@ -3681,6 +3681,7 @@ IDatabase::OxiSummary SQLiteDatabase::getOximetrySummary(
         s.max_hr           = col_int(g.stmt, 8);
         s.valid_samples    = col_int(g.stmt, 9);
         s.duration_seconds = col_int(g.stmt, 10);
+        s.desat_count      = col_int(g.stmt, 11);
     }
 
     return s;

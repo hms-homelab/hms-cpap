@@ -1300,12 +1300,12 @@ void DataPublisherService::publishOximetrySummary(const std::string& sleep_date_
                           std::to_string(static_cast<int>(std::round(oxi.avg_hr))), 1, true);
 
     // The night's ODI (the longest ring session's, as the summary reads it) and
-    // its desaturation count. The count is not in the summary; the ODI is
-    // desaturations per hour of that session, so the count is read back from it.
+    // its desaturation count as stored. The count is not read back from the ODI:
+    // the ODI is per hour of VALID samples, so with finger-off time the ODI times
+    // the session's length overstates it.
     if (oxi.duration_seconds > 0) {
         mqtt_client_->publish(prefix + "odi", odiText(oxi.odi_3pct), 1, true);
-        mqtt_client_->publish(prefix + "desat_count",
-                              std::to_string(desatCountOf(oxi.odi_3pct, oxi.duration_seconds)), 1, true);
+        mqtt_client_->publish(prefix + "desat_count", std::to_string(oxi.desat_count), 1, true);
     }
 
     std::cout << "MQTT: O2Ring summary published (avg_spo2=" << oxi.avg_spo2
