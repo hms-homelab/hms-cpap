@@ -45,8 +45,8 @@ and shows you the data. It is a fully local-first experience.
 |---|---|---|---|---|---|---|
 | ResMed AirSense 10 | ✅ after the night | ✅ live | ❌ | ❌ | ✅ live | ✅ live |
 | ResMed AirSense 11 | ✅ after the night | ✅ live | ✅ live | ✅ live | ✅ live | Not tested yet |
-| ResMed AirCurve 10 | ✅ after the night | Not tested yet | ❌ | ❌ | ✅ live | ✅ live |
-| ResMed AirCurve 11 | ✅ after the night | Not tested yet | ✅ live | ✅ live | ✅ live | Not tested yet |
+| ResMed AirCurve 10 | ✅ after the night | ✅ live | ❌ | ❌ | ✅ live | ✅ live |
+| ResMed AirCurve 11 | ✅ after the night | ✅ live | ✅ live | ✅ live | ✅ live | Not tested yet |
 | Philips DreamStation 2 | ✅ after the night, through OSCAR | ✅ live, through OSCAR | ✅ after the night | ✅ after the night | ❌ | ❌ |
 | BMC / React Health Luna | ✅ after the night | ✅ live | ❌ | ❌ | ✅ after the night | ❌ |
 | Löwenstein Prisma Line, Prisma Smart | ✅ after the night | ❌ | ❌ | ❌ | ❌ | ❌ |
@@ -192,9 +192,8 @@ the card's files from what it streams into a folder it reads like any card.
 The device and what it does are introduced in
 [Introducing Sleep Bridge Lite](https://www.cpapdash.com/blog/introducing-sleep-bridge-lite).
 
-Supported today: ResMed AirSense 10 and 11, and the BMC Luna G3, live. The
-AirCurve 10 and 11 write the same card as an AirSense, but the Lite has not
-been tested on one yet. A Philips DreamStation 2 encrypts its card, so on a
+Supported today: ResMed AirSense 10 and 11, AirCurve 10 and 11, and the BMC
+Luna G3, live. A Philips DreamStation 2 encrypts its card, so on a
 Sleep Bridge Lite it is read through the OSCAR you install yourself, live
 once OSCAR is paired; it is also read over Bluetooth (2 and 3 below).
 The brand work happens once, in the bridge, and hms-cpap
