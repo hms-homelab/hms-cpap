@@ -5,7 +5,26 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [7.1.1] - 2026-11-23
+## [7.1.2] - 2026-11-24
+
+### Fixed
+- **The CpapDash stream sends your machine's card and nothing else.** With
+  the stream on, 7.1.1 walked the archive folder as a card root even when the
+  source was a local folder, and sent every file at its root. An archive
+  holding a 190 MB `Archive.zip` ran a 2 GB Home Assistant box out of memory
+  (the add-on was killed twice), and a previous machine's files lying there
+  (a Luna's) went to CpapDash as the current machine's. Now:
+  - Only the configured source's card is read: the archive for ez Share and
+    FlashAir, the local folder for a local source, never both. The Bluetooth,
+    Sleep Bridge and oximetry folders are unchanged. A folder no longer
+    configured (after a source switch) is not read either.
+  - Only the files of that card's layout are sent: for ResMed `STR.edf`,
+    `Identification.*`, `journal.jnl`, `SETTINGS/` and `DATALOG/<date>/`; for
+    a DreamStation `P-SERIES/`; for a Luna its own `<serial>.NNN`, `.EVT`,
+    `.IDX`, `.LOG` and `.USR`. A zip, a note or another machine's files beside
+    the card are never read or sent.
+  - Every file is sent in pieces of at most 64 KB, its md5 worked out as it
+    goes, so a file of any size never sits in memory whole.
 
 ### Fixed
 - **AirSense 11 over Bluetooth uses only your own machine.** With
