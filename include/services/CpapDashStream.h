@@ -84,10 +84,58 @@ struct Plan {
 Plan planSend(const std::string& name, const std::string& bytes,
               const std::optional<IDatabase::CpapDashSent>& row);
 
-/// Is [rel] (card-relative, forward slashes) a card file to send? The root's
-/// own files, SETTINGS/ and DATALOG/<YYYYMMDD>/; never hms-cpap's own folders
-/// beside them (a bridge's batches/, an AirSense 11's stream/ and AS11/), a
-/// hidden file, or a write still in progress (.tmp, .part).
+/// md5 of bytes [from, to) of the file at [path], read in pieces of at most
+/// 64 KiB (never the whole file in memory). nullopt when the file cannot be
+/// read up to [to].
+std::optional<std::string> md5FileHex(const std::string& path, uint64_t from, uint64_t to);
+
+/// The most bytes of a file the uploader has held in memory at once, since
+/// the process started (or the last reset): a piece, never a whole file.
+/// For the tests that prove it.
+std::size_t largestFileRead();
+void resetLargestFileRead();
+
+/// The most a file read holds at once.
+inline constexpr std::size_t kReadPieceBytes = 64 * 1024;
+
+/// edfHeaderBytes of the file at [path], from its first 256 bytes only.
+std::size_t edfHeaderBytesOfFile(const std::string& path);
+
+/// planSend for the file at [path], whose size was [size] when it was looked
+/// at: the same answer as planSend over its bytes, read in pieces.
+Plan planSendFile(const std::string& name, const std::string& path, uint64_t size,
+                  const std::optional<IDatabase::CpapDashSent>& row);
+
+/// Which machine's card a root holds: the files it may send are that card's
+/// files and nothing else (7.1.2: an archive root holding a 190 MB
+/// Archive.zip and another machine's files sent both).
+enum class CardKind {
+    ResMed,    ///< STR.edf, Identification.*, journal.jnl, SETTINGS/, DATALOG/<YYYYMMDD>/
+    Philips,   ///< P-SERIES/<machine>/..., nothing at the root
+    Bmc,       ///< a Luna's <stem>.NNN, .evt, .idx, .log, .usr at the root, one stem
+};
+struct CardLayout {
+    CardKind    kind = CardKind::ResMed;
+    std::string bmc_stem;   ///< Bmc: the card's file stem (its serial)
+};
+
+/// The card a root holds, by what is on it. [format] (the configured
+/// "resmed" | "bmc" | "philips", or "") is asked first and wins when the root
+/// holds that card; otherwise a ResMed card (DATALOG/, STR.edf,
+/// Identification.*), then a DreamStation's P-SERIES/, then a Luna's files;
+/// a root holding none of them (yet) is read as [format]'s card, ResMed when
+/// [format] names none of the three.
+CardLayout cardLayoutOf(const std::string& root, const std::string& format = "");
+
+/// Is [rel] (card-relative, forward slashes) a file of the [layout] card? Never
+/// hms-cpap's own folders beside the card (a bridge's batches/, an AirSense
+/// 11's stream/ and AS11/), a hidden file, or a write still in progress
+/// (.tmp, .part).
+bool isCardPath(const std::string& rel, const CardLayout& layout);
+
+/// Could [rel] be a file of any card at all (the union of the layouts)? The
+/// collectors' notes are checked against this without touching the disk;
+/// each file is checked against its root's own layout before it is read.
 bool isCardPath(const std::string& rel);
 
 /// The upload fields the mule would send for a card path (ingest's
@@ -186,6 +234,9 @@ public:
         std::string path;
         std::string machine;
         std::string source{"card"};
+        /// The configured format of the card this root holds ("resmed" |
+        /// "bmc" | "philips"), "" = known by what is on it (cardLayoutOf).
+        std::string format;
     };
 
     struct Timing {
@@ -233,7 +284,10 @@ public:
     CpapDashStreamer& operator=(const CpapDashStreamer&) = delete;
 
     void setTiming(const Timing& t);
-    /// Every card root hms-cpap holds, asked on each connection (D8).
+    /// Every card root hms-cpap holds, asked on each connection (D8). Once set,
+    /// it is also the whole list: a root a collector names that it does not
+    /// list (an archive the configured source does not write, 7.1.2) is
+    /// never read.
     void setRootsProvider(RootsProvider p);
     /// The install's source ("ezshare" | "bridge" | "ble"), asked on every
     /// hello so a change of source shows on the next connect.
@@ -269,11 +323,23 @@ public:
     static std::string loadOrCreateInstallId(const std::string& data_dir);
 
     /// The card roots under [data_dir] (as11/<serial>/, sleepbridge/<sender>/)
-    /// plus [card_roots] that exist (the ez Share archive, a local folder),
-    /// each with its source (SDD-079 D1: as11/ is ble-as11, the rest card),
-    /// then the oximetry outbox (cpapdash/oximetry/, source oximetry) last.
+    /// plus [card_roots] that exist (the configured source's: the ez Share
+    /// archive or the local folder, never both, see cardRootsFor), each with
+    /// its source (SDD-079 D1: as11/ is ble-as11, the rest card), then the
+    /// oximetry outbox (cpapdash/oximetry/, source oximetry) last.
+    /// [card_format] is the configured format, for [card_roots]; as11/ is
+    /// ResMed; a bridge's folder is known by what is on it.
     static std::vector<Root> discoverRoots(const std::string& data_dir,
-                                           const std::vector<std::string>& card_roots);
+                                           const std::vector<std::string>& card_roots,
+                                           const std::string& card_format = "");
+
+    /// The configured source's card root (7.1.2): the archive when the
+    /// transport writes the card there (ez Share, FlashAir), the local folder
+    /// when the card is read in place. An archive a local source does not
+    /// write is not a card root, whatever is in it.
+    static std::vector<std::string> cardRootsFor(const std::string& transport,
+                                                 const std::string& archive_dir,
+                                                 const std::string& local_dir);
 
 private:
     struct Work {
@@ -286,6 +352,7 @@ private:
     struct RootInfo {
         std::string machine;
         std::string source;
+        std::string format;
     };
     struct Stamp {
         uint64_t  size  = 0;
@@ -321,6 +388,11 @@ private:
     void scanRoot(const Work& w);
     std::string machineFor(const std::string& root, const std::string& given);
     std::string sourceFor(const std::string& root, const std::string& given);
+    cdstream::CardLayout layoutFor(const std::string& root);
+    /// Is [root] one the roots provider lists (asked again once when it is
+    /// not, so a root made since the last walk is not refused)? Every root is
+    /// when no provider is set.
+    bool rootListed(const std::string& root);
 
     void enqueue(Work w, bool front);
     std::optional<Work> popWork();
@@ -357,6 +429,8 @@ private:
     std::map<std::string, Stamp>       settled_;   // root\npath -> what was on disk when it matched the index
     std::map<std::string, std::string> machines_;  // root -> serial read from its card
     std::set<std::string>              told_no_serial_;
+    std::set<std::string>              listed_roots_;   // the provider's roots, as last asked
+    std::set<std::string>              told_unlisted_;
     uint32_t                           next_req_ = 1;
     std::set<std::string>              noted_roots_;    // SDD-079 D3: every note of the root taken
     bool                               oxi_held_ = false;   // D6: this connection took no oximetry

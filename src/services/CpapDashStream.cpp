@@ -65,22 +65,166 @@ std::string compact(const Json::Value& v) {
     return Json::writeString(w, v);
 }
 
+/// An md5 fed piece by piece; copyable, so a prefix's digest can be carried
+/// on into the rest of the file.
+class Md5 {
+public:
+    Md5() : ctx_(EVP_MD_CTX_new()) { EVP_DigestInit_ex(ctx_, EVP_md5(), nullptr); }
+    Md5(const Md5& o) : ctx_(EVP_MD_CTX_new()) { EVP_MD_CTX_copy_ex(ctx_, o.ctx_); }
+    Md5& operator=(const Md5& o) {
+        if (this != &o) EVP_MD_CTX_copy_ex(ctx_, o.ctx_);
+        return *this;
+    }
+    ~Md5() { EVP_MD_CTX_free(ctx_); }
+    void update(const char* p, std::size_t n) {
+        if (n) EVP_DigestUpdate(ctx_, p, n);
+    }
+    /// The digest so far, lowercase hex; this one can still be fed.
+    std::string hex() const {
+        Md5 done(*this);
+        unsigned char digest[EVP_MAX_MD_SIZE];
+        unsigned int  len = 0;
+        EVP_DigestFinal_ex(done.ctx_, digest, &len);
+        std::ostringstream o;
+        for (unsigned int i = 0; i < len; ++i)
+            o << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(digest[i]);
+        return o.str();
+    }
+
+private:
+    EVP_MD_CTX* ctx_;
+};
+
+std::atomic<std::size_t> g_largest_read{0};
+
+void noteRead(std::size_t n) {
+    std::size_t cur = g_largest_read.load();
+    while (n > cur && !g_largest_read.compare_exchange_weak(cur, n)) {}
+}
+
+/// Reads bytes [from, to) of [in] in pieces of at most [piece], handing each
+/// to [f](data, n, at). false when the stream ends before [to].
+template <class F>
+bool readPieces(std::istream& in, uint64_t from, uint64_t to, std::size_t piece, F&& f) {
+    piece = std::clamp<std::size_t>(piece, 1, kReadPieceBytes);
+    if (from >= to) return true;
+    in.seekg(static_cast<std::streamoff>(from));
+    if (!in) return false;
+    std::string buf;
+    for (uint64_t at = from; at < to;) {
+        const std::size_t n = static_cast<std::size_t>(std::min<uint64_t>(piece, to - at));
+        buf.resize(n);
+        noteRead(n);
+        in.read(buf.data(), static_cast<std::streamsize>(n));
+        if (static_cast<std::size_t>(in.gcount()) != n) return false;
+        if (!f(buf.data(), n, at)) return false;
+        at += n;
+    }
+    return true;
+}
+
+/// The plan for a file of [size] whose EDF header is [header] bytes, the
+/// acked prefix's md5 asked of [prefix_md5](acked).
+template <class PrefixMd5>
+Plan planWith(const std::string& name, uint64_t size, std::size_t header, PrefixMd5&& prefix_md5,
+              const std::optional<IDatabase::CpapDashSent>& row) {
+    Plan p;
+    if (!row) {
+        if (size == 0) {
+            p.why = "empty";
+            return p;
+        }
+        p.send = true;
+        p.whole = true;
+        p.why = "new";
+        return p;
+    }
+    const uint64_t acked = row->acked_to < 0 ? 0 : static_cast<uint64_t>(row->acked_to);
+    const bool prefix_same = acked <= size && prefix_md5(acked) == row->acked_md5;
+
+    if (prefix_same && acked == size) {
+        p.why = "acked";
+        p.held = true;
+        return p;
+    }
+    if (prefix_same && isGrowingName(name) && acked > 0 && acked >= header) {
+        p.send = true;
+        p.offset = acked;
+        p.why = "grew";
+        return p;
+    }
+    if (size == 0) {
+        p.why = "empty";
+        return p;
+    }
+    p.send = true;
+    p.whole = true;
+    p.why = prefix_same ? "changed" : (acked > size ? "shorter" : "rewritten");
+    return p;
+}
+
+/// planSendFile, also handing back the acked prefix's digest (to carry on
+/// into the rest of the file) and the EDF header length.
+Plan planFile(const std::string& name, const std::string& path, uint64_t size,
+              const std::optional<IDatabase::CpapDashSent>& row, Md5* prefix_out,
+              std::size_t* header_out) {
+    const std::size_t header = edfHeaderBytesOfFile(path);
+    if (header_out) *header_out = header;
+    return planWith(
+        name, size, header,
+        [&](uint64_t acked) -> std::string {
+            const uint64_t from = isEdfName(name) ? std::min<uint64_t>(header, acked) : 0;
+            std::ifstream in(path, std::ios::binary);
+            Md5 m;
+            if (!in || !readPieces(in, from, acked, kReadPieceBytes, [&](const char* d, std::size_t n, uint64_t) {
+                    m.update(d, n);
+                    return true;
+                }))
+                return "\x01unreadable";   // matches no md5 the index keeps
+            if (prefix_out) *prefix_out = m;
+            return m.hex();
+        },
+        row);
+}
+
 }  // namespace
 
 std::string md5Hex(const std::string& bytes, std::size_t from, std::size_t to) {
     to   = std::min(to, bytes.size());
     from = std::min(from, to);
-    unsigned char digest[EVP_MAX_MD_SIZE];
-    unsigned int  len = 0;
-    EVP_MD_CTX*   ctx = EVP_MD_CTX_new();
-    EVP_DigestInit_ex(ctx, EVP_md5(), nullptr);
-    EVP_DigestUpdate(ctx, bytes.data() + from, to - from);
-    EVP_DigestFinal_ex(ctx, digest, &len);
-    EVP_MD_CTX_free(ctx);
-    std::ostringstream o;
-    for (unsigned int i = 0; i < len; ++i)
-        o << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(digest[i]);
-    return o.str();
+    Md5 m;
+    m.update(bytes.data() + from, to - from);
+    return m.hex();
+}
+
+std::size_t largestFileRead() { return g_largest_read.load(); }
+void resetLargestFileRead() { g_largest_read = 0; }
+
+std::optional<std::string> md5FileHex(const std::string& path, uint64_t from, uint64_t to) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return std::nullopt;
+    Md5 m;
+    if (!readPieces(in, from, to, kReadPieceBytes, [&](const char* d, std::size_t n, uint64_t) {
+            m.update(d, n);
+            return true;
+        }))
+        return std::nullopt;
+    return m.hex();
+}
+
+std::size_t edfHeaderBytesOfFile(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return 0;
+    std::string head(256, '\0');
+    noteRead(head.size());
+    in.read(head.data(), static_cast<std::streamsize>(head.size()));
+    if (in.gcount() != 256) return 0;
+    return edfHeaderBytes(head);
+}
+
+Plan planSendFile(const std::string& name, const std::string& path, uint64_t size,
+                  const std::optional<IDatabase::CpapDashSent>& row) {
+    return planFile(name, path, size, row, nullptr, nullptr);
 }
 
 bool isEdfName(const std::string& name) { return endsWith(lower(name), ".edf"); }
@@ -115,62 +259,125 @@ std::string ackedMd5(const std::string& name, const std::string& bytes, std::siz
 
 Plan planSend(const std::string& name, const std::string& bytes,
               const std::optional<IDatabase::CpapDashSent>& row) {
-    Plan p;
-    const uint64_t size = bytes.size();
-    if (!row) {
-        if (size == 0) {
-            p.why = "empty";
-            return p;
-        }
-        p.send = true;
-        p.whole = true;
-        p.why = "new";
-        return p;
-    }
-    const uint64_t acked = row->acked_to < 0 ? 0 : static_cast<uint64_t>(row->acked_to);
-    const bool prefix_same = acked <= size && ackedMd5(name, bytes, acked) == row->acked_md5;
+    return planWith(name, bytes.size(), edfHeaderBytes(bytes),
+                    [&](uint64_t acked) { return ackedMd5(name, bytes, static_cast<std::size_t>(acked)); },
+                    row);
+}
 
-    if (prefix_same && acked == size) {
-        p.why = "acked";
-        p.held = true;
-        return p;
+namespace {
+
+/// The card-relative path's segments when it is a finished, visible file;
+/// nothing otherwise.
+std::optional<std::vector<std::string>> visibleSegments(const std::string& rel) {
+    if (rel.empty()) return std::nullopt;
+    auto segs = segments(rel);
+    for (const auto& s : segs) {
+        if (s.empty() || s[0] == '.') return std::nullopt;
     }
-    if (prefix_same && isGrowingName(name) && acked > 0 && acked >= edfHeaderBytes(bytes)) {
-        p.send = true;
-        p.offset = acked;
-        p.why = "grew";
-        return p;
+    const auto name = lower(segs.back());
+    if (endsWith(name, ".tmp") || endsWith(name, ".part")) return std::nullopt;
+    return segs;
+}
+
+/// The files a ResMed machine writes at its card's root.
+bool isResMedRootName(const std::string& name) {
+    const auto n = lower(name);
+    return n == "str.edf" || n == "identification.tgt" || n == "identification.crc" ||
+           n == "identification.json" || n == "journal.jnl";
+}
+
+/// "22B39570.EVT" -> {"22B39570", "evt"}.
+std::pair<std::string, std::string> stemAndExt(const std::string& name) {
+    const auto dot = name.find_last_of('.');
+    if (dot == std::string::npos) return {name, ""};
+    return {name.substr(0, dot), lower(name.substr(dot + 1))};
+}
+
+bool isNumberedExt(const std::string& ext) {
+    return ext.size() == 3 && std::all_of(ext.begin(), ext.end(), [](char c) { return c >= '0' && c <= '9'; });
+}
+
+/// The extensions of a Luna's card files (ingest's isBmcCardFile).
+bool isBmcExt(const std::string& ext) {
+    return isNumberedExt(ext) || ext == "evt" || ext == "idx" || ext == "log" || ext == "usr";
+}
+
+}  // namespace
+
+bool isCardPath(const std::string& rel, const CardLayout& layout) {
+    const auto segs = visibleSegments(rel);
+    if (!segs) return false;
+    const auto top = lower((*segs)[0]);
+    switch (layout.kind) {
+        case CardKind::ResMed:
+            if (segs->size() == 1) return isResMedRootName((*segs)[0]);
+            if (top == "settings") return true;
+            if (top == "datalog") return segs->size() == 3 && isDate8((*segs)[1]);
+            return false;
+        case CardKind::Philips:
+            // SDD-080, platform SDD-061 D10: a DreamStation 2's card, exactly
+            // as the machine wrote it (encrypted, never opened here):
+            // P-SERIES/<folder>/PROP.BIN, LOG.SEQ ..., and
+            // P-SERIES/<folder>/Pn/<session>.B01|B02|B05.
+            if (top != "p-series") return false;
+            if (segs->size() == 3) return true;
+            if (segs->size() == 4) return isPFolder((*segs)[2]);
+            return false;
+        case CardKind::Bmc: {
+            if (segs->size() != 1 || layout.bmc_stem.empty()) return false;
+            const auto [stem, ext] = stemAndExt((*segs)[0]);
+            return lower(stem) == lower(layout.bmc_stem) && isBmcExt(ext);
+        }
     }
-    if (size == 0) {
-        p.why = "empty";
-        return p;
-    }
-    p.send = true;
-    p.whole = true;
-    p.why = prefix_same ? "changed" : (acked > size ? "shorter" : "rewritten");
-    return p;
+    return false;
 }
 
 bool isCardPath(const std::string& rel) {
-    if (rel.empty()) return false;
-    const auto segs = segments(rel);
-    for (const auto& s : segs) {
-        if (s.empty() || s[0] == '.') return false;
+    if (isCardPath(rel, {CardKind::ResMed, ""}) || isCardPath(rel, {CardKind::Philips, ""})) return true;
+    const auto segs = visibleSegments(rel);
+    if (!segs || segs->size() != 1) return false;
+    const auto [stem, ext] = stemAndExt((*segs)[0]);
+    return !stem.empty() && isBmcExt(ext);
+}
+
+CardLayout cardLayoutOf(const std::string& root, const std::string& format) {
+    bool resmed = false, philips = false;
+    std::set<std::string> raw, evt;   // a Luna's stems: numbered files, .evt files
+    std::error_code ec;
+    for (fs::directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec)) {
+        const std::string name = it->path().filename().string();
+        const std::string n = lower(name);
+        std::error_code e2;
+        if (it->is_directory(e2)) {
+            if (n == "datalog") resmed = true;
+            else if (n == "p-series") philips = true;
+            continue;
+        }
+        if (n == "str.edf" || n.rfind("identification.", 0) == 0) {
+            resmed = true;
+            continue;
+        }
+        const auto [stem, ext] = stemAndExt(name);
+        if (stem.empty()) continue;
+        if (isNumberedExt(ext)) raw.insert(stem);
+        else if (ext == "evt") evt.insert(stem);
     }
-    const auto name = lower(segs.back());
-    if (endsWith(name, ".tmp") || endsWith(name, ".part")) return false;
-    if (segs.size() == 1) return true;
-    const auto top = lower(segs[0]);
-    if (top == "settings") return true;
-    if (top == "datalog") return segs.size() == 3 && isDate8(segs[1]);
-    // SDD-080, platform SDD-061 D10: a DreamStation 2's card, exactly as the
-    // machine wrote it (encrypted, never opened here): P-SERIES/<folder>/
-    // PROP.BIN, LOG.SEQ ..., and P-SERIES/<folder>/Pn/<session>.B01|B02|B05.
-    if (top == "p-series") {
-        if (segs.size() == 3) return true;
-        if (segs.size() == 4) return isPFolder(segs[2]);
-    }
-    return false;
+    std::string bmc_stem;
+    for (const auto& s : raw)
+        if (evt.count(s)) {
+            bmc_stem = s;
+            break;
+        }
+    const auto f = lower(format);
+    if (f == "resmed" && resmed) return {CardKind::ResMed, ""};
+    if (f == "philips" && philips) return {CardKind::Philips, ""};
+    if (f == "bmc" && !bmc_stem.empty()) return {CardKind::Bmc, bmc_stem};
+    if (resmed) return {CardKind::ResMed, ""};
+    if (philips) return {CardKind::Philips, ""};
+    if (!bmc_stem.empty()) return {CardKind::Bmc, bmc_stem};
+    if (f == "philips") return {CardKind::Philips, ""};
+    if (f == "bmc") return {CardKind::Bmc, ""};   // no stem yet: nothing until its card is there
+    return {CardKind::ResMed, ""};
 }
 
 std::optional<CardHeaders> cardHeadersFor(const std::string& rel) {
@@ -353,23 +560,71 @@ bool readFile(const fs::path& p, std::string& out) {
     return static_cast<bool>(in) || in.eof();
 }
 
-constexpr uint32_t kChunksLost = UINT32_MAX;
+constexpr uint32_t kChunksLost  = UINT32_MAX;
+constexpr uint32_t kChunksShort = UINT32_MAX - 1;
 
-// [bytes] from [from] to the end as binary frames under [req_id]: how many,
-// or kChunksLost when the link dropped.
-uint32_t sendChunks(CpapDashLink& link, uint32_t req_id, const std::string& bytes, std::size_t from,
-                    std::size_t chunk_bytes) {
-    const std::size_t len = bytes.size() - from;
-    const std::size_t chunk = std::max<std::size_t>(chunk_bytes, 1);
+// Bytes [from, size) of the file at [p] as binary frames under [req_id], read
+// a chunk at a time (7.1.2: never the whole file in memory): how many,
+// kChunksLost when the link dropped, kChunksShort when the file no longer
+// holds them (cut or replaced since it was looked at; its next note or walk
+// sends it again). [frame_md5] is fed every byte sent; [index_md5] every byte
+// at or past [index_from], the bytes the index's md5 covers.
+uint32_t sendFileChunks(CpapDashLink& link, uint32_t req_id, const fs::path& p, uint64_t from,
+                        uint64_t size, std::size_t chunk_bytes, cdstream::Md5& frame_md5,
+                        cdstream::Md5& index_md5, uint64_t index_from) {
+    const std::size_t chunk = std::clamp<std::size_t>(chunk_bytes, 1, cdstream::kReadPieceBytes);
+    const uint64_t len = size > from ? size - from : 0;
     const uint32_t chunks = static_cast<uint32_t>((len + chunk - 1) / chunk);
-    for (uint32_t i = 0; i < chunks; ++i) {
-        const std::size_t at = from + static_cast<std::size_t>(i) * chunk;
-        const std::size_t n = std::min(chunk, bytes.size() - at);
-        std::string frame = cdstream::binaryHeader(req_id, i, i + 1 == chunks, cdstream::kKindFileBytes);
-        frame.append(bytes, at, n);
-        if (!link.sendBinary(frame)) return kChunksLost;
-    }
+    std::ifstream in(p, std::ios::binary);
+    if (!in) return kChunksShort;
+    bool lost = false;
+    uint32_t seq = 0;
+    std::string frame;
+    const bool read = cdstream::readPieces(in, from, size, chunk, [&](const char* d, std::size_t n, uint64_t at) {
+        frame_md5.update(d, n);
+        if (at + n > index_from) {
+            const uint64_t skip = at >= index_from ? 0 : index_from - at;
+            index_md5.update(d + skip, n - static_cast<std::size_t>(skip));
+        }
+        frame = cdstream::binaryHeader(req_id, seq, seq + 1 == chunks, cdstream::kKindFileBytes);
+        frame.append(d, n);
+        ++seq;
+        if (!link.sendBinary(frame)) {
+            lost = true;
+            return false;
+        }
+        return true;
+    });
+    if (lost) return kChunksLost;
+    if (!read) return kChunksShort;
     return chunks;
+}
+
+// Where a live spool's last whole line ends, at or before [size]: 0 when it
+// holds none. Read back from the end a piece at a time.
+uint64_t lastLineEnd(const fs::path& p, uint64_t size) {
+    std::ifstream in(p, std::ios::binary);
+    if (!in) return 0;
+    uint64_t end = size;
+    while (end > 0) {
+        const uint64_t from = end > cdstream::kReadPieceBytes ? end - cdstream::kReadPieceBytes : 0;
+        uint64_t found = 0;
+        bool hit = false;
+        if (!cdstream::readPieces(in, from, end, cdstream::kReadPieceBytes,
+                                  [&](const char* d, std::size_t n, uint64_t at) {
+                                      for (std::size_t i = n; i-- > 0;)
+                                          if (d[i] == '\n') {
+                                              found = at + i + 1;
+                                              hit = true;
+                                              break;
+                                          }
+                                      return true;
+                                  }))
+            return 0;
+        if (hit) return found;
+        end = from;
+    }
+    return 0;
 }
 
 // Root files first, then SETTINGS, then the nights oldest first.
@@ -537,14 +792,25 @@ std::string CpapDashStreamer::loadOrCreateInstallId(const std::string& data_dir)
     return id;
 }
 
+std::vector<std::string> CpapDashStreamer::cardRootsFor(const std::string& transport,
+                                                        const std::string& archive_dir,
+                                                        const std::string& local_dir) {
+    // A local folder is read in place: it is the card root, and the archive
+    // beside it is not one (a local source writes no card there).
+    if (transport == "local") return {local_dir};
+    // ez Share and FlashAir write the card into the archive.
+    return {archive_dir};
+}
+
 std::vector<CpapDashStreamer::Root> CpapDashStreamer::discoverRoots(
-    const std::string& data_dir, const std::vector<std::string>& card_roots) {
+    const std::string& data_dir, const std::vector<std::string>& card_roots,
+    const std::string& card_format) {
     std::vector<Root> out;
     std::error_code ec;
     std::set<std::string> seen;
     for (const auto& r : card_roots) {
         if (r.empty() || !fs::is_directory(r, ec) || !seen.insert(r).second) continue;
-        out.push_back({r, "", card_feed::kSourceCard});
+        out.push_back({r, "", card_feed::kSourceCard, card_format});
     }
     if (data_dir.empty()) return out;
     for (const char* sub : {"as11", "sleepbridge"}) {
@@ -560,13 +826,14 @@ std::vector<CpapDashStreamer::Root> CpapDashStreamer::discoverRoots(
             // was built from Bluetooth (SDD-079 D1). A Sleep Bridge rebuilds
             // the machine's own card: card.
             const bool as11 = std::string(sub) == "as11";
-            out.push_back({root, as11 ? name : "", as11 ? card_feed::kSourceBleAs11 : card_feed::kSourceCard});
+            out.push_back({root, as11 ? name : "", as11 ? card_feed::kSourceBleAs11 : card_feed::kSourceCard,
+                           as11 ? "resmed" : ""});
         }
     }
     // SDD-079 D5: the oximetry outbox, after every card root.
     const std::string outbox = oximetry_outbox::rootFor(data_dir);
     if (fs::is_directory(outbox, ec) && seen.insert(outbox).second)
-        out.push_back({outbox, "", card_feed::kSourceOximetry});
+        out.push_back({outbox, "", card_feed::kSourceOximetry, ""});
     return out;
 }
 
@@ -630,20 +897,25 @@ void CpapDashStreamer::markAllRootsDirty() {
             std::cerr << kTag << "oximetry backfill: " << e.what() << std::endl;
         }
     }
-    {
-        std::lock_guard<std::mutex> lk(mu_);
-        for (const auto& [r, info] : roots_) roots.push_back({r, info.machine, info.source});
-    }
     if (provider) {
+        // 7.1.2: the provider's roots are the whole list. A root only a
+        // collector's note named (an archive the configured source no longer
+        // writes, after a source switch) is not walked.
+        listed_roots_.clear();
         for (auto& r : provider()) {
             {
                 std::lock_guard<std::mutex> lk(mu_);
                 auto& m = roots_[r.path];
                 if (!r.machine.empty()) m.machine = r.machine;
                 if (!r.source.empty()) m.source = r.source;
+                m.format = r.format;
             }
+            listed_roots_.insert(r.path);
             roots.push_back(std::move(r));
         }
+    } else {
+        std::lock_guard<std::mutex> lk(mu_);
+        for (const auto& [r, info] : roots_) roots.push_back({r, info.machine, info.source, info.format});
     }
     // SDD-079 D5: the oximetry outbox after every card root, so a night's
     // card files are ahead of its oximetry on every walk.
@@ -949,6 +1221,13 @@ CpapDashStreamer::SessionEnd CpapDashStreamer::session(CpapDashLink& link, uint6
             }
             continue;
         }
+        // 7.1.2: only the roots the configured source holds are read at all.
+        if (!rootListed(w->root)) {
+            if (told_unlisted_.insert(w->root).second)
+                std::cerr << kTag << w->root << " is not a card root of the configured source; not sent"
+                          << std::endl;
+            continue;
+        }
         if (w->rel.empty()) {
             scanRoot(*w);
             continue;
@@ -989,12 +1268,50 @@ std::string CpapDashStreamer::sourceFor(const std::string& root, const std::stri
     return card_feed::kSourceCard;
 }
 
+cdstream::CardLayout CpapDashStreamer::layoutFor(const std::string& root) {
+    std::string format;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        auto it = roots_.find(root);
+        if (it != roots_.end()) format = it->second.format;
+    }
+    // Asked of the disk each time: a bridge's folder says which card it is
+    // only once its first files are there.
+    return cdstream::cardLayoutOf(root, format);
+}
+
+bool CpapDashStreamer::rootListed(const std::string& root) {
+    RootsProvider provider;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        provider = roots_provider_;
+    }
+    if (!provider) return true;
+    if (listed_roots_.count(root)) return true;
+    // A root made since the last walk (a new bridge, a new AirSense 11): the
+    // provider is asked again before a root is refused.
+    listed_roots_.clear();
+    for (auto& r : provider()) {
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            auto& m = roots_[r.path];
+            if (!r.machine.empty() && m.machine.empty()) m.machine = r.machine;
+            if (!r.source.empty() && m.source.empty()) m.source = r.source;
+            m.format = r.format;
+        }
+        listed_roots_.insert(r.path);
+    }
+    return listed_roots_.count(root) > 0;
+}
+
 void CpapDashStreamer::scanRoot(const Work& w) {
     std::error_code ec;
     if (!fs::is_directory(w.root, ec)) return;
     std::vector<std::string> rels;
     const fs::path base(w.root);
     const std::string source = sourceFor(w.root, w.source);
+    // 7.1.2: the card this root holds; only its files go.
+    const auto layout = layoutFor(w.root);
     if (source == card_feed::kSourceOximetry) {
         // The outbox is flat (SDD-079 D4): every file it would send, by name.
         for (const auto& e : fs::directory_iterator(base, ec)) {
@@ -1016,12 +1333,15 @@ void CpapDashStreamer::scanRoot(const Work& w) {
             if (it.depth() == 0) {
                 std::string top = rel;
                 for (auto& c : top) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-                // SDD-080: and a DreamStation 2's P-SERIES (platform SDD-061 D10).
-                if (top != "DATALOG" && top != "SETTINGS" && top != "P-SERIES") it.disable_recursion_pending();
+                // SDD-080: a DreamStation 2's is P-SERIES (platform SDD-061 D10).
+                const bool card_folder = layout.kind == cdstream::CardKind::ResMed
+                                             ? (top == "DATALOG" || top == "SETTINGS")
+                                             : layout.kind == cdstream::CardKind::Philips && top == "P-SERIES";
+                if (!card_folder) it.disable_recursion_pending();
             }
             continue;
         }
-        if (!it->is_regular_file(ec) || !cdstream::isCardPath(rel)) continue;
+        if (!it->is_regular_file(ec) || !cdstream::isCardPath(rel, layout)) continue;
         rels.push_back(rel);
     }
     std::sort(rels.begin(), rels.end(), [](const std::string& a, const std::string& b) {
@@ -1053,6 +1373,8 @@ CpapDashStreamer::SendResult CpapDashStreamer::sendFile(CpapDashLink& link, cons
         std::lock_guard<std::mutex> lk(mu_);
         t = timing_;
     }
+    // 7.1.2: a file of the card this root holds, or nothing is read of it.
+    if (!cdstream::isCardPath(w.rel, layoutFor(w.root))) return SendResult::Done;
     const fs::path p = fs::path(w.root) / w.rel;
     std::error_code ec;
     Stamp stamp;
@@ -1081,11 +1403,14 @@ CpapDashStreamer::SendResult CpapDashStreamer::sendFile(CpapDashLink& link, cons
         }
     }
 
-    std::string bytes;
-    if (!readFile(p, bytes)) return SendResult::Done;
+    // 7.1.2: the file is read a piece at a time, as it stood when looked at
+    // ([size]), never whole into memory.
+    const uint64_t size = stamp.size;
     const std::string name = fs::path(w.rel).filename().string();
     const auto row = db_ ? db_->getCpapDashSent(w.root, w.rel) : std::nullopt;
-    const auto plan = cdstream::planSend(name, bytes, row);
+    cdstream::Md5 prefix;
+    std::size_t header = 0;
+    const auto plan = cdstream::planFile(name, p.string(), size, row, &prefix, &header);
     const std::string key = keyOf(w.root, w.rel);
     if (!plan.send) {
         settled_[key] = stamp;
@@ -1093,13 +1418,23 @@ CpapDashStreamer::SendResult CpapDashStreamer::sendFile(CpapDashLink& link, cons
     }
 
     const uint32_t req_id = nextReq();
-    const std::size_t from = static_cast<std::size_t>(plan.offset);
-    const std::size_t len = bytes.size() - from;
-    const uint32_t chunks = sendChunks(link, req_id, bytes, from, t.chunk_bytes);
-    const std::string md5 = cdstream::md5Hex(bytes, from, bytes.size());
+    const uint64_t from = plan.offset;
+    const uint64_t len = size - from;
+    // The index's md5 covers the bytes after an EDF's header (all of any
+    // other file): a range carries on from the acked prefix's digest.
+    const uint64_t index_from = cdstream::isEdfName(name) ? std::min<uint64_t>(header, size) : 0;
+    cdstream::Md5 frame_md5;
+    cdstream::Md5 index_md5 = from > 0 ? prefix : cdstream::Md5();
+    const uint32_t chunks =
+        sendFileChunks(link, req_id, p, from, size, t.chunk_bytes, frame_md5, index_md5, index_from);
+    if (chunks == kChunksShort) {
+        std::cerr << kTag << w.rel << " changed while it was read; it goes on its next note" << std::endl;
+        settled_.erase(key);
+        return SendResult::Done;
+    }
     if (chunks == kChunksLost ||
-        !link.sendText(cdstream::fileReadyFrame(req_id, *headers, plan.offset, bytes.size(), chunks,
-                                                len, md5, machine, source))) {
+        !link.sendText(cdstream::fileReadyFrame(req_id, *headers, plan.offset, size, chunks, len,
+                                                frame_md5.hex(), machine, source))) {
         end.end = End::Closed;
         end.reason = "";
         return SendResult::Lost;
@@ -1137,8 +1472,8 @@ CpapDashStreamer::SendResult CpapDashStreamer::sendFile(CpapDashLink& link, cons
     r.root = w.root;
     r.path = w.rel;
     r.machine = machine;
-    r.acked_to = static_cast<long long>(bytes.size());
-    r.acked_md5 = cdstream::ackedMd5(name, bytes, bytes.size());
+    r.acked_to = static_cast<long long>(size);
+    r.acked_md5 = index_md5.hex();
     r.updated_at = cdstream::isoNowUtc();
     r.source = source;   // SDD-079 D3: the source this ack delivered
     if (db_ && db_->upsertCpapDashSent(r)) {
@@ -1262,30 +1597,38 @@ CpapDashStreamer::SendResult CpapDashStreamer::sendOximetry(CpapDashLink& link, 
     if (ec) return SendResult::Done;
     stamp.mtime = static_cast<long long>(fs::last_write_time(p, ec).time_since_epoch().count());
 
-    std::string bytes;
-    if (!readFile(p, bytes)) return SendResult::Done;
+    // 7.1.2: read a piece at a time, never whole into memory.
+    uint64_t size = stamp.size;
     // The live spool goes in whole lines only (SDD-061 D5): a line being
     // appended right now waits for the next note.
-    if (meta->format == "live-jsonl") {
-        const auto nl = bytes.rfind('\n');
-        bytes.resize(nl == std::string::npos ? 0 : nl + 1);
-    }
+    if (meta->format == "live-jsonl") size = lastLineEnd(p, size);
     const auto row = db_ ? db_->getCpapDashSent(w.root, w.rel) : std::nullopt;
-    const auto plan = cdstream::planSend(w.rel, bytes, row);
+    cdstream::Md5 prefix;
+    std::size_t header = 0;
+    const auto plan = cdstream::planFile(w.rel, p.string(), size, row, &prefix, &header);
     const std::string key = keyOf(w.root, w.rel);
     if (!plan.send) {
-        if (bytes.size() == stamp.size) settled_[key] = stamp;
+        if (size == stamp.size) settled_[key] = stamp;
         return SendResult::Done;
     }
 
     cdstream::OxiHeaders oxi{meta->name, meta->format, meta->source, meta->device_name};
     const uint32_t req_id = nextReq();
-    const std::size_t from = static_cast<std::size_t>(plan.offset);
-    const std::size_t len = bytes.size() - from;
-    const uint32_t chunks = sendChunks(link, req_id, bytes, from, t.chunk_bytes);
+    const uint64_t from = plan.offset;
+    const uint64_t len = size - from;
+    const uint64_t index_from = cdstream::isEdfName(w.rel) ? std::min<uint64_t>(header, size) : 0;
+    cdstream::Md5 frame_md5;
+    cdstream::Md5 index_md5 = from > 0 ? prefix : cdstream::Md5();
+    const uint32_t chunks =
+        sendFileChunks(link, req_id, p, from, size, t.chunk_bytes, frame_md5, index_md5, index_from);
+    if (chunks == kChunksShort) {
+        std::cerr << kTag << w.rel << " changed while it was read; it goes on its next note" << std::endl;
+        settled_.erase(key);
+        return SendResult::Done;
+    }
     if (chunks == kChunksLost ||
-        !link.sendText(cdstream::oximetryReadyFrame(req_id, oxi, plan.offset, bytes.size(), chunks, len,
-                                                    cdstream::md5Hex(bytes, from, bytes.size())))) {
+        !link.sendText(cdstream::oximetryReadyFrame(req_id, oxi, plan.offset, size, chunks, len,
+                                                    frame_md5.hex()))) {
         end.end = End::Closed;
         end.reason = "";
         return SendResult::Lost;
@@ -1307,12 +1650,12 @@ CpapDashStreamer::SendResult CpapDashStreamer::sendOximetry(CpapDashLink& link, 
     r.root = w.root;
     r.path = w.rel;
     r.machine = "";
-    r.acked_to = static_cast<long long>(bytes.size());
-    r.acked_md5 = cdstream::ackedMd5(w.rel, bytes, bytes.size());
+    r.acked_to = static_cast<long long>(size);
+    r.acked_md5 = index_md5.hex();
     r.updated_at = cdstream::isoNowUtc();
     r.source = card_feed::kSourceOximetry;
     if (db_ && db_->upsertCpapDashSent(r)) {
-        if (bytes.size() == stamp.size) settled_[key] = stamp;
+        if (size == stamp.size) settled_[key] = stamp;
     } else {
         std::cerr << kTag << "the index did not take " << w.rel << std::endl;
     }

@@ -1376,15 +1376,19 @@ int main(int argc, char** argv) {
                     stream_db,
                     [] { return hms_cpap::makeCpapDashLink(hms_cpap::CpapDashEndpoint{}); },
                     hms_cpap::CpapDashStreamer::loadOrCreateInstallId(data_dir), HMS_CPAP_VERSION);
-                cpapdash_stream->setRootsProvider([data_dir] {
-                    // Every card root this install holds (D8): the ez Share
-                    // archive, a local folder read in place, and the Bluetooth
+                cpapdash_stream->setRootsProvider([&config, data_dir] {
+                    // Every card root this install holds (D8): the configured
+                    // source's card (the ez Share archive, or the local folder
+                    // read in place, never both: 7.1.2, an archive a local
+                    // source does not write is not a card), and the Bluetooth
                     // and Sleep Bridge roots under the data folder.
                     const std::string archive = hms_cpap::ConfigManager::get(
                         "CPAP_ARCHIVE_DIR",
                         (std::filesystem::path(data_dir) / "cpap_data").string());
                     const std::string local = hms_cpap::ConfigManager::get("CPAP_LOCAL_DIR", "");
-                    return hms_cpap::CpapDashStreamer::discoverRoots(data_dir, {archive, local});
+                    return hms_cpap::CpapDashStreamer::discoverRoots(
+                        data_dir, hms_cpap::CpapDashStreamer::cardRootsFor(config.transport, archive, local),
+                        config.format);
                 });
                 // The one source behind this install, said on every hello:
                 // ingest closes a night by it.

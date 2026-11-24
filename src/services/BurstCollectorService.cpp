@@ -2147,8 +2147,11 @@ bool BurstCollectorService::processSTRFile() {
                 auto dest = std::filesystem::path(archive_dir) / "STR.edf";
                 std::filesystem::copy_file(str_local_path, dest,
                     std::filesystem::copy_options::overwrite_existing);
-                card_feed::fileWritten(archive_dir, "STR.edf", "",
-                                       card_feed::kSourceCard);   // platform SDD-059 D3, SDD-079 D1
+                // platform SDD-059 D3, SDD-079 D1. 7.1.2: only when the archive
+                // IS the card root (ez Share). A local card is read in place and
+                // its own STR.edf is noted with the burst; this copy is a backup.
+                if (cpap_source_ != "local")
+                    card_feed::fileWritten(archive_dir, "STR.edf", "", card_feed::kSourceCard);
             }
         }
 

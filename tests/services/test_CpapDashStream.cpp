@@ -184,8 +184,117 @@ TEST(CpapDashStreamRules, OnlyTheCardsOwnFilesAreSent) {
         EXPECT_TRUE(cdstream::isCardPath(ok)) << ok;
     for (const char* no : {"stream/20261116/1792206000000.cds1s", "AS11/summary-2026.as11", "batches/cursor.json",
                            "DATALOG/2026/x_BRP.edf", "DATALOG/20261116/x_BRP.edf.tmp",
-                           "DATALOG/20261116/x_BRP.edf.part", ".hidden", "bmc/whatever.dat", ""})
+                           "DATALOG/20261116/x_BRP.edf.part", ".hidden", "bmc/whatever.dat", "",
+                           "Archive.zip", "notes.txt", "backup.tar"})
         EXPECT_FALSE(cdstream::isCardPath(no)) << no;
+}
+
+// 7.1.2: an archive root held a 190 MB Archive.zip and a Luna's files beside
+// a ResMed card; the stream sent both. Each card sends its own files only.
+TEST(CpapDashStreamRules, EachCardSendsItsOwnFilesAndNothingElse) {
+    const cdstream::CardLayout resmed{cdstream::CardKind::ResMed, ""};
+    for (const char* ok : {"STR.edf", "str.EDF", "Identification.tgt", "Identification.crc", "Identification.json",
+                           "journal.jnl", "SETTINGS/CurrentSettings.json", "DATALOG/20261116/20261116_221502_BRP.edf"})
+        EXPECT_TRUE(cdstream::isCardPath(ok, resmed)) << ok;
+    for (const char* no : {"Archive.zip", "22B39570.000", "22B39570.EVT", "22B39570.USR", "notes.txt",
+                           "P-SERIES/1A2B3C4D/PROP.BIN", "DATALOG/x/y.edf", "STR.edf.tmp", ".STR.edf"})
+        EXPECT_FALSE(cdstream::isCardPath(no, resmed)) << no;
+
+    const cdstream::CardLayout luna{cdstream::CardKind::Bmc, "22B39570"};
+    for (const char* ok : {"22B39570.000", "22B39570.017", "22B39570.EVT", "22B39570.USR", "22B39570.IDX",
+                           "22B39570.log"})
+        EXPECT_TRUE(cdstream::isCardPath(ok, luna)) << ok;
+    for (const char* no : {"11111111.000", "11111111.EVT", "22B39570.zip", "STR.edf", "Identification.json",
+                           "Archive.zip", "DATALOG/20261116/x.edf", "x/22B39570.000"})
+        EXPECT_FALSE(cdstream::isCardPath(no, luna)) << no;
+    EXPECT_FALSE(cdstream::isCardPath("22B39570.000", {cdstream::CardKind::Bmc, ""}))
+        << "a Luna card whose files are not there yet sends nothing";
+
+    const cdstream::CardLayout ds2{cdstream::CardKind::Philips, ""};
+    EXPECT_TRUE(cdstream::isCardPath("P-SERIES/1A2B3C4D/P0/0000001E.B01", ds2));
+    for (const char* no : {"STR.edf", "Identification.json", "Archive.zip", "DATALOG/20261116/x.edf"})
+        EXPECT_FALSE(cdstream::isCardPath(no, ds2)) << no;
+}
+
+TEST(CpapDashStreamRules, ARootsCardIsKnownByWhatIsOnItTheConfiguredFormatFirst) {
+    const fs::path dir = fs::temp_directory_path() /
+                         ("cdstream_layout_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    // Albin's archive, 2026-11-24: a ResMed card with a Luna's files beside it.
+    const fs::path mixed = dir / "mixed";
+    writeFile(mixed / "Identification.json", "{}");
+    writeFile(mixed / "STR.edf", edf(1));
+    writeFile(mixed / "DATALOG/20261116/20261116_221502_EVE.edf", edf(1));
+    for (const char* f : {"22B39570.000", "22B39570.EVT", "22B39570.USR"}) writeFile(mixed / f, "x");
+    EXPECT_EQ(cdstream::cardLayoutOf(mixed.string(), "resmed").kind, cdstream::CardKind::ResMed);
+    EXPECT_EQ(cdstream::cardLayoutOf(mixed.string(), "").kind, cdstream::CardKind::ResMed);
+    const auto as_luna = cdstream::cardLayoutOf(mixed.string(), "bmc");
+    EXPECT_EQ(as_luna.kind, cdstream::CardKind::Bmc);
+    EXPECT_EQ(as_luna.bmc_stem, "22B39570");
+
+    // A Luna's card alone is a Luna's, whatever the format says.
+    const fs::path luna = dir / "luna";
+    for (const char* f : {"22B39570.000", "22B39570.EVT", "Archive.zip"}) writeFile(luna / f, "x");
+    EXPECT_EQ(cdstream::cardLayoutOf(luna.string(), "resmed").kind, cdstream::CardKind::Bmc);
+
+    // A DreamStation's.
+    const fs::path ds2 = dir / "ds2";
+    writeFile(ds2 / "P-SERIES/1A2B3C4D/PROP.BIN", "x");
+    EXPECT_EQ(cdstream::cardLayoutOf(ds2.string(), "resmed").kind, cdstream::CardKind::Philips);
+
+    // Nothing there yet: the configured format's card, ResMed by default.
+    const fs::path empty = dir / "empty";
+    fs::create_directories(empty);
+    EXPECT_EQ(cdstream::cardLayoutOf(empty.string(), "bmc").kind, cdstream::CardKind::Bmc);
+    EXPECT_TRUE(cdstream::cardLayoutOf(empty.string(), "bmc").bmc_stem.empty());
+    EXPECT_EQ(cdstream::cardLayoutOf(empty.string(), "philips").kind, cdstream::CardKind::Philips);
+    EXPECT_EQ(cdstream::cardLayoutOf(empty.string(), "lowenstein").kind, cdstream::CardKind::ResMed);
+    EXPECT_EQ(cdstream::cardLayoutOf((dir / "nowhere").string(), "").kind, cdstream::CardKind::ResMed);
+    fs::remove_all(dir);
+}
+
+TEST(CpapDashStreamRules, TheConfiguredSourcesCardIsTheOnlyCardRoot) {
+    // A local card is read in place: the archive beside it is not a card.
+    EXPECT_EQ(CpapDashStreamer::cardRootsFor("local", "/a", "/l"), std::vector<std::string>{"/l"});
+    // ez Share and FlashAir write the card into the archive.
+    EXPECT_EQ(CpapDashStreamer::cardRootsFor("ezshare", "/a", "/l"), std::vector<std::string>{"/a"});
+    EXPECT_EQ(CpapDashStreamer::cardRootsFor("flashair", "/a", "/l"), std::vector<std::string>{"/a"});
+}
+
+TEST(CpapDashStreamRules, AFilesPlanAndMd5AreTheSameReadInPiecesAsWhole) {
+    const fs::path dir = fs::temp_directory_path() /
+                         ("cdstream_pieces_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    // Bigger than a read piece, so it really is read in several.
+    const std::string bytes = edf(3000, 100);
+    ASSERT_GT(bytes.size(), 4 * cdstream::kReadPieceBytes);
+    const fs::path p = dir / "x_BRP.edf";
+    writeFile(p, bytes);
+    cdstream::resetLargestFileRead();
+    EXPECT_EQ(*cdstream::md5FileHex(p.string(), 0, bytes.size()), cdstream::md5Hex(bytes, 0, bytes.size()));
+    EXPECT_EQ(*cdstream::md5FileHex(p.string(), 512, 200000), cdstream::md5Hex(bytes, 512, 200000));
+    EXPECT_FALSE(cdstream::md5FileHex(p.string(), 0, bytes.size() + 1)) << "past its end";
+    EXPECT_FALSE(cdstream::md5FileHex((dir / "nowhere").string(), 0, 1));
+    EXPECT_EQ(cdstream::edfHeaderBytesOfFile(p.string()), 512u);
+    EXPECT_EQ(cdstream::edfHeaderBytesOfFile((dir / "nowhere").string()), 0u);
+
+    const std::string name = "x_BRP.edf";
+    const auto same = [&](const std::optional<IDatabase::CpapDashSent>& row) {
+        const auto a = cdstream::planSend(name, bytes, row);
+        const auto b = cdstream::planSendFile(name, p.string(), bytes.size(), row);
+        EXPECT_EQ(a.send, b.send);
+        EXPECT_EQ(a.offset, b.offset);
+        EXPECT_EQ(a.whole, b.whole);
+        EXPECT_EQ(a.held, b.held);
+        EXPECT_EQ(a.why, b.why);
+    };
+    same(std::nullopt);                                    // new
+    same(ackedRow(name, bytes));                           // acked
+    same(ackedRow(name, bytes.substr(0, 100000)));         // grew
+    auto other = ackedRow(name, bytes.substr(0, 100000));
+    other.acked_md5 = "0";
+    same(other);                                           // rewritten
+    same(ackedRow(name, bytes + "more"));                  // shorter
+    EXPECT_LE(cdstream::largestFileRead(), cdstream::kReadPieceBytes) << "never the whole file";
+    fs::remove_all(dir);
 }
 
 TEST(CpapDashStreamRules, CardPathsBecomeTheMulesUploadFields) {
@@ -322,6 +431,11 @@ protected:
     std::unique_ptr<cdfake::FakeCpapDashServer> server_;
     std::shared_ptr<CpapDashStreamer> streamer_;
     uint16_t port_ = 0;
+    // The configured source the roots provider answers for (set before
+    // startStreamer).
+    std::string transport_ = "ezshare";
+    std::string local_dir_;
+    std::string format_ = "resmed";
 
     void SetUp() override {
         dir_ = fs::temp_directory_path() /
@@ -367,7 +481,13 @@ protected:
         t.chunk_bytes = 4096;
         streamer_->setTiming(t);
         const std::string data_dir = dir_.string();
-        streamer_->setRootsProvider([data_dir] { return CpapDashStreamer::discoverRoots(data_dir, {}); });
+        // An ez Share install: its archive (cpap_data) is the card root.
+        streamer_->setRootsProvider([data_dir, this] {
+            return CpapDashStreamer::discoverRoots(
+                data_dir,
+                CpapDashStreamer::cardRootsFor(transport_, (fs::path(data_dir) / "cpap_data").string(), local_dir_),
+                format_);
+        });
         streamer_->apply({on, kToken});
         card_feed::setSinks(
             [s = streamer_](const std::string& r, const std::string& rel, const std::string& m,
@@ -1177,6 +1297,113 @@ TEST_F(StreamTest, TheLiveSpoolGoesAsRangesOfWholeLines) {
     EXPECT_EQ(live[1]["oxi"]["format"].asString(), "live-jsonl");
     EXPECT_EQ(live[1]["oxi"]["name"].asString(), file.substr(0, file.size() - 6));
     EXPECT_EQ(server_->oxiLanded().at(file.substr(0, file.size() - 6)), readFile(box / file));
+}
+
+// ── 7.1.2: only the configured source's card, never a whole file in memory ──
+
+namespace {
+std::set<std::string> readyNames(cdfake::FakeCpapDashServer& s) {
+    std::set<std::string> out;
+    for (const auto& r : s.readies()) out.insert(r.frame.get("filename", "").asString());
+    return out;
+}
+// The archive root of Albin's add-on on 2026-11-24, as a test: a ResMed card,
+// a 190 MB Archive.zip beside it (sparse: it takes no disk), and a Luna's
+// files from the machine read before.
+void addStrays(const fs::path& root) {
+    writeFile(root / "Archive.zip", "PK");
+    fs::resize_file(root / "Archive.zip", 190ull * 1024 * 1024);
+    for (const char* f : {"22B39570.000", "22B39570.001", "22B39570.EVT", "22B39570.USR", "22B39570.IDX"})
+        writeFile(root / f, std::string(2048, 'L'));
+    writeFile(root / "notes.txt", "mine");
+}
+}  // namespace
+
+TEST_F(StreamTest, AnArchiveRootSendsItsCardNeverAZipOrAnotherMachinesFiles) {
+    const auto archive = archiveWithIdentity(dir_);
+    writeFile(archive / "STR.edf", edf(5));
+    writeFile(archive / kEve, edf(3));
+    addStrays(archive);
+    cdstream::resetLargestFileRead();
+    startStreamer();
+    ASSERT_TRUE(waitAcked2(archive, kEve));
+    ASSERT_TRUE(waitAcked2(archive, "STR.edf"));
+    ASSERT_TRUE(waitAcked2(archive, "Identification.json"));
+    // A burst names the root again: still nothing past the card.
+    card_feed::rootWritten(archive.string(), "", card_feed::kSourceCard);
+    card_feed::fileWritten(archive.string(), "Archive.zip", "", card_feed::kSourceCard);
+    card_feed::fileWritten(archive.string(), "22B39570.000", "", card_feed::kSourceCard);
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    EXPECT_EQ(readyNames(*server_),
+              (std::set<std::string>{"Identification.json", "STR.edf", "20261116_220000_EVE.edf"}));
+    for (const char* f : {"Archive.zip", "22B39570.000", "22B39570.EVT", "notes.txt"})
+        EXPECT_FALSE(db_->getCpapDashSent(archive.string(), f)) << f;
+    EXPECT_LE(cdstream::largestFileRead(), cdstream::kReadPieceBytes);
+}
+
+TEST_F(StreamTest, ALocalSourceNeverReadsTheArchiveBesideIt) {
+    // Albin's add-on: the card read in place from a bridge's folder, the old
+    // archive (another machine's card, a zip, a Luna's files) still set.
+    const fs::path card = dir_ / "card";
+    writeFile(card / "Identification.json",
+              R"({"FlowGenerator":{"IdentificationProfiles":{"Product":{"SerialNumber":"23243570851"}}}})");
+    writeFile(card / kEve, edf(3));
+    const auto archive = archiveWithIdentity(dir_);
+    writeFile(archive / "STR.edf", edf(5));
+    writeFile(archive / "DATALOG/20260101/20260101_220000_EVE.edf", edf(2));
+    addStrays(archive);
+    transport_ = "local";
+    local_dir_ = card.string();
+    startStreamer();
+    ASSERT_TRUE(waitAcked2(card, kEve));
+    // What 7.1.1's collector said of the archive in local mode (its STR copy).
+    card_feed::fileWritten(archive.string(), "STR.edf", "", card_feed::kSourceCard);
+    card_feed::rootWritten(archive.string(), "", card_feed::kSourceCard);
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    for (const auto& r : server_->readies())
+        EXPECT_EQ(r.frame.get("machine_serial", "").asString(), "23243570851")
+            << r.frame.get("filename", "").asString() << " went as another machine's";
+    EXPECT_TRUE(db_->listCpapDashSent(archive.string()).empty()) << "nothing of the archive is read";
+}
+
+TEST_F(StreamTest, ALunaBridgeSendsItsLunasFilesOnly) {
+    const fs::path bridge = dir_ / "sleepbridge" / "bridge-1";
+    for (const char* f : {"22B39570.000", "22B39570.EVT", "22B39570.USR"}) writeFile(bridge / f, std::string(3000, 'L'));
+    writeFile(bridge / "11111111.000", "another Luna");
+    writeFile(bridge / "Archive.zip", "PK");
+    startStreamer();
+    ASSERT_TRUE(waitState("connected"));
+    card_feed::fileWritten(bridge.string(), "22B39570.000", "22B39570", card_feed::kSourceCard);
+    card_feed::rootWritten(bridge.string(), "22B39570", card_feed::kSourceCard);
+    ASSERT_TRUE(waitAcked2(bridge, "22B39570.USR"));
+    ASSERT_TRUE(waitAcked2(bridge, "22B39570.EVT"));
+    ASSERT_TRUE(waitAcked2(bridge, "22B39570.000"));
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    EXPECT_EQ(readyNames(*server_), (std::set<std::string>{"22B39570.000", "22B39570.EVT", "22B39570.USR"}));
+}
+
+TEST_F(StreamTest, ABigFileGoesInPiecesNeverWholeInMemoryAndGrowsAsARange) {
+    // 24 MB of signal: whole on the first send, then only what it grew by.
+    std::string bytes = edf(240000, 100);
+    writeFile(root() / kBrp, bytes);
+    cdstream::resetLargestFileRead();
+    startStreamer();
+    ASSERT_TRUE(waitAcked(kBrp, static_cast<long long>(bytes.size()), 60000));
+    EXPECT_EQ(landedFor("20261116", "20261116_220000_BRP.edf"), bytes);
+    EXPECT_LE(cdstream::largestFileRead(), cdstream::kReadPieceBytes);
+
+    // More records: the header's count changes, the records before do not.
+    const std::string grown = edf(240100, 100);
+    writeFile(root() / kBrp, grown);
+    card_feed::fileWritten(root().string(), kBrp, kSerial, card_feed::kSourceBleAs11);
+    ASSERT_TRUE(waitAcked(kBrp, static_cast<long long>(grown.size()), 60000));
+    const auto readies = server_->readies();
+    ASSERT_GE(readies.size(), 2u);
+    EXPECT_EQ(readies.back().frame["offset"].asUInt64(), bytes.size()) << "a range from the acked end";
+    // The index keeps the md5 of the bytes after the header, as it always did.
+    EXPECT_EQ(db_->getCpapDashSent(root().string(), kBrp)->acked_md5,
+              cdstream::ackedMd5("20261116_220000_BRP.edf", grown, grown.size()));
+    EXPECT_LE(cdstream::largestFileRead(), cdstream::kReadPieceBytes);
 }
 
 TEST(CpapDashStreamRules, EachRootIsFoundWithItsSourceAndTheOutboxLast) {
