@@ -5,6 +5,39 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.2.0] - 2026-11-24
+
+### Added
+- **The O2 Ring's night ODI and desaturation count go to Home Assistant
+  (#114).** The ring's summary now publishes `oximetry/odi` (one decimal) and
+  `oximetry/desat_count`, discovered as O2Ring odi and O2Ring desat_count.
+  The count is the night's stored count, not the ODI times the session's
+  length: the ODI is per hour of valid samples, so with the finger off part
+  of the night that product overstated it (7 desaturations published as 11).
+  Thanks @rccoleman.
+- **Home Assistant shows our sensors rounded (#113).** MQTT discovery
+  suggests a display precision for each sensor (1 decimal for pressure, flow,
+  % and breaths/min; 0 for SpO2, mL, bpm and counts; 2 for an AHI), and a
+  unitless number gets a state class so Home Assistant formats it at all. The
+  published states are unchanged, and a precision set on an entity in Home
+  Assistant still wins. It applies when the entities are re-added (reload the
+  MQTT integration). Thanks @rccoleman.
+- **The sessions list carries each night's SpO2 and heart rate from the ring,
+  for every night (#116).** The Sessions page showed them for only the newest
+  seven nights. The list now reads the ring's figures for every night (the
+  machine's own figure wins when it has one), on SQLite, MySQL and
+  PostgreSQL, and shows "Loading..." instead of "Sessions (0)" until the list
+  arrives. Thanks @rccoleman.
+
+### Fixed
+- **AirSense 11 stream: a few ms of timing wander no longer drops a sample
+  and invents a zero (#112).** When a streamed block sat half a sample off
+  its place, the writer dropped a sample from one block and inserted a zero
+  in the next, for minutes at a time, so per-minute pressure minima read 0
+  and OSCAR drew false drops. A block within three quarters of a sample of
+  its place is now laid there; a real gap is handled as before. Thanks
+  @rccoleman.
+
 ## [7.1.2] - 2026-11-24
 
 ### Fixed
@@ -25,6 +58,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the card are never read or sent.
   - Every file is sent in pieces of at most 64 KB, its md5 worked out as it
     goes, so a file of any size never sits in memory whole.
+
+## [7.1.1] - 2026-11-23
 
 ### Fixed
 - **AirSense 11 over Bluetooth uses only your own machine.** With
