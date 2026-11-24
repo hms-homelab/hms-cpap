@@ -1127,11 +1127,12 @@ TEST_F(PgDatabaseTest, GetOximetrySummary_FindsRealSession) {
     os.metrics.avg_spo2 = 95.0;
     os.metrics.min_spo2 = 89.0;
     os.metrics.spo2_baseline = 96.0;
-    os.metrics.odi_3pct = 2.0;
+    os.metrics.odi_3pct = 21.0;          // per VALID hour: 7 desaturations over 1200 s
+    os.metrics.desat_count_3pct = 7;     // ODI x 3600 s would say 21
     os.metrics.avg_hr = 60.0;
     os.metrics.min_hr = 52;
     os.metrics.max_hr = 72;
-    os.metrics.valid_samples = 1800;
+    os.metrics.valid_samples = 600;      // the finger was off for the rest
     os.metrics.total_samples = 1800;
     ASSERT_TRUE(db_->saveOximetrySession("o2ring", os));
 
@@ -1140,8 +1141,9 @@ TEST_F(PgDatabaseTest, GetOximetrySummary_FindsRealSession) {
     ASSERT_TRUE(sum.found);
     EXPECT_NEAR(sum.avg_spo2, 95.0, 1e-6);
     EXPECT_NEAR(sum.min_spo2, 89.0, 1e-6);
-    EXPECT_EQ(sum.valid_samples, 1800);
+    EXPECT_EQ(sum.valid_samples, 600);
     EXPECT_EQ(sum.duration_seconds, 3600);
+    EXPECT_EQ(sum.desat_count, 7);   // the stored count, not ODI x length
 
     // A date range that does not include the session -> not found.
     auto miss = db_->getOximetrySummary("o2ring", "19990101", "19990102");

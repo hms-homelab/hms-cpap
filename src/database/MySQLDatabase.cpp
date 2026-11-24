@@ -4201,7 +4201,7 @@ IDatabase::OxiSummary MySQLDatabase::getOximetrySummary(
     const char* sql = R"(
         SELECT avg_spo2, min_spo2, spo2_baseline, odi_3pct,
                time_below_90, time_below_88, avg_hr, min_hr, max_hr,
-               valid_samples, duration_seconds
+               valid_samples, duration_seconds, desat_count
         FROM oximetry_sessions
         WHERE device_id = ?
           AND (cpap_session_date = ? OR cpap_session_date = ?)
@@ -4221,9 +4221,9 @@ IDatabase::OxiSummary MySQLDatabase::getOximetrySummary(
     mysql_stmt_bind_param(g.stmt, p.data());
     if (mysql_stmt_execute(g.stmt) != 0) return s;
 
-    ResultBinder r(11);
+    ResultBinder r(12);
     for (int i = 0; i < 7; ++i) r.bindColDouble(i);
-    for (int i = 7; i < 11; ++i) r.bindColInt(i);
+    for (int i = 7; i < 12; ++i) r.bindColInt(i);
     mysql_stmt_bind_result(g.stmt, r.data());
     mysql_stmt_store_result(g.stmt);
 
@@ -4240,6 +4240,7 @@ IDatabase::OxiSummary MySQLDatabase::getOximetrySummary(
         s.max_hr           = r.colInt(8);
         s.valid_samples    = r.colInt(9);
         s.duration_seconds = r.colInt(10);
+        s.desat_count      = r.colInt(11);
     }
 
     return s;

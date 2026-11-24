@@ -30,6 +30,7 @@
 #endif
 
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
@@ -344,6 +345,27 @@ TEST_P(OximetryBackendTest, SummaryReturnsEveryStoredField) {
     EXPECT_EQ(sum.max_hr, 88);
     EXPECT_EQ(sum.valid_samples, 3);
     EXPECT_EQ(sum.duration_seconds, 28800);
+    EXPECT_EQ(sum.desat_count, 7);
+}
+
+TEST_P(OximetryBackendTest, SummaryCountIsTheStoredOneWhenTheFingerWasOff) {
+    // 7 desaturations over 1200 s of valid samples is an ODI of 21.0/h, but
+    // the session ran 1886 s (finger off for the rest). ODI x length would
+    // say 11; the stored count is what the night had.
+    auto s = makeSession("fingeroff.vld", "20260619", 1886, 95.0, 88.0, 300);
+    s.metrics.odi_3pct         = 21.0;
+    s.metrics.desat_count_3pct = 7;
+    s.metrics.valid_samples    = 300;
+    s.metrics.total_samples    = 471;
+    for (size_t i = 0; i < s.samples.size(); i += 3) s.samples[i].invalid_flag = 1;
+    ASSERT_TRUE(db().saveOximetrySession(device_, s));
+
+    auto sum = db().getOximetrySummary(device_, "20260619", "20260620");
+    ASSERT_TRUE(sum.found);
+    EXPECT_NEAR(sum.odi_3pct, 21.0, 0.05);
+    EXPECT_EQ(sum.duration_seconds, 1886);
+    EXPECT_EQ(sum.desat_count, 7);
+    EXPECT_NE(sum.desat_count, std::lround(sum.odi_3pct * sum.duration_seconds / 3600.0));
 }
 
 TEST_P(OximetryBackendTest, SummaryMatchesOnTheNextDayForMidnightCrossing) {

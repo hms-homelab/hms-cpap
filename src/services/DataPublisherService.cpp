@@ -1,5 +1,6 @@
 #include "services/DataPublisherService.h"
 #include "mqtt/DisplayPrecision.h"
+#include "mqtt/OximetryFigures.h"
 #include "utils/OximetryDevice.h"
 #include "utils/MachineClocks.h"
 #include "utils/TimeCompat.h"
@@ -1218,6 +1219,8 @@ bool DataPublisherService::publishOximetryDiscovery() {
         {"last_heart_rate",  "bpm", "mdi:heart-pulse",    false},
         {"avg_spo2",         "%",   "mdi:pulse",          false},
         {"avg_heart_rate",   "bpm", "mdi:heart-pulse",    false},
+        {"odi",              "events/h", "mdi:arrow-down-bold-circle-outline", false},
+        {"desat_count",      "",    "mdi:counter",        false},
     };
 
     for (const auto& sensor : sensors) {
@@ -1295,6 +1298,15 @@ void DataPublisherService::publishOximetrySummary(const std::string& sleep_date_
                           std::to_string(static_cast<int>(std::round(oxi.avg_spo2))), 1, true);
     mqtt_client_->publish(prefix + "avg_heart_rate",
                           std::to_string(static_cast<int>(std::round(oxi.avg_hr))), 1, true);
+
+    // The night's ODI (the longest ring session's, as the summary reads it) and
+    // its desaturation count as stored. The count is not read back from the ODI:
+    // the ODI is per hour of VALID samples, so with finger-off time the ODI times
+    // the session's length overstates it.
+    if (oxi.duration_seconds > 0) {
+        mqtt_client_->publish(prefix + "odi", odiText(oxi.odi_3pct), 1, true);
+        mqtt_client_->publish(prefix + "desat_count", std::to_string(oxi.desat_count), 1, true);
+    }
 
     std::cout << "MQTT: O2Ring summary published (avg_spo2=" << oxi.avg_spo2
               << " avg_hr=" << oxi.avg_hr << ")" << std::endl;

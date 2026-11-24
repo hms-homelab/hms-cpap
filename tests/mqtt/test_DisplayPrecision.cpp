@@ -29,6 +29,11 @@ TEST(DisplayPrecision, TheIndexKeepsTwoDecimals) {
     EXPECT_EQ(p("ahi_delta", "events/h"), 2);
 }
 
+TEST(DisplayPrecision, TheOdiShowsOneDecimalAndItsCountNone) {
+    EXPECT_EQ(p("odi", "events/h"), 1);        // 13.5 per hour; an AHI is read to 0.01
+    EXPECT_EQ(p("desat_count"), 0);
+}
+
 TEST(DisplayPrecision, WholeNumbersForVolumesRatesAndSpo2) {
     EXPECT_EQ(p("avg_tidal_volume", "mL"), 0);   // was 518.171402
     EXPECT_EQ(p("heart_rate", "bpm"), 0);

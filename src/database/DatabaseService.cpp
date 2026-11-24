@@ -3705,7 +3705,7 @@ IDatabase::OxiSummary DatabaseService::getOximetrySummary(
         auto r = txn.exec_params(
             "SELECT avg_spo2, min_spo2, spo2_baseline, odi_3pct, "
             "time_below_90, time_below_88, avg_hr, min_hr, max_hr, "
-            "valid_samples, duration_seconds "
+            "valid_samples, duration_seconds, desat_count "
             "FROM oximetry_sessions WHERE device_id = $1 "
             "AND (cpap_session_date = $2 OR cpap_session_date = $3) "
             "AND duration_seconds > 60 "
@@ -3726,6 +3726,7 @@ IDatabase::OxiSummary DatabaseService::getOximetrySummary(
             s.max_hr = r[0]["max_hr"].as<int>(0);
             s.valid_samples = r[0]["valid_samples"].as<int>(0);
             s.duration_seconds = r[0]["duration_seconds"].as<int>(0);
+            s.desat_count = r[0]["desat_count"].as<int>(0);
         }
     } catch (const std::exception& e) {
         std::cerr << "getOximetrySummary error: " << e.what() << std::endl;

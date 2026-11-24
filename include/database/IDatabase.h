@@ -384,6 +384,7 @@ public:
         double avg_hr = 0;
         int min_hr = 0, max_hr = 0;
         int valid_samples = 0, duration_seconds = 0;
+        int desat_count = 0;   // the stored 3 % desaturation count (oximetry_sessions.desat_count)
         bool found = false;
     };
 

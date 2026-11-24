@@ -225,6 +225,7 @@ set(TEST_SOURCES
     database/test_DatabaseFactory.cpp
     mqtt/test_DiscoveryPublisher.cpp
     mqtt/test_DisplayPrecision.cpp
+    mqtt/test_OximetryFigures.cpp
     database/test_DatabaseService_pg.cpp
     database/test_PostgresEdges.cpp
     services/test_DataPublisherDeeper.cpp
