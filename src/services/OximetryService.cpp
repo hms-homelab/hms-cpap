@@ -152,6 +152,7 @@ bool OximetryService::collectAndPublish() {
                 std::lock_guard<std::mutex> lk(facts_mtx_);
                 facts_.last_read_at = static_cast<long long>(std::time(nullptr));
                 facts_.last_file    = filename;
+                saved_nights_.insert(oximetryNightOf(session->start_time));
             }
             if (archive_dir_) {
                 const std::string dir = archive_dir_();
@@ -171,6 +172,13 @@ bool OximetryService::collectAndPublish() {
 
     noteFacts(true);
     return any_new;
+}
+
+std::vector<std::string> OximetryService::takeSavedNights() {
+    std::lock_guard<std::mutex> lk(facts_mtx_);
+    std::vector<std::string> out(saved_nights_.begin(), saved_nights_.end());
+    saved_nights_.clear();
+    return out;
 }
 
 IO2RingClient::LiveReading OximetryService::pollLive() {

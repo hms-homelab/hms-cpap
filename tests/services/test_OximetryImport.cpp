@@ -582,6 +582,21 @@ public:
 
 }  // namespace
 
+TEST_F(OximetryImportTest, EachStoredRingFileNamesItsNightOnceForPublishing) {
+    auto ring = std::make_shared<FakeRing>();
+    ring->names = {"20261004221500.o2s"};
+    ring->files["20261004221500.o2s"] = o2s(5, /*finished=*/true);
+    std::shared_ptr<IDatabase> shared(std::move(db_));
+    OximetryService svc(ring, shared);
+
+    EXPECT_TRUE(svc.takeSavedNights().empty()) << "nothing stored yet";
+    EXPECT_TRUE(svc.collectAndPublish());
+    EXPECT_EQ(svc.takeSavedNights(), std::vector<std::string>{"20261004"})
+        << "an evening start is that evening's night";
+    EXPECT_TRUE(svc.takeSavedNights().empty()) << "each once";
+    shared.reset();
+}
+
 TEST_F(OximetryImportTest, AnO2RingSFileListedBeforeItIsWholeIsNotStored) {
     auto ring = std::make_shared<FakeRing>();
     ring->names = {"20261004221500.o2s"};
