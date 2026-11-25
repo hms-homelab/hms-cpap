@@ -3700,6 +3700,10 @@ bool BurstCollectorService::executeBurstCycle() {
                                     session.session_start, std::chrono::system_clock::now());
                     downloaded_sessions.push_back({session_dir, session});
                     stored_inline.insert(session.session_start);
+
+                    // The mask, as the card shows it: a new session is growth.
+                    if (session.date_folder == current_night)
+                        observeCardSession(session, session_dir, nowSeconds());
                 } else {
                     std::cerr << "CPAP: Failed to download session " << session.session_prefix << std::endl;
                     // SDD-054 D6: a failed download lists its folder again.
