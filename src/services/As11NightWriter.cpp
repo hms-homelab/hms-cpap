@@ -239,13 +239,13 @@ std::string sleepDayFolder(const WallClock& wc) {
 // ── the writer ──
 
 As11NightWriter::As11NightWriter(std::string data_dir, WallClockFn default_clock, bool preserve_gaps)
-    : preserve_gaps_(preserve_gaps), segment_gap_ms_(preserve_gaps ? 1 : kSegmentGapMs),
+    : preserve_gaps_(preserve_gaps), segment_gap_ms_(preserve_gaps ? kStrictGapMs : kSegmentGapMs),
       data_dir_(std::move(data_dir)), default_clock_(std::move(default_clock)) {}
 
 void As11NightWriter::setPreserveGaps(bool on) {
     std::lock_guard<std::mutex> lk(mtx_);
     preserve_gaps_ = on;
-    segment_gap_ms_ = on ? 1 : kSegmentGapMs;
+    segment_gap_ms_ = on ? kStrictGapMs : kSegmentGapMs;
 }
 
 bool As11NightWriter::preserveGaps() const {
