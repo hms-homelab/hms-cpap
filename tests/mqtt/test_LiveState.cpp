@@ -721,6 +721,28 @@ TEST(LiveSources, As11BluetoothRestartWithNoStreamSettlesOff) {
     EXPECT_EQ(rec.last("mask"), "OFF");
 }
 
+// The live night's four sensors (therapy, event count, AHI, last event) are
+// announced on every install with MQTT, whatever reads the machine, and the
+// therapy sensor starts off rather than unknown.
+TEST(LiveSources, TheLiveNightsSensorsAreAnnouncedOnEveryInstall) {
+    Recorder rec;
+    auto live = std::make_shared<LiveState>(rec.publish(), "cpap_test", "Test CPAP", at(kT0));
+    BurstCollectorService svc(300);
+    svc.setSourceForTest("ezshare");   // a card install: no Bluetooth machine
+    svc.setLiveState(live);
+    for (const char* id : {"sensor/cpap_test/live_event_count", "sensor/cpap_test/live_ahi",
+                           "sensor/cpap_test/live_last_event", "binary_sensor/cpap_test/live_therapy"}) {
+        bool found = false;
+        for (const auto& s : rec.out)
+            if (s.topic == "homeassistant/" + std::string(id) + "/config") found = s.retain;
+        EXPECT_TRUE(found) << id;
+    }
+    std::string therapy;
+    for (const auto& s : rec.out)
+        if (s.topic == "cpap/cpap_test/live/therapy") therapy = s.payload;
+    EXPECT_EQ(therapy, "OFF");
+}
+
 // A card read by the bursts (an ez Share, a FlashAir, a local folder): on
 // from the newest BRP's start, off at its last record's end once two listings
 // show it at EOF and unchanged (SDD-068), both a burst or two late and saying so.
@@ -929,6 +951,86 @@ TEST(LiveStateBroker, TheEntitiesTheStateAndItsChangeAreRetained) {
         pub->publish(t, "", 1, true);   // tidy up: empty retained payloads delete them
     std::this_thread::sleep_for(200ms);
     probe.disconnect();
+    pub->disconnect();
+}
+
+// Issue #115: an AirSense 11 night over this computer's Bluetooth, on a broker,
+// through the publisher setLiveState builds on the live state's broker and
+// device: a second of blocks for eight hours and four events read back as
+// Home Assistant would, retained, with the AHI over those eight hours.
+TEST(LiveStateBroker, ABluetoothNightIsRetainedOnTheLiveTopicsWithItsHours) {
+    auto pub = std::make_shared<hms::MqttClient>(testMqttConfig("livestate_as11_pub"));
+    if (!pub->connect()) GTEST_SKIP() << "no MQTT broker";
+    const std::string id = "livestate_as11_" + std::to_string(::getpid());
+    auto live = std::make_shared<LiveState>(
+        [pub](const std::string& t, const std::string& p, int q, bool r) {
+            return pub->isConnected() && pub->publish(t, p, q, r);
+        },
+        id, "Live test");
+    LivePublisher ble(live->publisher(), live->deviceId(), live->deviceName());
+    ble.setState(live, LiveState::kAs11Ble);
+    ASSERT_TRUE(ble.announce());
+
+    const std::string unit = "23000000001";
+    const int64_t t0 = static_cast<int64_t>(kT0) * 1000;
+    ble.therapy(unit, unit, true);
+    for (int64_t s = 0; s < 8 * 3600; ++s) ble.block(unit, t0 + s * 1000, t0 + (s + 1) * 1000);
+    hms_cpap::as11::RespEvent e;
+    e.reportTime = "2026-11-05T04:25:16.000Z";
+    e.durationSeconds = 12;
+    e.backdateSeconds = 12;
+    for (const char* ev : {"ObstructiveApneaEnd", "HypopneaEnd", "HypopneaEnd", "CentralApneaEnd"}) {
+        e.event = ev;
+        ble.event(unit, unit, e);
+    }
+    std::this_thread::sleep_for(300ms);
+
+    const std::string base = "cpap/" + id + "/live/";
+    const std::vector<std::string> topics{
+        "homeassistant/binary_sensor/" + id + "/live_therapy/config",
+        "homeassistant/sensor/" + id + "/live_ahi/config", base + "therapy", base + "event_count",
+        base + "ahi", base + "last_event", live->topic("mask")};
+    auto read = [&] {
+        hms::MqttClient probe(testMqttConfig("livestate_as11_probe"));
+        std::map<std::string, std::string> got;
+        std::mutex mu;
+        EXPECT_TRUE(probe.connect());
+        probe.subscribe(topics, [&](const std::string& t, const std::string& p) {
+            std::lock_guard<std::mutex> lk(mu);
+            got[t] = p;
+        }, 1);
+        std::this_thread::sleep_for(1s);
+        probe.disconnect();
+        std::lock_guard<std::mutex> lk(mu);
+        return got;
+    };
+    auto got = read();
+    EXPECT_EQ(parse(got[topics[0]])["unique_id"].asString(), id + "_live_therapy");
+    EXPECT_EQ(parse(got[topics[1]])["unique_id"].asString(), id + "_live_ahi");
+    EXPECT_EQ(got[base + "therapy"], "ON");
+    EXPECT_EQ(got[base + "event_count"], "4");
+    EXPECT_EQ(got[base + "ahi"], "0.5") << "four events over eight hours";
+    EXPECT_EQ(got[base + "last_event"], "CA");
+    EXPECT_EQ(got[live->topic("mask")], "ON");
+
+    ble.therapy(unit, unit, false);
+    std::this_thread::sleep_for(300ms);
+    got = read();
+    EXPECT_EQ(got[base + "therapy"], "OFF");
+    EXPECT_EQ(got[live->topic("mask")], "OFF");
+
+    for (const char* leaf : {"therapy", "event_count", "ahi", "last_event"})
+        pub->publish(base + leaf, "", 1, true);   // tidy up: empty retained payloads delete them
+    for (const char* s : {"sensor/%s/live_event_count", "sensor/%s/live_ahi", "sensor/%s/live_last_event",
+                          "binary_sensor/%s/live_therapy"}) {
+        std::string t = s;
+        t.replace(t.find("%s"), 2, id);
+        pub->publish("homeassistant/" + t + "/config", "", 1, true);
+    }
+    for (const auto& t : {live->maskConfigTopic(), live->eventsConfigTopic(), live->topic("mask"),
+                          live->topic("mask_changed"), live->topic("live_events")})
+        pub->publish(t, "", 1, true);
+    std::this_thread::sleep_for(200ms);
     pub->disconnect();
 }
 

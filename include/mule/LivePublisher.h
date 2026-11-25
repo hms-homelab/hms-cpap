@@ -58,8 +58,8 @@ public:
     /// are kept per unit (one unit streams one machine); `machine` is the
     /// machine's serial when a block has named it, else "".
     /// `restated`: no change, the state as this run first hears it (after a
-    /// restart). It goes to the shared live topics only; the live/* topics
-    /// say changes, as they always have.
+    /// restart). It goes to the shared live topics and to live/therapy (the
+    /// machine as found); it starts no night and says no counts.
     void therapy(const std::string& unit, const std::string& machine, bool on, bool restated = false);
     /// A block landed: where the night stands on the machine's clock.
     void block(const std::string& unit, int64_t start_ms, int64_t end_ms);
