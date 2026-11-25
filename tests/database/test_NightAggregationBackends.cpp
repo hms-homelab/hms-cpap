@@ -594,6 +594,34 @@ TEST_P(NightAggregationBackendTest, ASessionWithNoLeakMinutesHasNoLeak) {
     EXPECT_TRUE(rows[0u]["leak_95"].isNull()) << engineName(GetParam());
 }
 
+// A burst saves the session after every file, so it re-derives that session's
+// night alone: the same row the whole-history pass writes.
+TEST_P(NightAggregationBackendTest, OneNightsAggregationEqualsTheWholeHistorys) {
+    saveRespiratorySession(nightStart(), 4, {12.0, 14.0, 16.0, 18.0}, {400, 420, 440, 460},
+                           {5.0, 6.0, 7.0, 8.0}, {9.0, 9.5, 10.0, 10.5});
+    saveRespiratorySession(nightStart() + minutes(300), 2, {20.0, 22.0}, {500, 520}, {9.0, 10.0});
+    ASSERT_TRUE(db_->aggregateDailySummaryForNight(device_, nightStart() + minutes(300)))
+        << engineName(GetParam());
+    const auto one = dailyRow();
+    ASSERT_EQ(one.size(), 1u) << engineName(GetParam());
+    EXPECT_GT(num(one[0u]["resp_rate_50"]), 0.0) << engineName(GetParam());
+
+    ASSERT_TRUE(db_->aggregateDailySummaryFromSessions(device_)) << engineName(GetParam());
+    EXPECT_EQ(one, dailyRow()) << engineName(GetParam());
+}
+
+TEST_P(NightAggregationBackendTest, OneNightsAggregationLeavesTheOtherNights) {
+    if (db_->dbType() != DbType::SQLITE)
+        GTEST_SKIP() << "only SQLite narrows it; the others re-derive every night";
+    saveRespiratorySession(nightStart() - std::chrono::hours(24), 1, {12.0}, {400}, {5.0});
+    saveRespiratorySession(nightStart(), 1, {14.0}, {420}, {6.0});
+    ASSERT_TRUE(db_->aggregateDailySummaryForNight(device_, nightStart()));
+
+    const auto rows = dailyRow();
+    ASSERT_EQ(rows.size(), 1u);
+    EXPECT_NEAR(num(rows[0u]["resp_rate_50"]), 14.0, 1e-6);
+}
+
 // SDD-047 D2: one night, one AHI. A day of three stretches, one of them
 // carrying unclassified apneas (ResMed's bare "Apnea"). The daily summary and
 // getNightlyMetrics compute the index with the same formula, the day's typed

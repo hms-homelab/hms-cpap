@@ -296,6 +296,16 @@ public:
     /// philosophy as saveSTRDailyRecords.
     virtual bool aggregateDailySummaryFromSessions(const std::string& device_id) = 0;
 
+    /// The same, for the one night (session_start - 12h) that session_start is
+    /// in. A session is saved after every file a burst downloads, so that save
+    /// must not cost the whole history. An engine without its own narrower
+    /// form re-aggregates everything.
+    virtual bool aggregateDailySummaryForNight(
+        const std::string& device_id, const std::chrono::system_clock::time_point& session_start) {
+        (void)session_start;
+        return aggregateDailySummaryFromSessions(device_id);
+    }
+
     // -- Nightly / range metrics ----------------------------------------------
 
     virtual std::optional<SessionMetrics> getNightlyMetrics(

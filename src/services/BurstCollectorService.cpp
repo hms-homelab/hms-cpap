@@ -4745,14 +4745,18 @@ bool BurstCollectorService::parseAndStoreSession(
     // built from a Bluetooth stream of the same therapy (overlapping in time;
     // the machine may cut its card files where the stream had one) is
     // replaced by this row. The collector and a local folder both save here.
-    As11NightImport::replaceConstructedFiles(*db_service_, device_id_, session_start,
-                                             dataEndOf(*parsed).value_or(session_start));
+    const int replaced = As11NightImport::replaceConstructedFiles(
+        *db_service_, device_id_, session_start, dataEndOf(*parsed).value_or(session_start));
 
     // SDD-026: the night's row in cpap_daily_summary is ours wherever the
     // night has sessions, so every save re-derives it. Per session, so the
     // dashboard follows the sessions list as it fills (issue #16 was a full
-    // session list behind a blank dashboard).
-    db_service_->aggregateDailySummaryFromSessions(device_id_);
+    // session list behind a blank dashboard). Only this night changed, unless
+    // a replaced copy stood in another one.
+    if (replaced > 0)
+        db_service_->aggregateDailySummaryFromSessions(device_id_);
+    else
+        db_service_->aggregateDailySummaryForNight(device_id_, session_start);
 
     return true;
 }

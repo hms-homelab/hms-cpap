@@ -2635,8 +2635,29 @@ std::optional<std::string> SQLiteDatabase::getLastSTRDate(const std::string& dev
 // ---------------------------------------------------------------------------
 
 bool SQLiteDatabase::aggregateDailySummaryFromSessions(const std::string& device_id) {
+    return aggregateDailySummary(device_id, "");
+}
+
+bool SQLiteDatabase::aggregateDailySummaryForNight(
+    const std::string& device_id, const std::chrono::system_clock::time_point& session_start) {
+    return aggregateDailySummary(device_id, fmtTimestamp(session_start));
+}
+
+bool SQLiteDatabase::aggregateDailySummary(const std::string& device_id,
+                                           const std::string& session_start) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!db_) return false;
+
+    // ?2 is any time in the one night wanted; unused for every night.
+    const bool one_night = !session_start.empty();
+    const std::string of_sessions =
+        one_night ? " AND date(s.session_start, '-12 hours') = date(?2, '-12 hours') " : " ";
+    const std::string of_summary =
+        one_night ? " AND record_date = date(?2, '-12 hours') " : " ";
+    const auto bindNight = [&](sqlite3_stmt* stmt) {
+        bind_text(stmt, 1, device_id);
+        if (one_night) bind_text(stmt, 2, session_start);
+    };
 
     // NULLIF(...,0) on pressure/spo2/epr: PrismaParser doesn't aggregate WMEDF
     // signal samples yet (issue #15), so those columns are always 0 in
@@ -2701,7 +2722,7 @@ bool SQLiteDatabase::aggregateDailySummaryFromSessions(const std::string& device
             datetime('now')
         FROM cpap_sessions s
         JOIN cpap_session_metrics m ON m.session_id = s.id
-        WHERE s.device_id = ?
+        WHERE s.device_id = ?1)" + of_sessions + R"(
         GROUP BY s.device_id, date(s.session_start, '-12 hours')
         ON CONFLICT (device_id, record_date) DO UPDATE SET
             -- SDD-026: ours wins for the index family and the night's
@@ -2738,7 +2759,7 @@ bool SQLiteDatabase::aggregateDailySummaryFromSessions(const std::string& device
                   << sqlite3_errmsg(db_) << std::endl;
         return false;
     }
-    bind_text(g.stmt, 1, device_id);
+    bindNight(g.stmt);
 
     if (sqlite3_step(g.stmt) != SQLITE_DONE) {
         std::cerr << "SQLite: aggregateDailySummaryFromSessions error: "
@@ -2750,25 +2771,25 @@ bool SQLiteDatabase::aggregateDailySummaryFromSessions(const std::string& device
     // STR's, because a session's percentile does not combine with another's.
     // Its own statement, reading the session count from cpap_sessions: the
     // re-derive above must never read the table it writes (MySQL).
-    const char* str_wins = R"(
+    const std::string str_wins = R"(
         UPDATE cpap_daily_summary
            SET leak_50       = COALESCE(leak_50_str, leak_50),
                leak_95       = COALESCE(leak_95_str, leak_95),
                mask_press_50 = COALESCE(mask_press_50_str, mask_press_50),
                spo2_50       = COALESCE(spo2_50_str, spo2_50)
-         WHERE device_id = ?
+         WHERE device_id = ?1)" + of_summary + R"(
            AND (SELECT COUNT(*) FROM cpap_sessions s
                  WHERE s.device_id = cpap_daily_summary.device_id
                    AND date(s.session_start, '-12 hours') = cpap_daily_summary.record_date) > 1
     )";
 
     StmtGuard u;
-    if (sqlite3_prepare_v2(db_, str_wins, -1, &u.stmt, nullptr) != SQLITE_OK) {
+    if (sqlite3_prepare_v2(db_, str_wins.c_str(), -1, &u.stmt, nullptr) != SQLITE_OK) {
         std::cerr << "SQLite: aggregateDailySummaryFromSessions (STR percentiles) prepare error: "
                   << sqlite3_errmsg(db_) << std::endl;
         return false;
     }
-    bind_text(u.stmt, 1, device_id);
+    bindNight(u.stmt);
     if (sqlite3_step(u.stmt) != SQLITE_DONE) {
         std::cerr << "SQLite: aggregateDailySummaryFromSessions (STR percentiles) error: "
                   << sqlite3_errmsg(db_) << std::endl;
@@ -2786,34 +2807,34 @@ bool SQLiteDatabase::aggregateDailySummaryFromSessions(const std::string& device
     // metrics for. Issue #56 adds the therapy pressure's median, 95th
     // percentile and maximum; the STR has no copy of those, so a night without
     // calculated metrics keeps them NULL and the UI falls back to mask pressure.
-    const char* resp = R"(
+    const std::string resp = R"(
         WITH v AS (
             SELECT date(s.session_start, '-12 hours') AS night, 'rr' AS k, 0.5 AS p, c.respiratory_rate AS x
               FROM cpap_calculated_metrics c JOIN cpap_sessions s ON s.id = c.session_id
-             WHERE s.device_id = ?1 AND c.respiratory_rate > 0
+             WHERE s.device_id = ?1 AND c.respiratory_rate > 0)" + of_sessions + R"(
             UNION ALL
             SELECT date(s.session_start, '-12 hours'), 'tv', 0.5, c.tidal_volume
               FROM cpap_calculated_metrics c JOIN cpap_sessions s ON s.id = c.session_id
-             WHERE s.device_id = ?1 AND c.tidal_volume > 0
+             WHERE s.device_id = ?1 AND c.tidal_volume > 0)" + of_sessions + R"(
             UNION ALL
             SELECT date(s.session_start, '-12 hours'), 'mv', 0.5, c.minute_ventilation
               FROM cpap_calculated_metrics c JOIN cpap_sessions s ON s.id = c.session_id
-             WHERE s.device_id = ?1 AND c.minute_ventilation > 0
+             WHERE s.device_id = ?1 AND c.minute_ventilation > 0)" + of_sessions + R"(
             UNION ALL
             SELECT date(s.session_start, '-12 hours'), 'mp95', 0.95, c.mask_pressure
               FROM cpap_calculated_metrics c JOIN cpap_sessions s ON s.id = c.session_id
-             WHERE s.device_id = ?1 AND c.mask_pressure > 0
+             WHERE s.device_id = ?1 AND c.mask_pressure > 0)" + of_sessions + R"(
             -- Issue #56: the therapy pressure the machine delivered (PLD Press).
             -- With EPR the mask pressure dips below the set minimum on every
             -- breath out; this one does not.
             UNION ALL
             SELECT date(s.session_start, '-12 hours'), 'tp50', 0.5, c.therapy_pressure
               FROM cpap_calculated_metrics c JOIN cpap_sessions s ON s.id = c.session_id
-             WHERE s.device_id = ?1 AND c.therapy_pressure > 0
+             WHERE s.device_id = ?1 AND c.therapy_pressure > 0)" + of_sessions + R"(
             UNION ALL
             SELECT date(s.session_start, '-12 hours'), 'tp95', 0.95, c.therapy_pressure
               FROM cpap_calculated_metrics c JOIN cpap_sessions s ON s.id = c.session_id
-             WHERE s.device_id = ?1 AND c.therapy_pressure > 0
+             WHERE s.device_id = ?1 AND c.therapy_pressure > 0)" + of_sessions + R"(
         ), r AS (
             SELECT night, k, x,
                    ROW_NUMBER() OVER (PARTITION BY night, k ORDER BY x) AS rn,
@@ -2849,16 +2870,16 @@ bool SQLiteDatabase::aggregateDailySummaryFromSessions(const std::string& device
                                            WHERE pct.night = cpap_daily_summary.record_date AND k = 'tp95'), therapy_press_95),
                therapy_press_max = COALESCE((SELECT ROUND(x, 2) FROM pct
                                            WHERE pct.night = cpap_daily_summary.record_date AND k = 'tpmax'), therapy_press_max)
-         WHERE device_id = ?1
+         WHERE device_id = ?1)" + of_summary + R"(
     )";
 
     StmtGuard rs;
-    if (sqlite3_prepare_v2(db_, resp, -1, &rs.stmt, nullptr) != SQLITE_OK) {
+    if (sqlite3_prepare_v2(db_, resp.c_str(), -1, &rs.stmt, nullptr) != SQLITE_OK) {
         std::cerr << "SQLite: aggregateDailySummaryFromSessions (respiratory) prepare error: "
                   << sqlite3_errmsg(db_) << std::endl;
         return false;
     }
-    bind_text(rs.stmt, 1, device_id);
+    bindNight(rs.stmt);
     if (sqlite3_step(rs.stmt) != SQLITE_DONE) {
         std::cerr << "SQLite: aggregateDailySummaryFromSessions (respiratory) error: "
                   << sqlite3_errmsg(db_) << std::endl;
