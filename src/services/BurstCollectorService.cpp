@@ -2689,9 +2689,9 @@ bool BurstCollectorService::executeBurstCycle() {
     // SDD-029: what the operator removed, for every branch of this burst.
     removed_nights_ = removedNightSet(*db_service_, device_id_);
 
-    // SDD-043: before anything can return early, close the local nights that
-    // have settled, whichever path stored them and whenever.
-    closeSettledOpenLocalNights(std::chrono::system_clock::now());
+    // SDD-043: before anything can return early, close the nights that have
+    // settled, whichever path stored them and whenever.
+    closeSettledOpenNights(std::chrono::system_clock::now());
 
     // SDD-010: the retention anchor. Everything else that decides whether to
     // re-check a session is anchored on the CURRENT DATE (today's folder, or
@@ -4289,8 +4289,10 @@ void BurstCollectorService::closeIfSettledLocalNight(
     }
 }
 
-int BurstCollectorService::closeSettledOpenLocalNights(std::chrono::system_clock::time_point now) {
-    if (cpap_source_ != "local" || !db_service_) return 0;
+int BurstCollectorService::closeSettledOpenNights(std::chrono::system_clock::time_point now) {
+    // The sources the burst lists folder by folder. The others close their own.
+    if (cpap_source_ != "local" && cpap_source_ != "ezshare" && cpap_source_ != "flashair") return 0;
+    if (!db_service_) return 0;
     int closed = 0;
     // The starts are the machine's clock: so is the cutoff (SDD-074 D7).
     const auto machine_now = machine_clocks::nowWall(device_id_, now);
@@ -4303,7 +4305,7 @@ int BurstCollectorService::closeSettledOpenLocalNights(std::chrono::system_clock
         }
     }
     if (closed > 0) {
-        std::cout << "CPAP: closed " << closed << " settled local night(s) on their own data" << std::endl;
+        std::cout << "CPAP: closed " << closed << " settled night(s) on their own data" << std::endl;
     }
     return closed;
 }
