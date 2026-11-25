@@ -934,9 +934,12 @@ void BurstCollectorService::setLiveState(std::shared_ptr<LiveState> live) {
     live_ = live;
     as11_live_.reset();
     if (!live_) return;
-    // No publish function: the Bluetooth night has only the shared topics.
-    as11_live_ = std::make_shared<mule::LivePublisher>(nullptr, device_id_, "");
+    // The night's own topics (therapy, event count, AHI, last event) go out
+    // on the shared broker and device, as the Mule's do.
+    as11_live_ = std::make_shared<mule::LivePublisher>(live_->publisher(), live_->deviceId(),
+                                                       live_->deviceName());
     as11_live_->setState(live_, LiveState::kAs11Ble);
+    as11_live_->announce();
     // SDD-064 D5: the device's mask going off is a night's end, whichever
     // source saw it; it is what starts a DreamStation 2 read.
     live_->setMaskHook([this](const LiveState::MaskChange& c, bool night_ended) {
@@ -1118,7 +1121,10 @@ void BurstCollectorService::initAirSense11() {
         // machine's events go to the house's MQTT as they arrive.
         client->setLiveHooks({
             [this](const std::string& serial, bool on) {
-                if (auto p = as11Live()) p->therapy(serial, serial, on);
+                if (auto p = as11Live()) {
+                    if (on) p->announce();   // again: a broker that was away at start
+                    p->therapy(serial, serial, on);
+                }
                 // Issue #50: no burst reads this night while it streams (it
                 // is imported when the stream ends), so the session's own
                 // topics are said here: ON while the machine streams, OFF
@@ -1129,6 +1135,11 @@ void BurstCollectorService::initAirSense11() {
             },
             [this](const std::string& serial, const as11::RespEvent& e) {
                 if (auto p = as11Live()) p->event(serial, serial, e);
+            },
+            // Where the night stands on the machine's clock: the live AHI is
+            // events over the hours so far, and without this it has none.
+            [this](const as11::StreamBlock& b) {
+                if (auto p = as11Live()) p->block(b.serial, b.start_ms, b.endMs());
             },
         });
         client->startNightLoop(as11_night_writer_, [this] { as11_summary_due_ = true; });

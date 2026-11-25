@@ -112,6 +112,12 @@ public:
     /// publisher uses.
     void session(bool on);
 
+    /// The broker send this state uses, and the device it speaks for: for a
+    /// publisher of more live sensors on the same device (As11LiveStatsPublisher).
+    Publish            publisher() const { return publish_; }
+    const std::string& deviceId() const { return device_id_; }
+    const std::string& deviceName() const { return device_name_; }
+
     std::string topic(const std::string& leaf) const;
     std::string maskConfigTopic() const;
     std::string eventsConfigTopic() const;

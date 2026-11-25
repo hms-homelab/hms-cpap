@@ -93,6 +93,14 @@ bool LivePublisher::announce() {
         ok = publish_("homeassistant/" + std::string(s.kind) + "/" + device_id_ + "/" + s.id + "/config",
                       compact(c), 1, true) && ok;
     }
+    // Until a machine has said otherwise it is not in therapy; without this
+    // the entity reads "unknown" until the first night streams.
+    bool idle;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        idle = nights_.empty();
+    }
+    if (idle) send("therapy", "OFF", true);
     return ok;
 }
 
@@ -137,7 +145,11 @@ void LivePublisher::therapy(const std::string& unit, const std::string& machine,
         state->sourceSeen(unit);
         state->mask(c, now);
     }
-    if (restated) return;
+    if (restated) {
+        // The machine as found, not a change: say it, but start no new night.
+        send("therapy", on ? "ON" : "OFF", true);
+        return;
+    }
     Json::Value v(Json::objectValue);
     v["unit"]        = unit;
     v["machine"]     = machine;

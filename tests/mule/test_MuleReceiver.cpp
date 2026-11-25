@@ -471,7 +471,7 @@ TEST_F(MuleReceiverTest, EventsAndTherapyGoOutLiveAndEveryChangeWakesTheHost) {
     FakeUnit unit(*svc_);
     unit.hello(false);
     EXPECT_EQ(woken, 0);
-    EXPECT_EQ(last("therapy"), "") << "no therapy yet, nothing said";
+    EXPECT_EQ(last("therapy"), "OFF") << "no night yet: off, not unknown";
 
     // Mask on: therapy ON, counts at zero, the host woken.
     unit.sendState(true, 0);

@@ -955,7 +955,10 @@ bool AirSense11BleClient::streamOnce() {
     card_feed::rootWritten(writer_->rootFor(serial), serial,
                            card_feed::kSourceBleAs11);   // platform SDD-059 D3, SDD-079 D1
 
-    as11::SecondAssembler assembler([this](as11::StreamBlock&& b) { writer_->onBlock(b); });
+    as11::SecondAssembler assembler([this](as11::StreamBlock&& b) {
+        writer_->onBlock(b);
+        if (live_.block) live_.block(b);
+    });
     assembler.setSerial(serial);
     therapy_ = therapy;
     session_.setStreamHandlers({
