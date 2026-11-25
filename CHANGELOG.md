@@ -5,6 +5,26 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.2.1] - 2026-11-24
+
+### Fixed
+- **An AirSense 11 night over Bluetooth fills the live sensors (#119, #115).**
+  Live therapy, Live event count, Live AHI and Live last event now get their
+  values on a Bluetooth night, as they do from a Mule & Miner, and the live
+  AHI counts over the hours the night's blocks cover: one event no longer
+  reads 12.0/h all night. The four sensors are announced on every install
+  with MQTT on, and Live therapy starts off rather than unknown; a machine
+  found already streaming after a restart is stated as on. Thanks @rccoleman.
+- **The ring's night reaches Home Assistant when its file lands (#118).**
+  The ring's average SpO2, heart rate, ODI and desaturation count were
+  published only at the end of the nightly summary, under the summary's own
+  day, which could be a day off the ring's night or run before the ring's
+  file was stored, so Home Assistant kept the previous night's figures. The
+  figures now go out as each ring file read over Bluetooth is stored, under
+  the ring's own night. Thanks @rccoleman.
+- **The sessions list reads only the ring's own recordings** for each night's
+  SpO2 and heart rate, as every other oximetry reader does (#116 follow-up).
+
 ## [7.2.0] - 2026-11-24
 
 ### Added
