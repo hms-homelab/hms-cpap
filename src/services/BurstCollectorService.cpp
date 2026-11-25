@@ -2654,6 +2654,12 @@ bool BurstCollectorService::executeBurstCycle() {
                           << ", run status " << live.run << ")" << std::endl;
                 const bool saved = oximetry_service_->collectAndPublish();
                 o2ring_watch.collected(saved);
+                // The ring's night is published when its file lands: the
+                // average SpO2 and heart rate, ODI and desaturation count.
+                // It was only done at the end of the nightly summary, under
+                // that summary's own day, which can be a day off the ring's.
+                for (const auto& night : oximetry_service_->takeSavedNights())
+                    if (data_publisher_) data_publisher_->publishOximetrySummary(night);
                 if (o2ring_watch.firstTry())
                     ds2NightEnded("o2ring");   // SDD-064 D5: the ring's night ended too
             }

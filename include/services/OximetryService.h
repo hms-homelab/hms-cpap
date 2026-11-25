@@ -55,6 +55,11 @@ public:
     /** Get last live reading (from most recent pollLive call). */
     const IO2RingClient::LiveReading& getLastLive() const { return last_live_; }
 
+    /// The nights (YYYYMMDD, the ring's own night rule) of the ring files stored
+    /// since this was last asked, each once. For publishing a night's figures
+    /// when its file lands, not when something else happens to run later.
+    std::vector<std::string> takeSavedNights();
+
     /// What the last talk with the ring found, for the Devices page.
     /// Recorded when this service polls or reads the ring; reading it never
     /// talks to the ring. checked_at 0: not asked since this start.
@@ -76,6 +81,7 @@ private:
     /// ring was last heard before this start's first read.
     void seedLastRead() const;
     mutable std::mutex facts_mtx_;
+    std::set<std::string> saved_nights_;   // under facts_mtx_
     mutable Facts facts_;
     mutable bool last_read_seeded_ = false;
     std::shared_ptr<IO2RingClient> client_;
