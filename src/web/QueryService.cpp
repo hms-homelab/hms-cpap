@@ -375,13 +375,15 @@ Json::Value QueryService::getSessions(int limit, int offset) {
         " AVG(CASE WHEN x.heart_rate > 20 AND x.heart_rate < 250 THEN x.heart_rate END) as hr"
         " FROM oximetry_samples x"
         " WHERE " + valid + " AND x.oximetry_session_id IN ("
-        "SELECT l.id FROM oximetry_sessions l WHERE SUBSTR(l.filename, 1, 5) = 'live_'"
+        "SELECT l.id FROM oximetry_sessions l WHERE " + sql::isLiveOxiFilename("l.filename") +
         " AND (l.avg_spo2 IS NULL OR l.avg_spo2 = 0))"
         " GROUP BY x.oximetry_session_id) smp ON smp.sid = o.id"
-        " WHERE " + sql::oxiNotSuperseded("o", dt_) + ") t"
+        // The ring's rows only, as every other oximetry reader takes them.
+        " WHERE o.device_id = " + sql::param(1, dt_) +
+        " AND " + sql::oxiNotSuperseded("o", dt_) + ") t"
         " GROUP BY " + sql::sleepDay("t.start_time", dt_) + ") ox"
         " ON ox.ox_day = " + sql::sleepDay("s.session_start", dt_) +
-        " WHERE s.device_id = " + sql::param(1, dt_) +
+        " WHERE s.device_id = " + sql::param(2, dt_) +
         " GROUP BY " + sql::sleepDay("s.session_start", dt_);
 
     // A night that exists only as an O2 recording (CSV upload, or a BLE pull
@@ -416,7 +418,7 @@ Json::Value QueryService::getSessions(int limit, int offset) {
         " WHERE " + sql::oxiNotSuperseded("o", dt_) +
         " AND " + sql::sleepDay("o.start_time", dt_) + " NOT IN ("
         "SELECT DISTINCT " + sql::sleepDay("s2.session_start", dt_) +
-        " FROM cpap_sessions s2 WHERE s2.device_id = " + sql::param(2, dt_) + ")"
+        " FROM cpap_sessions s2 WHERE s2.device_id = " + sql::param(3, dt_) + ")"
         " GROUP BY " + sql::sleepDay("o.start_time", dt_);
 
     // UNION ALL rather than a join: the arms are disjoint by construction, and
@@ -429,7 +431,8 @@ Json::Value QueryService::getSessions(int limit, int offset) {
         " LIMIT " + std::to_string(archive_enabled ? limit + offset + static_cast<int>(archive["nights"].size()) : limit) +
         " OFFSET " + std::to_string(archive_enabled ? 0 : offset);
 
-    Json::Value rows = query(q, {device_id_, device_id_});
+    // In the order the placeholders appear: MySQL and SQLite bind "?" by position.
+    Json::Value rows = query(q, {kOximetryDeviceId, device_id_, device_id_});
     // SDD-074 decision 2: what the page adds to show a night on this
     // computer's clock (0 on the machine's).
     for (auto& row : rows)

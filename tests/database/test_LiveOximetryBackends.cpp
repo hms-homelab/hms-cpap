@@ -411,8 +411,16 @@ TEST_P(LiveOximetryBackendTest, TheSessionsListReadsTheRingsFiguresForNightsTheM
     // Night B: the machine has its own figures; the ring's do not replace them.
     ASSERT_TRUE(night(3, 10, 88.0, 55)) << eng();
     ASSERT_TRUE(file(file_ + "3", ring(2099, 3, 10, 22, 50), 100, 96, 60)) << eng();
-    // Night C: neither the machine nor the ring has any.
+    // Night C: neither the machine nor the ring has any. A recording filed
+    // under another device that night is not the ring's and is not read.
     ASSERT_TRUE(night(3, 20, std::nullopt, std::nullopt)) << eng();
+    {
+        auto other = ringFile(file_ + "4", ring(2099, 3, 20, 22, 50), 100);
+        other.metrics.avg_spo2 = 80;
+        other.metrics.avg_hr = 99;
+        ASSERT_TRUE(db_->saveOximetrySession("liveo2_other_" + std::to_string(::getpid()), other))
+            << eng();
+    }
     // Night D: only the bridge's live stand-in so far (no stored average, the
     // ring's file has not landed): read from its samples, as the page did.
     ASSERT_TRUE(night(3, 25, std::nullopt, std::nullopt)) << eng();
