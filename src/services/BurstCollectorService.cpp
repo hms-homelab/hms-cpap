@@ -481,6 +481,24 @@ std::string BurstCollectorService::summaryPromptTemplate(const AppConfig* cfg, s
             "Session data:\n{metrics}";
 }
 
+#ifdef WITH_BLE
+namespace {
+// An O2Ring-S found off its clock is set to the time now on the ring clock's
+// setting (the Devices page); HMS_CPAP_O2RING_SET_CLOCK=off leaves it as the
+// ring's own app set it.
+std::shared_ptr<O2RingBleClient> makeO2RingBleClient() {
+    auto client = std::make_shared<O2RingBleClient>();
+    const char* env = std::getenv("HMS_CPAP_O2RING_SET_CLOCK");
+    const std::string v = env ? env : "";
+    if (v != "off" && v != "0" && v != "false")
+        client->setWallNow([] {
+            return machine_clocks::nowWall(kOximetryDeviceId, static_cast<long long>(std::time(nullptr)));
+        });
+    return client;
+}
+}  // namespace
+#endif
+
 void BurstCollectorService::initO2Ring() {
     bool o2ring_enabled       = app_config_ ? app_config_->o2ring.enabled   : false;
     std::string o2ring_url    = app_config_ ? app_config_->o2ring.mule_url  : "";
@@ -493,7 +511,7 @@ void BurstCollectorService::initO2Ring() {
     std::shared_ptr<IO2RingClient> client;
 #ifdef WITH_BLE
     if (o2ring_mode == "ble") {
-        client = std::make_shared<O2RingBleClient>();
+        client = makeO2RingBleClient();
         std::cout << "O2Ring: Enabled (mode=ble, direct Bluetooth)" << std::endl;
     }
 #else
@@ -5637,7 +5655,7 @@ void BurstCollectorService::reloadConfig() {
             std::shared_ptr<IO2RingClient> client;
 #ifdef WITH_BLE
             if (nc.o2ring_mode == "ble") {
-                client = std::make_shared<O2RingBleClient>();
+                client = makeO2RingBleClient();
                 std::cout << "Config reload: O2Ring -> ble (direct Bluetooth)" << std::endl;
             }
 #else

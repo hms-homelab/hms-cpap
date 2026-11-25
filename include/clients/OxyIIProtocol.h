@@ -106,6 +106,17 @@ std::vector<uint8_t> timePayload(const DateTime& t);
 /// Seconds since 1970 for t taken as UTC.
 uint32_t epochOf(const DateTime& t);
 
+/// The inverse: the wall time that `label` seconds since 1970 (a wall clock
+/// read as if it were UTC, as epochOf reads one) names.
+DateTime dateTimeOf(long long label);
+
+/// What set time (0xC0) should carry. The ring's own clock back, as the vendor
+/// app leaves it, unless it is more than tolerance_s from `now_label` (the
+/// ring clock's wall time now, same label form): then now. `off_s` receives
+/// the ring's offset from now (positive: the ring is behind).
+DateTime clockToSend(const DateTime& ring, long long now_label, int tolerance_s,
+                     long long* off_s = nullptr);
+
 struct Info {
     std::string firmware;
     std::string serial;

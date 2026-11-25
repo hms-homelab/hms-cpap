@@ -231,3 +231,47 @@ TEST(OxyIIProtocol, MatchesItsNames) {
     EXPECT_FALSE(nameMatches("O2Ring 1276"));
     EXPECT_FALSE(nameMatches("S8"));
 }
+
+TEST(OxyIIClock, DateTimeOfIsTheInverseOfEpochOf) {
+    for (const DateTime t : {DateTime{2026, 10, 5, 0, 0, 0}, DateTime{2028, 2, 29, 12, 0, 0},
+                             DateTime{2026, 11, 25, 12, 33, 49}, DateTime{2026, 12, 31, 23, 59, 59},
+                             DateTime{2027, 1, 1, 0, 0, 0}, DateTime{2026, 3, 1, 7, 8, 9}}) {
+        const DateTime r = dateTimeOf(epochOf(t));
+        EXPECT_EQ(r.year, t.year);
+        EXPECT_EQ(r.month, t.month);
+        EXPECT_EQ(r.day, t.day);
+        EXPECT_EQ(r.hour, t.hour);
+        EXPECT_EQ(r.minute, t.minute);
+        EXPECT_EQ(r.second, t.second);
+    }
+}
+
+// A ring a few seconds off is written back as it was; one a quarter of an
+// hour behind is set to the time now.
+TEST(OxyIIClock, ADriftedRingIsSetAndAnAccurateOneIsLeftAlone) {
+    const DateTime ring{2026, 11, 25, 12, 33, 49};
+    const long long now = epochOf(DateTime{2026, 11, 25, 12, 47, 11});
+    long long off = 0;
+    const DateTime set = clockToSend(ring, now, 60, &off);
+    EXPECT_EQ(off, 13 * 60 + 22);
+    EXPECT_EQ(epochOf(set), static_cast<uint32_t>(now));
+
+    const DateTime near = clockToSend(ring, epochOf(ring) + 45, 60, &off);   // 45 s behind
+    EXPECT_EQ(off, 45);
+    EXPECT_EQ(epochOf(near), epochOf(ring));
+    EXPECT_EQ(epochOf(clockToSend(ring, epochOf(ring) - 45, 60)), epochOf(ring));   // 45 s ahead
+
+    // Ahead by more than the tolerance is set too.
+    off = 0;
+    const DateTime back = clockToSend(ring, epochOf(ring) - 300, 60, &off);
+    EXPECT_EQ(off, -300);
+    EXPECT_EQ(epochOf(back), epochOf(ring) - 300);
+}
+
+TEST(OxyIIClock, TheSetTimePayloadCarriesTheTimeSent) {
+    const auto p = timePayload(dateTimeOf(epochOf(DateTime{2026, 11, 25, 12, 47, 11})));
+    ASSERT_EQ(p.size(), 8u);
+    EXPECT_EQ(p[0] | (p[1] << 8), 2026);
+    EXPECT_EQ(p[2], 11); EXPECT_EQ(p[3], 25);
+    EXPECT_EQ(p[4], 12); EXPECT_EQ(p[5], 47); EXPECT_EQ(p[6], 11);
+}

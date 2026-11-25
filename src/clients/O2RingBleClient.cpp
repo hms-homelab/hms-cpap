@@ -483,7 +483,22 @@ bool O2RingBleClient::oxySession() {
     const bool clock_ok = info && info->clock_valid;
 
     if (clock_ok) {
-        if (!oxyRequest(oxyii::kOpSetTime, oxyii::timePayload(info->clock), 3000))
+        // The ring's own clock back, unless it has drifted: then the time now
+        // on the ring's clock setting, so its files and this app's agree.
+        oxyii::DateTime to_send = info->clock;
+        if (wall_now_) {
+            long long off = 0;
+            to_send = oxyii::clockToSend(info->clock, wall_now_(), kClockToleranceS, &off);
+            if (to_send.second != info->clock.second || to_send.minute != info->clock.minute ||
+                to_send.hour != info->clock.hour || to_send.day != info->clock.day ||
+                to_send.month != info->clock.month || to_send.year != info->clock.year)
+                std::cout << "O2Ring BLE: the O2Ring-S clock was " << off << " s "
+                          << (off > 0 ? "behind" : "ahead") << "; setting it to "
+                          << to_send.year << "-" << int(to_send.month) << "-" << int(to_send.day)
+                          << " " << int(to_send.hour) << ":" << int(to_send.minute) << ":"
+                          << int(to_send.second) << std::endl;
+        }
+        if (!oxyRequest(oxyii::kOpSetTime, oxyii::timePayload(to_send), 3000))
             std::cerr << "O2Ring BLE: O2Ring-S set time: no reply" << std::endl;
     } else {
         std::cerr << "O2Ring BLE: the O2Ring-S clock is not set; file reads may be refused "

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include "clients/IO2RingClient.h"
 #include "clients/ble/BleTransport.h"
 
@@ -29,6 +30,14 @@ namespace hms_cpap {
  */
 class O2RingBleClient : public IO2RingClient {
 public:
+    /// The ring clock's wall time now, as seconds since 1970 read as a wall
+    /// time (the label form). With one, a connection sets an O2Ring-S whose
+    /// clock is off by more than kClockToleranceS to it; without one the
+    /// ring's own clock is written back as it was.
+    using WallNowFn = std::function<long long()>;
+    void setWallNow(WallNowFn fn) { wall_now_ = std::move(fn); }
+    static constexpr int kClockToleranceS = 60;
+
     /// `transport`: the host's when null; a test passes a fake.
     explicit O2RingBleClient(std::shared_ptr<ble::ITransport> transport = nullptr);
     ~O2RingBleClient() override;
@@ -109,6 +118,7 @@ private:
     // and the vendor SDK's order (auth first) did: from then on this ring gets
     // the vendor order straight away. Held for this client's life, not per link.
     bool oxy_vendor_order_ = false;
+    WallNowFn wall_now_;
     // Whether the handshake on this link sent auth.
     bool oxy_authed_ = false;
     int oxy_list_timeout_ms_ = 5000;
