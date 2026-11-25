@@ -574,7 +574,7 @@
       "zonePick": "Escolha um fuso horário da lista.",
       "inUse": "Em uso: UTC{{offset}} agora",
       "help": "A hora que a tela do seu CPAP mostra. Mude somente se não for a hora deste computador.",
-      "ringHelp": "A hora que as gravações do seu anel O2 usam. Mude somente se não for a hora deste computador.",
+      "ringHelp": "A hora que as gravações do seu anel O2 usam. Um O2Ring-S com mais de um minuto de diferença é ajustado para esta hora ao se conectar; por isso, mude somente se não for a hora deste computador.",
       "save": "Salvar",
       "saving": "Salvando...",
       "saved": "Salvo. As noites lidas a partir de agora usam este relógio.",

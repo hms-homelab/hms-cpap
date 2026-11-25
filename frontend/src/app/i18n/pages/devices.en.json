@@ -574,7 +574,7 @@
       "zonePick": "Pick a time zone from the list.",
       "inUse": "In use: UTC{{offset}} now",
       "help": "The time your CPAP's own screen shows. Change it only if it is not this computer's time.",
-      "ringHelp": "The time your O2 ring's recordings use. Change it only if it is not this computer's time.",
+      "ringHelp": "The time your O2 ring's recordings use. An O2Ring-S that is more than a minute off is set to this time when it connects, so change it only if it is not this computer's time.",
       "save": "Save",
       "saving": "Saving...",
       "saved": "Saved. Nights read from now on use this clock.",
