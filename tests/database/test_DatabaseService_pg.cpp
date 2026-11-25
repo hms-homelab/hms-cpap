@@ -876,13 +876,14 @@ TEST_F(PgDatabaseTest, GetCheckpointFilesByFolder_FlattensAcrossSessions) {
 // ============================================================================
 
 TEST_F(PgDatabaseTest, DeleteSessionsByDateFolder_RemovesMatching) {
-    ASSERT_TRUE(db_->saveSession(makeSession("DEVD", tpFromEpoch(kBaseEpoch), "20260206")));
-    ASSERT_TRUE(db_->saveSession(makeSession("DEVD", tpFromEpoch(kBaseEpoch + 7200), "20260206")));
-    ASSERT_TRUE(db_->saveSession(makeSession("DEVD", tpFromEpoch(kBaseEpoch + 86400), "20260207")));
+    // Each folder the night its sessions start on (2025-02-06 13:11; issue #126).
+    ASSERT_TRUE(db_->saveSession(makeSession("DEVD", tpFromEpoch(kBaseEpoch), "20250206")));
+    ASSERT_TRUE(db_->saveSession(makeSession("DEVD", tpFromEpoch(kBaseEpoch + 7200), "20250206")));
+    ASSERT_TRUE(db_->saveSession(makeSession("DEVD", tpFromEpoch(kBaseEpoch + 86400), "20250207")));
 
-    int deleted = db_->deleteSessionsByDateFolder("DEVD", "20260206");
+    int deleted = db_->deleteSessionsByDateFolder("DEVD", "20250206");
     EXPECT_EQ(deleted, 2);
-    EXPECT_EQ(count("cpap_sessions", "device_id='DEVD'"), 1);  // 20260207 survives
+    EXPECT_EQ(count("cpap_sessions", "device_id='DEVD'"), 1);  // 20250207 survives
 }
 
 TEST_F(PgDatabaseTest, DeleteSessionsByDateFolder_NoMatchReturnsZero) {

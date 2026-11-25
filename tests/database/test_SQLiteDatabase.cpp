@@ -615,18 +615,19 @@ TEST_F(SQLiteDatabaseTest, GetCheckpointFilesByFolder_StubEmpty) {
 // ============================================================================
 
 TEST_F(SQLiteDatabaseTest, DeleteSessionsByDateFolder_RemovesMatching) {
-    // Two sessions in folder A, one in folder B.
+    // Two sessions in folder A, one in folder B, each folder the night its
+    // sessions start on (kBaseEpoch is 2025-02-06 13:11; issue #126).
     ASSERT_TRUE(db_->saveSession(
-        makeSession("DEVD", tpFromEpoch(kBaseEpoch), "20260206")));
+        makeSession("DEVD", tpFromEpoch(kBaseEpoch), "20250206")));
     ASSERT_TRUE(db_->saveSession(
-        makeSession("DEVD", tpFromEpoch(kBaseEpoch + 7200), "20260206")));
+        makeSession("DEVD", tpFromEpoch(kBaseEpoch + 7200), "20250206")));
     ASSERT_TRUE(db_->saveSession(
-        makeSession("DEVD", tpFromEpoch(kBaseEpoch + 86400), "20260207")));
+        makeSession("DEVD", tpFromEpoch(kBaseEpoch + 86400), "20250207")));
 
-    int deleted = db_->deleteSessionsByDateFolder("DEVD", "20260206");
+    int deleted = db_->deleteSessionsByDateFolder("DEVD", "20250206");
     EXPECT_EQ(deleted, 2);
 
-    // The 20260207 session survives.
+    // The 20250207 session survives.
     auto remaining = db_->executeQuery(
         "SELECT COUNT(*) AS n FROM cpap_sessions WHERE device_id = ?", {"DEVD"});
     ASSERT_EQ(remaining.size(), 1u);

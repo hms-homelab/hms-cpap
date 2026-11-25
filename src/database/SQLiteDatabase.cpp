@@ -1753,35 +1753,38 @@ int SQLiteDatabase::deleteSessionsByDateFolder(const std::string& device_id,
     if (!db_) return -1;
 
     std::string pattern = "%DATALOG/" + date_folder + "/%";
+    // Issue #126: and on the folder's night. A session stored before 7.3.1
+    // under the calendar date it started on carries the next folder's path;
+    // the night keeps a reparse of that date off it.
+    const std::string night = sql::nightOfFolder(date_folder);
 
     // Child rows first. The FK is not declared ON DELETE CASCADE because SQLite
     // only enforces foreign keys when the pragma is on, and this must not depend
     // on that being true.
     {
-        const char* child_sql = R"(
-            DELETE FROM cpap_session_files
-            WHERE session_id IN (
-                SELECT id FROM cpap_sessions
-                WHERE device_id = ? AND brp_file_path LIKE ?
-            )
-        )";
+        const std::string child_sql =
+            "DELETE FROM cpap_session_files WHERE session_id IN ("
+            "  SELECT id FROM cpap_sessions"
+            "  WHERE device_id = ? AND brp_file_path LIKE ?" +
+            sql::onNight("session_start", night, 3, DbType::SQLITE) + ")";
         StmtGuard cg;
-        if (sqlite3_prepare_v2(db_, child_sql, -1, &cg.stmt, nullptr) == SQLITE_OK) {
+        if (sqlite3_prepare_v2(db_, child_sql.c_str(), -1, &cg.stmt, nullptr) == SQLITE_OK) {
             bind_text(cg.stmt, 1, device_id);
             bind_text(cg.stmt, 2, pattern);
+            if (!night.empty()) bind_text(cg.stmt, 3, night);
             sqlite3_step(cg.stmt);
         }
     }
 
-    const char* sql = R"(
-        DELETE FROM cpap_sessions
-        WHERE device_id = ? AND brp_file_path LIKE ?
-    )";
+    const std::string sql =
+        "DELETE FROM cpap_sessions WHERE device_id = ? AND brp_file_path LIKE ?" +
+        sql::onNight("session_start", night, 3, DbType::SQLITE);
 
     StmtGuard g;
-    sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr);
+    sqlite3_prepare_v2(db_, sql.c_str(), -1, &g.stmt, nullptr);
     bind_text(g.stmt, 1, device_id);
     bind_text(g.stmt, 2, pattern);
+    if (!night.empty()) bind_text(g.stmt, 3, night);
 
     if (sqlite3_step(g.stmt) != SQLITE_DONE) {
         std::cerr << "SQLite: deleteSessionsByDateFolder error: " << sqlite3_errmsg(db_) << std::endl;

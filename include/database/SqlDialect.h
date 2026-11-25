@@ -29,6 +29,30 @@ inline std::string sleepDay(const std::string& col, DbType type) {
     return "";
 }
 
+// Issue #126: a DATALOG folder name ("20261030") as the night it holds
+// ("2026-10-30"), or "" when it is not a date folder.
+inline std::string nightOfFolder(const std::string& folder) {
+    if (folder.size() != 8) return "";
+    for (char c : folder)
+        if (c < '0' || c > '9') return "";
+    return folder.substr(0, 4) + "-" + folder.substr(4, 2) + "-" + folder.substr(6, 2);
+}
+
+// Issue #126: " AND <col>'s night = <param>", the folder's night, for the
+// deletes that re-import a folder. Empty when [night] is (not a date folder):
+// the path alone, as before.
+inline std::string onNight(const std::string& col, const std::string& night, int paramIndex,
+                           DbType type) {
+    if (night.empty()) return "";
+    std::string cast;
+    switch (type) {
+        case DbType::POSTGRESQL: cast = param(paramIndex, type) + "::date"; break;
+        case DbType::MYSQL:      cast = "CAST(? AS DATE)"; break;
+        case DbType::SQLITE:     cast = "date(?)"; break;
+    }
+    return " AND " + sleepDay(col, type) + " = " + cast;
+}
+
 // Cast to date: $1::date vs CAST(? AS DATE) vs date(?)
 inline std::string castDate(int paramIndex, DbType type) {
     switch (type) {

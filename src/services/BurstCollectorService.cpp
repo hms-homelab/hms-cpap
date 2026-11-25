@@ -27,6 +27,8 @@
 #include "utils/NightQuiet.h"
 #include "utils/SessionEnd.h"
 #include "utils/SessionFileRefs.h"
+#include "utils/MisfiledSessionPaths.h"
+#include "utils/CardLayout.h"
 #include "database/SqlDialect.h"
 #include "utils/CardResidue.h"
 #include "utils/ArchiveRecordCount.h"
@@ -3159,6 +3161,25 @@ bool BurstCollectorService::executeBurstCycle() {
             // this cycle is for. SDD-054: from the last index, not a new one.
             catch_up = historyCatchUpFolders(card_folders_, local ? 0 : kEzShareCatchUpPerCycle);
 
+            // Issue #126: a folder the catch-up asks for has no night in the
+            // database. Done on record, it was neither listed nor read from
+            // its stored listing, and its done files were not fetched, so it
+            // yielded nothing. Its done marks are dropped: it is listed again
+            // and its files fetched, like a folder never seen.
+            for (const auto& f : catch_up) {
+                const auto it = stored_listings_.find(f);
+                if (it == stored_listings_.end()) continue;
+                auto& st = it->second;
+                if (!st.edf_done && !st.fully_done && st.done_files.empty()) continue;
+                st.done_files.clear();
+                st.edf_done = false;
+                st.fully_done = false;
+                folder_watch_[f].relist = true;
+                if (db_service_) saveFolderListing(*db_service_, device_id_, f, st);
+                std::cout << "CPAP: " << f << " is done on record but its night is not in "
+                          << "the database; fetching it again" << std::endl;
+            }
+
             // What may hold something new: on or after the anchor (SDD-010's
             // two newest stored nights included), and the nights never imported.
             const auto folder_anchor =
@@ -4700,11 +4721,18 @@ bool BurstCollectorService::parseAndStoreSession(
     // SDD-047: the directory holds the day's EVEs; keep this stretch's events.
     keepOwnEvents(*parsed, session);
 
-    // Set file path references (pointing to permanent archive)
-    const std::tm start_tm = wall::fieldsOf(wall::seconds(session_start));
-    std::ostringstream date_oss;
-    date_oss << std::put_time(&start_tm, "%Y%m%d");
-    std::string date_folder = date_oss.str();
+    // Set file path references (pointing to permanent archive). Issue #126:
+    // the folder the files are in, never the calendar date of the start. The
+    // card's folders run noon to noon, so a night that starts after midnight
+    // is in the folder of the day before, and a path built from its start
+    // pointed at no file and was deleted by a reparse of the next date.
+    std::string date_folder = session.date_folder;
+    if (date_folder.empty()) {
+        const std::tm start_tm = wall::fieldsOf(wall::seconds(session_start));
+        std::ostringstream date_oss;
+        date_oss << std::put_time(&start_tm, "%Y%m%d");
+        date_folder = date_oss.str();
+    }
 
     // Store RELATIVE paths in database (DATALOG/20250721/filename.edf)
     // This makes paths portable between different storage locations
@@ -4776,6 +4804,31 @@ void BurstCollectorService::runLoop() {
         }
     } catch (const std::exception& e) {
         std::cerr << "CPAP: EDF record-count sweep failed: " << e.what() << std::endl;
+    }
+
+    // Issue #126: before 7.3.1 a night that started after midnight was stored
+    // under the next day's folder, a path where none of its files is. Put
+    // right against the archive and a card read in place, before the first
+    // burst. Paths only; a second run finds nothing to change.
+    try {
+        if (db_service_) {
+            std::set<std::string> roots = {ConfigManager::get(
+                "CPAP_ARCHIVE_DIR",
+                (std::filesystem::path(hms_cpap::AppConfig::dataDir()) / "cpap_data").string())};
+            if (!local_source_dir_.empty())
+                roots.insert(std::filesystem::path(datalogDirFor(local_source_dir_))
+                                 .parent_path()
+                                 .string());
+            for (const auto& root : roots) {
+                const auto r = misfiled_paths::repair(*db_service_, device_id_, root);
+                if (r.file_rows + r.session_paths > 0)
+                    std::cout << "CPAP: " << r.file_rows << " file row(s) and " << r.session_paths
+                              << " session path(s) put under the folder their files are in "
+                                 "(issue #126)" << std::endl;
+            }
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "CPAP: stored path repair failed: " << e.what() << std::endl;
     }
 
     // SDD-057 D9: the Bluetooth nights already on disk that the database does

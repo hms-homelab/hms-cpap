@@ -2726,19 +2726,28 @@ int DatabaseService::deleteSessionsByDateFolder(const std::string& device_id,
 
         // Match sessions whose brp_file_path contains the date folder
         std::string pattern = "%DATALOG/" + date_folder + "/%";
+        // Issue #126: and on the folder's night, as on SQLite and MySQL.
+        const std::string night = sql::nightOfFolder(date_folder);
+        const std::string on_night =
+            sql::onNight("session_start", night, 3, DbType::POSTGRESQL);
 
         // Child rows first, explicitly, so this does not depend on the FK having
         // been declared ON DELETE CASCADE on an already-created table.
-        work.exec_params(
+        const std::string child_sql =
             "DELETE FROM cpap_session_files WHERE session_id IN ("
             "  SELECT id FROM cpap_sessions "
-            "  WHERE device_id = $1 AND brp_file_path::text LIKE $2)",
-            device_id, pattern);
-
-        auto result = work.exec_params(
+            "  WHERE device_id = $1 AND brp_file_path::text LIKE $2" + on_night + ")";
+        const std::string sessions_sql =
             "DELETE FROM cpap_sessions "
-            "WHERE device_id = $1 AND brp_file_path::text LIKE $2",
-            device_id, pattern);
+            "WHERE device_id = $1 AND brp_file_path::text LIKE $2" + on_night;
+        pqxx::result result;
+        if (night.empty()) {
+            work.exec_params(child_sql, device_id, pattern);
+            result = work.exec_params(sessions_sql, device_id, pattern);
+        } else {
+            work.exec_params(child_sql, device_id, pattern, night);
+            result = work.exec_params(sessions_sql, device_id, pattern, night);
+        }
 
         int deleted = static_cast<int>(result.affected_rows());
         t.commit();

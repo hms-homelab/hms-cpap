@@ -102,6 +102,9 @@ public:
     virtual bool reopenSession(const std::string& device_id,
                                const std::chrono::system_clock::time_point& session_start) = 0;
 
+    /// The card sessions stored from DATALOG/[date_folder] whose night (start
+    /// minus 12 h) is the folder's (issue #126: never the night before, whose
+    /// row a pre-7.3.1 collector filed under this folder's path).
     virtual int deleteSessionsByDateFolder(const std::string& device_id,
                                            const std::string& date_folder) = 0;
 

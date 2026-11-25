@@ -2211,43 +2211,45 @@ int MySQLDatabase::deleteSessionsByDateFolder(const std::string& device_id,
     if (!conn_) return -1;
 
     std::string pattern = "%DATALOG/" + date_folder + "/%";
+    // Issue #126: and on the folder's night, as on SQLite and Postgres.
+    const std::string night = sql::nightOfFolder(date_folder);
+    const int nparams = night.empty() ? 2 : 3;
 
     // SDD-029: child rows first, as the SQLite and Postgres versions always
     // did. cpap_session_files is not ON DELETE CASCADE, so deleting only the
     // sessions here left every one of the night's file rows orphaned.
     {
-        const char* child_sql = R"(
-            DELETE FROM cpap_session_files
-            WHERE session_id IN (
-                SELECT id FROM (
-                    SELECT id FROM cpap_sessions
-                    WHERE device_id = ? AND brp_file_path LIKE ?
-                ) AS doomed
-            )
-        )";
+        const std::string child_sql =
+            "DELETE FROM cpap_session_files WHERE session_id IN ("
+            "  SELECT id FROM ("
+            "    SELECT id FROM cpap_sessions"
+            "    WHERE device_id = ? AND brp_file_path LIKE ?" +
+            sql::onNight("session_start", night, 3, DbType::MYSQL) +
+            "  ) AS doomed)";
         MysqlStmtGuard cg;
         cg.stmt = mysql_stmt_init(conn_);
-        if (mysql_stmt_prepare(cg.stmt, child_sql, std::strlen(child_sql)) == 0) {
-            ParamBinder cp(2);
+        if (mysql_stmt_prepare(cg.stmt, child_sql.c_str(), child_sql.size()) == 0) {
+            ParamBinder cp(nparams);
             cp.bindText(0, device_id);
             cp.bindText(1, pattern);
+            if (!night.empty()) cp.bindText(2, night);
             mysql_stmt_bind_param(cg.stmt, cp.data());
             mysql_stmt_execute(cg.stmt);
         }
     }
 
-    const char* sql = R"(
-        DELETE FROM cpap_sessions
-        WHERE device_id = ? AND brp_file_path LIKE ?
-    )";
+    const std::string sql =
+        "DELETE FROM cpap_sessions WHERE device_id = ? AND brp_file_path LIKE ?" +
+        sql::onNight("session_start", night, 3, DbType::MYSQL);
 
     MysqlStmtGuard g;
     g.stmt = mysql_stmt_init(conn_);
-    mysql_stmt_prepare(g.stmt, sql, std::strlen(sql));
+    mysql_stmt_prepare(g.stmt, sql.c_str(), sql.size());
 
-    ParamBinder p(2);
+    ParamBinder p(nparams);
     p.bindText(0, device_id);
     p.bindText(1, pattern);
+    if (!night.empty()) p.bindText(2, night);
     mysql_stmt_bind_param(g.stmt, p.data());
 
     if (mysql_stmt_execute(g.stmt) != 0) {

@@ -1738,6 +1738,13 @@ public:
     }
     DbType dbType() const override { return DbType::SQLITE; }
 
+    // Issue #126: answers the raw queries a test cares about (the stored
+    // nights the history catch-up reads); everything else is no rows.
+    std::function<Json::Value(const std::string&, const std::vector<std::string>&)> on_query;
+    Json::Value executeQuery(const std::string& q, const std::vector<std::string>& p) override {
+        return on_query ? on_query(q, p) : Json::Value(Json::arrayValue);
+    }
+
     MOCK_METHOD(bool, connect, (), (override));
     MOCK_METHOD(void, disconnect, (), (override));
     MOCK_METHOD(bool, isConnected, (), (const, override));
@@ -1880,6 +1887,9 @@ public:
 
     // Write deterministic bytes so downloadSessionFiles() succeeds. Content is
     // garbage EDF — parse fails later, which is fine: we assert pre-parse DB calls.
+    // Issue #126: a file's real bytes (a parsable EDF), served whole or ranged.
+    std::map<std::string, std::string> bytes;
+
     bool downloadFile(const std::string& date_folder, const std::string& filename,
                       const std::string& local_path) override {
         ++download_count;
@@ -1887,6 +1897,10 @@ public:
         if (on_download) on_download(date_folder, filename);
         std::filesystem::create_directories(std::filesystem::path(local_path).parent_path());
         std::ofstream ofs(local_path, std::ios::binary);
+        if (const auto b = bytes.find(filename); b != bytes.end()) {
+            ofs << b->second;
+            return true;
+        }
         // Opens with the EDF version field like a real card file, or the
         // collector would call the archived copy damaged and fetch it again.
         const std::string head = "0       NOT_A_REAL_EDF_FILE";
@@ -1935,6 +1949,12 @@ public:
         }
         const auto mode = std::ios::binary | (start_byte == 0 ? std::ios::trunc : std::ios::app);
         std::ofstream ofs(local_path, mode);
+        if (const auto b = bytes.find(filename); b != bytes.end()) {
+            const std::string rest = start_byte < b->second.size() ? b->second.substr(start_byte) : "";
+            ofs << rest;
+            bytes_downloaded = rest.size();
+            return true;
+        }
         // A file the card sends from byte 0 opens with the EDF version field,
         // as a real one does; the collector discards a copy that does not.
         const std::string head = start_byte == 0 ? "0       " : "";
@@ -4691,6 +4711,144 @@ TEST_F(BurstOrchestrationTest, Sdd054_AFullyDoneFolderIsNeverListedAgain) {
     now = kSdd054T0 + 10 * 3600;                       // past the 8 hour ceiling
     svc->runBurstCycleForTest();
     EXPECT_EQ(src_raw->folder_lists["20261012"], settled) << "fully done: never listed again";
+}
+
+// ── Issue #126: a night after midnight, and a done folder whose night is gone ──
+
+namespace {
+
+void putEdfField(std::string& out, const std::string& value, size_t width) {
+    std::string v = value.substr(0, width);
+    v.resize(width, ' ');
+    out += v;
+}
+
+/// A one-signal EDF named for [stamp] ("YYYYMMDD_HHMMSS"), its header starting
+/// at that wall-clock time: [records] one-second records of [samples] samples.
+std::string edfBytes(const std::string& stamp, const std::string& label, bool edf_plus,
+                     int records, int samples, const std::string& payload = {}) {
+    std::string h;
+    putEdfField(h, "0", 8);
+    putEdfField(h, "X X X X", 80);
+    putEdfField(h, "Startdate 01-JAN-2020 X X SRN=00000000000 MID=36 VID=39", 80);
+    putEdfField(h, stamp.substr(6, 2) + "." + stamp.substr(4, 2) + "." + stamp.substr(2, 2), 8);
+    putEdfField(h, stamp.substr(9, 2) + "." + stamp.substr(11, 2) + "." + stamp.substr(13, 2), 8);
+    putEdfField(h, "512", 8);
+    putEdfField(h, edf_plus ? "EDF+D" : "EDF+C", 44);
+    putEdfField(h, std::to_string(records), 8);
+    putEdfField(h, "1", 8);
+    putEdfField(h, "1", 4);
+    putEdfField(h, label, 16);
+    putEdfField(h, "", 80);
+    putEdfField(h, edf_plus ? "" : "L/min", 8);
+    putEdfField(h, "-100", 8);
+    putEdfField(h, "100", 8);
+    putEdfField(h, "-32768", 8);
+    putEdfField(h, "32767", 8);
+    putEdfField(h, "", 80);
+    putEdfField(h, std::to_string(samples), 8);
+    putEdfField(h, "", 32);
+    std::string data = payload;
+    data.resize(static_cast<size_t>(records) * samples * 2, '\0');
+    return h + data;
+}
+
+}  // namespace
+
+TEST_F(BurstOrchestrationTest, Issue126_ANightAfterMidnightIsStoredUnderTheFolderItsFilesAreIn) {
+    // The card's folders run noon to noon: the night of 2020-01-01 that
+    // started at 00:41 on the 2nd is in DATALOG/20200101. 7.2.0 stored it as
+    // DATALOG/20200102/..., a path where no file is, and that a reparse of
+    // the 2nd deleted.
+    const std::string stamp = "20200102_004100";
+    const std::string brp = edfBytes(stamp, "Flow.40ms", false, 30 * 60, 25);
+    const std::string tal = std::string("+0\x14\x14", 4) + '\0' + '\0';
+    const std::string eve = edfBytes(stamp, "EDF Annotations", true, 1, 3, tal);
+    const std::string csl = edfBytes(stamp, "EDF Annotations", true, 1, 3, tal);
+    auto svc = makeService([&](FakeDataSource& ds) {
+        ds.date_folders = {"20200101"};
+        ds.folder_files["20200101"] = {
+            mkEntry(stamp + "_BRP.edf", static_cast<int>(brp.size() / 1024)),
+            mkEntry(stamp + "_EVE.edf", 0),
+            mkEntry(stamp + "_CSL.edf", 0),
+        };
+        ds.bytes[stamp + "_BRP.edf"] = brp;
+        ds.bytes[stamp + "_EVE.edf"] = eve;
+        ds.bytes[stamp + "_CSL.edf"] = csl;
+    });
+    expectFreshDownload(*db_raw);
+    std::vector<CPAPSession> saved;
+    std::vector<SessionFileRef> files;
+    EXPECT_CALL(*db_raw, saveSession(_)).WillRepeatedly(::testing::Invoke([&](const CPAPSession& s) {
+        saved.push_back(s);
+        return true;
+    }));
+    EXPECT_CALL(*db_raw, replaceSessionFiles(_, _, _))
+        .WillRepeatedly(::testing::Invoke([&](const std::string&, const auto&,
+                                              const std::vector<SessionFileRef>& f) {
+            files = f;
+            return true;
+        }));
+
+    svc->runBurstCycleForTest();
+
+    ASSERT_FALSE(saved.empty()) << "the night was not parsed";
+    ASSERT_TRUE(saved.back().brp_file_path.has_value());
+    EXPECT_EQ(*saved.back().brp_file_path, "DATALOG/20200101/" + stamp + "_BRP.edf");
+    ASSERT_FALSE(files.empty());
+    for (const auto& f : files)
+        EXPECT_EQ(f.rel_path.rfind("DATALOG/20200101/", 0), 0u) << f.rel_path;
+}
+
+TEST_F(BurstOrchestrationTest, Issue126_ADoneFolderWhoseNightIsMissingIsFetchedAgain) {
+    // A night imported and settled until its folder is done, so it is never
+    // listed again and its files are never fetched again. Then its night goes
+    // from the database (a reparse of the next date deleted it, before 7.3.1).
+    // The catch-up asks for it; the folder must be listed and fetched again,
+    // not passed over as done ("Discovered 0 new sessions").
+    long long now = kSdd054T0;
+    auto svc = makeService([](FakeDataSource& ds) {
+        ds.date_folders = {"20261012", "20261013"};
+        for (const auto& f : ds.date_folders)
+            ds.folder_files[f] = {mkEntry(f + "_220000_BRP.edf", 1),
+                                  mkEntry(f + "_220000_PLD.edf", 1),
+                                  mkEntry(f + "_220000_BRP.crc", 1)};
+    });
+    onSdd054Clock(*svc, now);
+    expectFreshDownload(*db_raw);
+    std::set<std::string> nights = {"2026-10-12", "2026-10-13"};
+    db_raw->on_query = [&](const std::string& q, const std::vector<std::string>&) {
+        Json::Value rows(Json::arrayValue);
+        if (q.find("AS night FROM cpap_sessions") == std::string::npos) return rows;
+        for (const auto& n : nights) {
+            Json::Value r;
+            r["night"] = n;
+            rows.append(r);
+        }
+        return rows;
+    };
+
+    svc->runBurstCycleForTest();
+    for (long long m : {1, 6, 36, 66, 70}) {
+        now = kSdd054T0 + m * kSdd054Min;
+        svc->runBurstCycleForTest();
+    }
+    ASSERT_TRUE(svc->storedListingsForTest().at("20261012").fully_done);
+    const int listed = src_raw->folder_lists["20261012"];
+    const auto fetches = [&](const std::string& n) {
+        return std::count(src_raw->ranged_files.begin(), src_raw->ranged_files.end(), n) +
+               std::count(src_raw->downloaded_files.begin(), src_raw->downloaded_files.end(), n);
+    };
+    const auto before = fetches("20261012_220000_BRP.edf");
+    const auto other = fetches("20261013_220000_BRP.edf");
+
+    nights.erase("2026-10-12");
+    now += kSdd054Min;
+    svc->runBurstCycleForTest();
+
+    EXPECT_EQ(src_raw->folder_lists["20261012"], listed + 1) << "the done folder was not listed again";
+    EXPECT_GT(fetches("20261012_220000_BRP.edf"), before) << "its done files were not fetched again";
+    EXPECT_EQ(fetches("20261013_220000_BRP.edf"), other) << "a stored night's done folder was fetched";
 }
 
 // ── One way to survive an ez Share ──────────────────────────────────────────

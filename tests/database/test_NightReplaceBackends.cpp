@@ -20,6 +20,7 @@
 #include "database/SQLiteDatabase.h"
 #include "database/SqlDialect.h"
 #include "utils/MachineZone.h"
+#include "utils/MisfiledSessionPaths.h"
 #include "utils/TimeCompat.h"
 #ifdef WITH_MYSQL
 #include "database/MySQLDatabase.h"
@@ -31,7 +32,9 @@
 #include <chrono>
 #include <cstdlib>
 #include <ctime>
+#include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -374,6 +377,72 @@ TEST_P(NightReplaceStoredTest, AReplaceLeavesTheNewNightClosedWithItsFiles) {
     EXPECT_EQ(db_->getCheckpointFileSizes(device_, new_).count("x_BRP.edf"), 1u);
     EXPECT_TRUE(stored(after_)) << engineName(GetParam()) << ": the night after was touched";
     EXPECT_EQ(breathsOf(after_), 900);
+}
+
+// Issue #126: before 7.3.1 the collector filed a session under the calendar
+// date it started on, so the night of 07-10 that started at 00:41 on 07-11 was
+// stored as DATALOG/20990711/... although its files are in the card's
+// DATALOG/20990710. A reparse of 07-11 matched that path and deleted the night
+// before. A reparse deletes the night it re-reads, by the session's night, so
+// that row is kept, and so is a stretch of 07-10 correctly filed.
+TEST_P(NightReplaceStoredTest, Issue126_AReparseOfTheNextDateKeepsTheNightBefore) {
+    const auto misfiled = local(2099, 7, 11, 0, 41);   // night 07-10, after midnight
+    CPAPSession s = night(misfiled, 300, 2.0);
+    s.brp_file_path = "DATALOG/" + std::string(kAfter) + "/20990711_004100_BRP.edf";
+    ASSERT_TRUE(db_->saveSession(s)) << engineName(GetParam());
+    ASSERT_TRUE(db_->replaceSessionFiles(
+        device_, misfiled,
+        {{"brp", "DATALOG/" + std::string(kAfter) + "/20990711_004100_BRP.edf", kSourceCard}}));
+
+    const auto r = db_->replaceNight(device_, kAfter, {write(night(after_, 60, 1.0))});
+
+    ASSERT_TRUE(r.ok) << engineName(GetParam());
+    EXPECT_EQ(r.deleted, 1) << engineName(GetParam()) << ": only the night of " << kAfter;
+    EXPECT_TRUE(stored(misfiled)) << engineName(GetParam()) << ": the night before was deleted";
+    EXPECT_EQ(breathsOf(misfiled), 4500) << engineName(GetParam());
+    EXPECT_EQ(rowsOf("cpap_session_files", misfiled), 1) << engineName(GetParam());
+    EXPECT_TRUE(stored(old_a_)) << engineName(GetParam());
+    EXPECT_TRUE(stored(old_b_)) << engineName(GetParam());
+    EXPECT_TRUE(stored(after_)) << engineName(GetParam());
+}
+
+// Issue #126, an install already affected: the misfiled row's paths are put
+// under the folder its files are in, against the archive on disk. A path that
+// names no file anywhere near is left; a second run changes nothing.
+TEST_P(NightReplaceStoredTest, Issue126_AMisfiledPathIsPutUnderTheFolderItsFileIsIn) {
+    const auto misfiled = local(2099, 7, 11, 0, 41);
+    const std::string wrong = "DATALOG/" + std::string(kAfter) + "/20990711_004100_BRP.edf";
+    const std::string right = "DATALOG/" + std::string(kNight) + "/20990711_004100_BRP.edf";
+    CPAPSession s = night(misfiled, 30, 2.0);
+    s.brp_file_path = wrong;
+    ASSERT_TRUE(db_->saveSession(s)) << engineName(GetParam());
+    ASSERT_TRUE(db_->replaceSessionFiles(device_, misfiled, {{"brp", wrong, kSourceCard}}));
+
+    const fs::path root = fs::temp_directory_path() /
+                          ("hms_cpap_i126_" + std::to_string(::getpid()) + engineName(GetParam()));
+    fs::remove_all(root);
+    fs::create_directories(root / "DATALOG" / kNight);
+    std::ofstream(root / right) << "0       ";
+
+    const auto first = misfiled_paths::repair(*db_, device_, root.string());
+    EXPECT_EQ(first.file_rows, 1) << engineName(GetParam());
+    EXPECT_EQ(first.session_paths, 1) << engineName(GetParam());
+    const auto files = db_->getSessionFilesForDateFolder(device_, kNight);
+    EXPECT_TRUE(std::any_of(files.begin(), files.end(),
+                            [&](const SessionFileRef& f) { return f.rel_path == right; }))
+        << engineName(GetParam());
+    EXPECT_TRUE(db_->getSessionFilesForDateFolder(device_, kAfter).size() == 1u)
+        << engineName(GetParam()) << ": only the night of " << kAfter << " is left there";
+    const auto rows = db_->executeQuery(
+        "SELECT brp_file_path AS p FROM cpap_sessions WHERE device_id = " + p(1) +
+            " AND session_start = " + sql::castTimestamp(2, db_->dbType()),
+        {device_, wall::text(misfiled)});
+    ASSERT_TRUE(rows.isArray() && !rows.empty());
+    EXPECT_EQ(rows[0]["p"].asString(), right) << engineName(GetParam());
+
+    const auto again = misfiled_paths::repair(*db_, device_, root.string());
+    EXPECT_EQ(again.file_rows + again.session_paths, 0) << engineName(GetParam());
+    fs::remove_all(root);
 }
 
 // Every write of a replace runs in the one transaction, and a plain save or

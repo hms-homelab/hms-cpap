@@ -597,10 +597,11 @@ TEST_F(PostgresEdgesTest, GetCheckpointFilesByFolder_FlattenAndEmpty_Delegated) 
 // ============================================================================
 
 TEST_F(PostgresEdgesTest, DeleteByDateFolder_Delegated) {
-    ASSERT_TRUE(db_->saveSession(makeSession("WDF", tpFromEpoch(kBaseEpoch), "20260206")));
-    ASSERT_TRUE(db_->saveSession(makeSession("WDF", tpFromEpoch(kBaseEpoch + 86400), "20260207")));
+    // Each folder the night its session starts on (2025-02-06 13:11; issue #126).
+    ASSERT_TRUE(db_->saveSession(makeSession("WDF", tpFromEpoch(kBaseEpoch), "20250206")));
+    ASSERT_TRUE(db_->saveSession(makeSession("WDF", tpFromEpoch(kBaseEpoch + 86400), "20250207")));
 
-    EXPECT_EQ(db_->deleteSessionsByDateFolder("WDF", "20260206"), 1);
+    EXPECT_EQ(db_->deleteSessionsByDateFolder("WDF", "20250206"), 1);
     EXPECT_EQ(db_->deleteSessionsByDateFolder("WDF", "19990101"), 0);  // no match
     EXPECT_EQ(count("cpap_sessions", "device_id='WDF'"), 1);
 }
