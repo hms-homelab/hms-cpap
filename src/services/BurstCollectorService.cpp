@@ -1031,11 +1031,12 @@ void BurstCollectorService::observeCardListing(
 
     for (const auto& [folder, files] : listings) {
         for (const auto& f : files) {
-            // YYYYMMDD_HHMMSS_BRP.edf
-            if (f.is_dir || f.name.size() < 19 || f.name[15] != '_') continue;
-            std::string type = f.name.substr(16, 3);
+            // YYYYMMDD_HHMMSS_BRP.edf, and only it: the .crc beside it shares the
+            // stem, and its size would read as the BRP changing.
+            if (f.is_dir || f.name.size() != 23 || f.name[15] != '_') continue;
+            std::string type = f.name.substr(16);
             std::transform(type.begin(), type.end(), type.begin(), ::toupper);
-            if (type != "BRP") continue;
+            if (type != "BRP.EDF") continue;
             const std::string stem = f.name.substr(0, 15);
             if (!card_mask_.session().empty() && stem < card_mask_.session()) continue;
 

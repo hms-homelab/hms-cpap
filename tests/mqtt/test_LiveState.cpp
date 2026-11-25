@@ -801,6 +801,48 @@ TEST(LiveSources, CardOnAtTheSessionsStartOffAtItsEndWithTheDelay) {
     EXPECT_EQ(c["delay_s"].asInt(), 445 - 180);
 }
 
+// The machine writes YYYYMMDD_HHMMSS_BRP.crc beside the BRP. It is not the BRP:
+// its size and stamp neither move nor hold the off.
+TEST(LiveSources, CardABrpsCrcDoesNotHoldTheOff) {
+    TempDir dir;
+    writeEdf(dir.p / "20261105_041502_BRP.edf", 3);
+    Recorder rec;
+    auto live = std::make_shared<LiveState>(rec.publish(), "cpap_test", "Test CPAP", at(kT0));
+    BurstCollectorService svc(300);
+    svc.setSourceForTest("ezshare");
+    svc.setMachineClockForTest(MachineClock{0, 0, true});
+    svc.setLiveState(live);
+
+    SessionFileSet s;
+    s.date_folder    = "20261105";
+    s.session_prefix = "20261105_041502";
+    s.brp_files      = {"20261105_041502_BRP.edf"};
+    svc.observeCardSession(s, dir.p.string(), kT0 + 250);
+    ASSERT_EQ(rec.last("mask"), "ON");
+
+    const auto archive = dir.p / "archive";
+    const auto folder  = archive / "DATALOG" / "20261105";
+    std::filesystem::create_directories(folder);
+    std::filesystem::copy_file(dir.p / "20261105_041502_BRP.edf",
+                               folder / "20261105_041502_BRP.edf");
+    std::ofstream(folder / "20261105_041502_BRP.crc") << "12345678";
+    EzShareFileEntry brp, crc;
+    brp.name    = "20261105_041502_BRP.edf";
+    brp.size_kb = static_cast<int>(
+        (std::filesystem::file_size(dir.p / "20261105_041502_BRP.edf") + 1023) / 1024);
+    brp.year = 2026; brp.month = 11; brp.day = 5; brp.hour = 4; brp.minute = 18; brp.second = 2;
+    crc         = brp;
+    crc.name    = "20261105_041502_BRP.crc";
+    crc.size_kb = brp.size_kb + 1;   // never the BRP's own signature
+    const std::map<std::string, std::vector<EzShareFileEntry>> listings{{"20261105", {brp, crc}}};
+
+    svc.observeCardListing(listings, archive.string(), false, kT0 + 315);
+    svc.observeCardListing(listings, archive.string(), false, kT0 + 380);
+    EXPECT_EQ(rec.last("mask"), "ON");
+    svc.observeCardListing(listings, archive.string(), false, kT0 + 445);
+    EXPECT_EQ(rec.last("mask"), "OFF");
+}
+
 // SDD-068 D4: a new session's BRP is the off of the one before, then its on.
 TEST(LiveSources, CardALaterSessionPublishesTheOffBeforeTheOn) {
     TempDir dir;
