@@ -4862,6 +4862,30 @@ TEST_F(BurstOrchestrationTest, Issue126_ADoneFolderWhoseNightIsMissingIsFetchedA
     EXPECT_EQ(fetches("20261013_220000_BRP.edf"), other) << "a stored night's done folder was fetched";
 }
 
+// A settled night whose ledger row last saw a file missing (its working copy
+// had been given back) is in the archive in full, so it is complete.
+TEST_F(BurstOrchestrationTest, ADoneFoldersLedgerRowIsComplete) {
+    long long now = kSdd054T0;
+    auto svc = makeService([](FakeDataSource& ds) {
+        ds.date_folders = {"20250301", "20261012", "20261013"};
+        for (const auto& f : ds.date_folders)
+            ds.folder_files[f] = {mkEntry(f + "_220000_BRP.edf", 1),
+                                  mkEntry(f + "_220000_PLD.edf", 1)};
+    });
+    onSdd054Clock(*svc, now);
+    expectFreshDownload(*db_raw);
+    svc->runBurstCycleForTest();
+    ASSERT_TRUE(svc->storedListingsForTest().at("20250301").edf_done);
+
+    auto& row = db_raw->sync_folders["20250301"];
+    row.date_folder = row.str_day = "20250301";
+    row.stable = true;
+    row.complete = false;
+    now += kSdd054Min;
+    svc->runBurstCycleForTest();
+    EXPECT_TRUE(db_raw->sync_folders["20250301"].complete);
+}
+
 // ── One way to survive an ez Share ──────────────────────────────────────────
 
 TEST_F(BurstOrchestrationTest, EzShare_ARefusedFolderDoesNotStopTheOthersAndIsParkedAfterThree) {

@@ -3548,6 +3548,19 @@ bool BurstCollectorService::executeBurstCycle() {
                     std::filesystem::remove_all(std::filesystem::path(workingDir()) / f, rm_ec);
                 }
             }
+            // The ledger reads the working copy, before a download and after a
+            // done folder gives it back, and a done folder gets no second look,
+            // so it is completed here. Only one that closed once (str_day): its
+            // debts are armed at that close.
+            if (db_service_ && !in_place) {
+                for (auto ledger : db_service_->listSyncFolders()) {
+                    if (ledger.complete || ledger.str_day.empty()) continue;
+                    const auto it = stored_listings_.find(ledger.date_folder);
+                    if (it == stored_listings_.end() || !it->second.edf_done) continue;
+                    ledger.stable = ledger.complete = true;
+                    db_service_->upsertSyncFolder(ledger);
+                }
+            }
             if (edf_now > 0 || fully_now > 0)
                 std::cout << "CPAP: folders done: " << edf_now << " with every EDF stored, "
                           << fully_now << " complete (not listed again)" << std::endl;
