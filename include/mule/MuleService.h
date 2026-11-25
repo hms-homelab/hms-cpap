@@ -68,6 +68,8 @@ inline constexpr size_t      kPullMax      = 4 * 1024 * 1024;  // an as11_downlo
 inline constexpr std::time_t kInFlightSec  = 300;              // a command unanswered this long no longer blocks the next
 /// #100: why a unit is listed in the limited state (status()'s limited_reason).
 inline constexpr const char* kLimitedWhy   = "this unit reads a card";
+// hms-cpap#108: the firmware (mule and miner) that takes as11_forget.
+inline constexpr const char* kAs11ForgetFw = "6.0.3";
 
 /// The commands a unit takes from a local hms-cpap.
 const std::vector<std::string>& localCommands();

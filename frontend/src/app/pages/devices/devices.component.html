@@ -115,6 +115,14 @@
                 <span class="hint" *ngIf="s.pending">{{ s.pending | translate:{ error: '' } }}</span>
               </label>
             </dd></div>
+          <!-- #108: the AirSense 11 the miner is paired with, as the unit reports it. -->
+          <div *ngIf="!limited(d) && d.detail.state?.as11?.enabled && !muleDs2On(d)"><dt>{{ 'devices.mule.as11Pairing' | translate }}</dt>
+            <dd>
+              <ng-container *ngIf="d.detail.state.as11.paired">{{ (d.detail.state.as11.machine ? 'devices.mule.as11PairedWith' : 'devices.mule.as11Paired') | translate:{ machine: d.detail.state.as11.machine } }}</ng-container>
+              <ng-container *ngIf="!d.detail.state.as11.paired">{{ 'devices.mule.as11NotPaired' | translate }}</ng-container>
+            </dd></div>
+          <div *ngIf="muleAs11Forget(d) as f" class="wide">
+            <dd [class.note]="f.key === 'devices.mule.as11ForgetFailed'" [class.hint]="f.key !== 'devices.mule.as11ForgetFailed'">{{ f.key | translate:{ error: f.error } }}</dd></div>
 
           <!-- ── its DreamStation 2 (SDD-065): read after the night, through the miner ── -->
           <ng-container *ngIf="muleDs2On(d)">
@@ -565,6 +573,8 @@
           <button type="button" class="btn danger" *ngIf="d.kind === 'mule' && muleDs2On(d) && d.detail.state.ds2.bonded"
                   (click)="askMuleDs2Forget(d)" [disabled]="muleDs2Reading(d) || d.present !== 'yes'">
             {{ 'devices.ds2.forgetPairing' | translate }}</button>
+          <button type="button" class="btn danger" *ngIf="muleAs11Forgettable(d)"
+                  (click)="askMuleAs11Forget(d)" [disabled]="busy[d.key]">{{ 'devices.mule.as11Forget' | translate }}</button>
           <ng-container *ngIf="d.kind === 'mule' || d.kind === 'sleepbridge'">
             <button type="button" class="btn danger" *ngIf="!limited(d)" (click)="askReset(d)" [disabled]="busy[d.key]">{{ 'devices.action.resetWifi' | translate }}</button>
             <span class="btn-wrap" [title]="d.present !== 'no' ? ('devices.forget.disabled' | translate) : ''">

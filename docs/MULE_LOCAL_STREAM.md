@@ -176,6 +176,7 @@ and results. `POST /api/mule/command` sends one:
 | `restate` | none: the unit sends its full state again |
 | `reset` | none: the unit erases its WiFi and this address, and restarts into setup |
 | `as11_pair` | none to start, `code` to confirm, `cancel: true` to drop |
+| `as11_forget` | `keys` (default true: the pairing's keys go too). Firmware 6.0.3 on both boards, else 409. The answer's `result.as11_forget.ok` says the miner took it; the unit's state is shown unpaired from then on (#108) |
 | `as11_download` | `from` (YYYY-MM-DD), `spool` (`Summary`, `Identification`, `Settings`) |
 
 Anything else is refused with 400; a unit never seen here gets 404. A command

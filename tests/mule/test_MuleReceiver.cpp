@@ -924,6 +924,59 @@ TEST_F(MuleReceiverTest, AQueuedCommandGoesOnTheNextSession) {
     EXPECT_EQ(unit.down[0]["t"].asString(), "ack") << "the ack goes ahead of any command";
 }
 
+// hms-cpap#108: "Forget this machine" goes to a 6.0.3 unit as as11_forget
+// with keys, and its answer shows the machine gone before the next state.
+TEST_F(MuleReceiverTest, As11ForgetGoesWithKeysAndClearsTheSavedMachine) {
+    FakeUnit unit(*svc_);
+    unit.hello();
+    Json::Value st = FakeUnit::state(false, 0);
+    st["as11"]["machine"]      = "23200000001";
+    st["as11"]["machine_addr"] = "aa:bb:cc:dd:ee:ff";
+    Json::Value sf(Json::objectValue);
+    sf["t"]     = "state";
+    sf["state"] = st;
+    unit.text(sf);
+
+    EXPECT_EQ(svc_->queueCommand(kUnit, parse(R"({"cmd":"as11_forget","keys":"yes"})")).status, 400);
+    ASSERT_EQ(svc_->queueCommand(kUnit, parse(R"({"cmd":"as11_forget"})")).status, 200);
+    const auto c = unit.of("cmd").back();
+    EXPECT_EQ(c["cmd"].asString(), "as11_forget");
+    EXPECT_TRUE(c["keys"].asBool()) << "the old keys only open sessions on the old machine";
+
+    Json::Value r(Json::objectValue);
+    r["t"]                               = "result";
+    r["req_id"]                          = c["req_id"];
+    r["ok"]                              = true;
+    r["result"]["as11_forget"]["ok"]     = true;
+    r["result"]["as11_forget"]["keys"]   = true;
+    r["result"]["as11_forget"]["error"]  = "";
+    r["state"]                           = st;   // the miner forgets after it answers
+    unit.text(r);
+    const Json::Value s = unitStatus();
+    EXPECT_EQ(s["commands"][0]["state"].asString(), "answered");
+    EXPECT_TRUE(s["commands"][0]["result"]["result"]["as11_forget"]["ok"].asBool());
+    EXPECT_FALSE(s["state"]["as11"]["paired"].asBool());
+    EXPECT_EQ(s["state"]["as11"]["machine"].asString(), "");
+    EXPECT_EQ(s["state"]["as11"]["machine_addr"].asString(), "");
+}
+
+TEST_F(MuleReceiverTest, As11ForgetNeedsFirmware603OnBothBoards) {
+    FakeUnit unit(*svc_);
+    Json::Value h(Json::objectValue);
+    h["t"]        = "hello";
+    h["fw"]       = "6.0.3";
+    h["miner_fw"] = "6.0.2";
+    h["mode"]     = "as11_ble";
+    h["state"]    = FakeUnit::state(false, 0);
+    h["state"]["miner_fw_version"] = "6.0.2";
+    unit.text(h);
+    const auto a = svc_->queueCommand(kUnit, parse(R"({"cmd":"as11_forget"})"));
+    EXPECT_EQ(a.status, 409);
+    EXPECT_NE(a.body["error"].asString().find("6.0.3 first"), std::string::npos);
+    EXPECT_TRUE(unit.of("cmd").empty());
+    EXPECT_EQ(svc_->queueCommand("FE-C3-99999999", parse(R"({"cmd":"as11_forget"})")).status, 404);
+}
+
 TEST_F(MuleReceiverTest, OnlyTheAllowedCommandsAndArgumentsAreTaken) {
     FakeUnit unit(*svc_);
     unit.hello();

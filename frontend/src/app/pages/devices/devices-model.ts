@@ -548,6 +548,47 @@ export function muleLimited(d: { kind: string; detail?: any }): boolean {
   return d.kind === 'mule' && d.detail?.limited === true;
 }
 
+/** Dotted numbers, left to right ("6.0.10" > "6.0.3"); unknown is below anything. */
+export function versionAtLeast(have: string | null | undefined, want: string): boolean {
+  if (!have) return false;
+  const a = String(have).split('.').map((s) => parseInt(s, 10) || 0);
+  const b = want.split('.').map((s) => parseInt(s, 10) || 0);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const x = a[i] ?? 0, y = b[i] ?? 0;
+    if (x !== y) return x > y;
+  }
+  return true;
+}
+
+/**
+ * hms-cpap#108: what the unit's newest as11_forget came to: waiting while it
+ * is out, done once the miner took it, or refused with the unit's reason.
+ * The frame's own ok is true for any answer; the outcome is in as11_forget.
+ */
+export function muleAs11ForgetOutcome(list: DeviceCommand[] | undefined):
+    { key: string; error: string } | null {
+  const c = latestCommand(list, 'as11_forget');
+  if (!c) return null;
+  if (c.state !== 'answered') return { key: 'devices.mule.as11Forgetting', error: '' };
+  const r = c.result?.result?.as11_forget;
+  if (r?.ok === true) return { key: 'devices.mule.as11Forgotten', error: '' };
+  return { key: 'devices.mule.as11ForgetFailed', error: String(r?.error || c.result?.error || '') };
+}
+
+/** hms-cpap#108: the firmware (mule and miner) that takes as11_forget. */
+export const AS11_FORGET_FW = '6.0.3';
+
+/**
+ * hms-cpap#108: a Mule & Miner offers "Forget this machine" while its
+ * AirSense 11 is paired and both boards run 6.0.3 or later.
+ */
+export function muleAs11Forgettable(d: { kind: string; detail?: any }): boolean {
+  if (d.kind !== 'mule' || muleLimited(d)) return false;
+  const a = d.detail?.state?.as11;
+  return a?.paired === true && versionAtLeast(d.detail?.fw, AS11_FORGET_FW) &&
+         versionAtLeast(d.detail?.miner_fw || d.detail?.state?.miner_fw_version, AS11_FORGET_FW);
+}
+
 /**
  * The switch to the cloud as the device answers it: switching while the
  * command waits or is out; switched once it answered ok; failed when it

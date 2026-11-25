@@ -9,7 +9,8 @@ import {
   recordingWarning, releaseLine, riskyGroups, switchView,
   groupCode, ds2PairView, ds2PairRunning, ds2RefusalKey, ds2Reads, ds2NextRead, isIsoDay, as11ResetRefusalKey,
   offsetSetting, fixedOffsets, clockChoiceOf, clockDraftOf, clockSettingOf, clockChanged, filterZones, clockDifference,
-  hasDangerActions, learnedOffer, rereadLine, muleLimited, cloudSwitchState,
+  hasDangerActions, learnedOffer, rereadLine, muleLimited, cloudSwitchState, versionAtLeast, muleAs11Forgettable,
+  muleAs11ForgetOutcome,
 } from './devices-model.ts';
 import type { ClockView, Reread } from './devices-model.ts';
 
@@ -437,4 +438,37 @@ test('every clock line exists in every language, with no em-dash', async () => {
       assert.ok(!v.includes(String.fromCharCode(0x2014)), `${lang} devices.clock.${k} has an em-dash`);
     }
   }
+});
+
+// ── hms-cpap#108: a Mule & Miner forgets its AirSense 11 ──
+
+test('versions compare field by field, unknown below anything', () => {
+  assert.equal(versionAtLeast('6.0.3', '6.0.3'), true);
+  assert.equal(versionAtLeast('6.0.10', '6.0.3'), true);
+  assert.equal(versionAtLeast('6.1.0', '6.0.3'), true);
+  assert.equal(versionAtLeast('6.0.2', '6.0.3'), false);
+  assert.equal(versionAtLeast('', '6.0.3'), false);
+  assert.equal(versionAtLeast(undefined, '6.0.3'), false);
+});
+
+test('Forget this machine shows for a paired AirSense 11 on 6.0.3 boards only', () => {
+  const unit = (fw: string, miner: string, paired: boolean, limited = false) =>
+    ({ kind: 'mule', detail: { fw, miner_fw: miner, limited, state: { as11: { paired } } } });
+  assert.equal(muleAs11Forgettable(unit('6.0.3', '6.0.3', true)), true);
+  assert.equal(muleAs11Forgettable(unit('6.0.3', '6.0.3', false)), false);
+  assert.equal(muleAs11Forgettable(unit('6.0.3', '6.0.2', true)), false);
+  assert.equal(muleAs11Forgettable(unit('6.0.2', '6.0.3', true)), false);
+  assert.equal(muleAs11Forgettable(unit('6.0.3', '6.0.3', true, true)), false);
+  assert.equal(muleAs11Forgettable({ kind: 'as11_ble', detail: { paired: true } }), false);
+});
+
+test('the forget reads from the unit\'s own answer, not the frame\'s ok', () => {
+  const cmd = (state: string, result: any) => [{ req_id: 1, cmd: 'as11_forget', state, result } as any];
+  assert.equal(muleAs11ForgetOutcome([]), null);
+  assert.equal(muleAs11ForgetOutcome(cmd('sent', null))?.key, 'devices.mule.as11Forgetting');
+  assert.equal(muleAs11ForgetOutcome(cmd('answered', { ok: true, result: { as11_forget: { ok: true, keys: true } } }))?.key,
+    'devices.mule.as11Forgotten');
+  const no = muleAs11ForgetOutcome(cmd('answered', { ok: true, result: { as11_forget: { ok: false, error: 'the card reader\'s Bluetooth is not up' } } }));
+  assert.equal(no?.key, 'devices.mule.as11ForgetFailed');
+  assert.equal(no?.error, 'the card reader\'s Bluetooth is not up');
 });

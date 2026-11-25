@@ -143,7 +143,16 @@
       "pairCode": "Código en la pantalla del equipo",
       "pairSend": "Enviar el código",
       "pairCancel": "Cancelar el emparejamiento",
-      "pairHint": "El equipo muestra un código cuando la unidad empieza a emparejarse. Escríbelo enseguida."
+      "pairHint": "El equipo muestra un código cuando la unidad empieza a emparejarse. Escríbelo enseguida.",
+      "as11Pairing": "AirSense 11",
+      "as11Paired": "Emparejado",
+      "as11PairedWith": "Emparejado con {{machine}}",
+      "as11NotPaired": "Sin emparejar",
+      "as11Forget": "Olvidar este equipo",
+      "as11ForgetConfirm": "La unidad olvida {{machine}} y las claves del emparejamiento, para poder emparejar otro AirSense 11. No llegan noches por Bluetooth hasta que se empareje un equipo de nuevo. ¿Olvidarlo?",
+      "as11Forgetting": "Olvidando el equipo...",
+      "as11Forgotten": "La unidad olvidó el equipo. Empareja el nuevo AirSense 11 en Más.",
+      "as11ForgetFailed": "La unidad no pudo olvidar el equipo: {{error}}"
     },
     "sleepbridge": {
       "lastWrite": "Última escritura",

@@ -143,7 +143,16 @@
       "pairCode": "Code affiché sur l'écran de l'appareil",
       "pairSend": "Envoyer le code",
       "pairCancel": "Annuler l'appairage",
-      "pairHint": "L'appareil affiche un code dès que l'unité commence l'appairage. Saisissez-le tout de suite."
+      "pairHint": "L'appareil affiche un code dès que l'unité commence l'appairage. Saisissez-le tout de suite.",
+      "as11Pairing": "AirSense 11",
+      "as11Paired": "Appairé",
+      "as11PairedWith": "Appairé avec {{machine}}",
+      "as11NotPaired": "Non appairé",
+      "as11Forget": "Oublier cet appareil",
+      "as11ForgetConfirm": "L'unité oublie {{machine}} et les clés de l'appairage, pour qu'un autre AirSense 11 puisse être appairé. Aucune nuit n'arrive par Bluetooth tant qu'un appareil n'est pas appairé à nouveau. L'oublier ?",
+      "as11Forgetting": "Oubli de l'appareil...",
+      "as11Forgotten": "L'unité a oublié l'appareil. Appairez le nouvel AirSense 11 sous Plus.",
+      "as11ForgetFailed": "L'unité n'a pas pu oublier l'appareil : {{error}}"
     },
     "sleepbridge": {
       "lastWrite": "Dernière écriture",

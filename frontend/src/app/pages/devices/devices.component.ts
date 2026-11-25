@@ -14,6 +14,7 @@ import {
   switchView, groupCode, ds2PairView, ds2PairRunning, ds2RefusalKey, ds2Reads, ds2NextRead, isIsoDay,
   as11ResetRefusalKey, ClockChoice, ClockDraft, ClockView, Reread, clockChanged, clockDifference, clockDraftOf,
   clockSettingOf, filterZones, fixedOffsets, hasDangerActions, learnedOffer, rereadLine, cloudSwitchState, muleLimited,
+  muleAs11Forgettable, muleAs11ForgetOutcome,
 } from './devices-model';
 import {
   MuleDs2Pairing, muleDs2ErrorKey, muleDs2ModePayload, muleDs2On, muleDs2Pairing, muleDs2Reading, muleDs2RefusalKey,
@@ -109,6 +110,10 @@ export class DevicesComponent implements OnInit, OnDestroy {
   readonly learnedOffer = learnedOffer;
   readonly hasDanger = hasDangerActions;
   readonly limited = muleLimited;   // #100
+  readonly muleAs11Forgettable = muleAs11Forgettable;   // #108
+  muleAs11Forget(d: DeviceEntry) {
+    return muleAs11ForgetOutcome(this.commands(d));
+  }
   /** What the person changed and has not saved yet; absent shows the saved clock. */
   private clockEdits: Record<string, ClockDraft> = {};
   private clockShown: Record<string, { setting: string; draft: ClockDraft }> = {};
@@ -442,6 +447,13 @@ export class DevicesComponent implements OnInit, OnDestroy {
     const p = this.muleDs2Pair(d);
     if (match && p.code) this.send(d, 'ds2_bond', { cmd: 'ds2_bond', action: 'confirm', code: p.code });
     else this.send(d, 'ds2_bond', { cmd: 'ds2_bond', action: 'cancel' });
+  }
+
+  /** #108: the unit lets go of its paired AirSense 11 (and the pairing's keys). */
+  askMuleAs11Forget(d: DeviceEntry): void {
+    const machine = d.detail?.state?.as11?.machine || d.detail?.machine || 'AirSense 11';
+    this.confirms.ask(d.key, 'mule_as11_forget', 'devices.mule.as11ForgetConfirm',
+      { cmd: 'as11_forget', keys: true }, { machine });
   }
 
   askMuleDs2Forget(d: DeviceEntry): void {
@@ -1234,6 +1246,7 @@ export class DevicesComponent implements OnInit, OnDestroy {
       case 'cloud': return 'devices.action.backToCloud';
       case 'forget': return 'devices.forget.button';
       case 'as11_forget': return 'devices.as11.forgetPairing';
+      case 'mule_as11_forget': return 'devices.mule.as11Forget';
       case 'ds2_forget': return 'devices.ds2.forgetPairing';
       case 'switch': return 'devices.confirm.verb.change';
       case 'config':
@@ -1244,7 +1257,7 @@ export class DevicesComponent implements OnInit, OnDestroy {
 
   isDestructive(action: string): boolean {
     return action === 'reset' || action === 'config_reset' || action === 'forget' || action === 'as11_forget' ||
-           action === 'ds2_forget';
+           action === 'ds2_forget' || action === 'mule_as11_forget';
   }
 
   /** The kind line under the name, unless the name already says it. */

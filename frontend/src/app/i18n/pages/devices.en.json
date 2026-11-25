@@ -143,7 +143,16 @@
       "pairCode": "Code on the machine's screen",
       "pairSend": "Send the code",
       "pairCancel": "Cancel pairing",
-      "pairHint": "The machine shows a code once the unit starts pairing. Type it right away."
+      "pairHint": "The machine shows a code once the unit starts pairing. Type it right away.",
+      "as11Pairing": "AirSense 11",
+      "as11Paired": "Paired",
+      "as11PairedWith": "Paired with {{machine}}",
+      "as11NotPaired": "Not paired",
+      "as11Forget": "Forget this machine",
+      "as11ForgetConfirm": "The unit forgets {{machine}} and the pairing's keys, so a different AirSense 11 can be paired. No nights come in over Bluetooth until a machine is paired again. Forget it?",
+      "as11Forgetting": "Forgetting the machine...",
+      "as11Forgotten": "The unit forgot the machine. Pair the new AirSense 11 under More.",
+      "as11ForgetFailed": "The unit could not forget the machine: {{error}}"
     },
     "sleepbridge": {
       "lastWrite": "Last write",

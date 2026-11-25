@@ -1,5 +1,6 @@
 #include "mule/MuleService.h"
 
+#include "mule/MuleFirmware.h"   // compareVersions
 #include "mule/PosixTz.h"
 #include "services/As11StrWriter.h"
 #include "services/CardFileFeed.h"
@@ -88,6 +89,8 @@ std::string fromAfter(const std::string& bytes) {
 const std::vector<std::string>& localCommands() {
     static const std::vector<std::string> k = {"config",   "reboot",    "logs",          "restate",
                                                "reset",    "as11_pair", "as11_download",
+                                               // hms-cpap#108 (firmware 6.0.3): forget the paired machine.
+                                               "as11_forget",
                                                // SDD-065: the DreamStation 2 through the miner.
                                                "ds2_bond", "ds2_read"};
     return k;
@@ -707,6 +710,19 @@ void MuleService::result(const std::string& serial, const Json::Value& f) {
                   << ") answered: ok=" << (r["ok"].asBool() ? "true" : "false")
                   << (r.isMember("error") ? " error=" + r["error"].asString() : std::string()) << std::endl;
         if (c->cmd == "as11_download") afterPull(serial, *c);
+        // hms-cpap#108: the miner forgets on its Bluetooth task after it
+        // answers, so the state in this frame can still name the machine.
+        // What it said it did is shown until the unit's next state says more.
+        if (c->cmd == "as11_forget") {
+            const Json::Value& done = r["result"]["as11_forget"];
+            if (done.isObject() && done.get("ok", false).asBool() && u.state.isObject()) {
+                Json::Value& a = u.state["as11"];
+                if (done.get("keys", false).asBool()) a["paired"] = false;
+                a["machine"]      = "";
+                a["machine_addr"] = "";
+                a["pairing_lost"] = false;
+            }
+        }
         // SDD-065: the DreamStation 2's answers go to whoever keeps its records.
         if ((c->cmd == "ds2_read" || c->cmd == "ds2_bond") && answer_hook_) {
             Answered a;
@@ -893,7 +909,8 @@ CommandAnswer MuleService::queueCommand(const std::string& serial, const Json::V
     const auto& known     = localCommands();
     if (std::find(known.begin(), known.end(), cmd) == known.end())
         return refuse(400, "a Mule & Miner takes config (hms_url, hms_port, as11_enabled, o2_enabled, "
-                           "ble_machine), reboot, logs, restate, reset, as11_pair, as11_download, ds2_bond or "
+                           "ble_machine), reboot, logs, restate, reset, as11_pair, as11_download, as11_forget, "
+                           "ds2_bond or "
                            "ds2_read from hms-cpap, not \"" + cmd + "\"");
 
     Json::Value f(Json::objectValue);
@@ -968,6 +985,20 @@ CommandAnswer MuleService::queueCommand(const std::string& serial, const Json::V
         } else {
             f["start"] = true;
         }
+    } else if (cmd == "as11_forget") {
+        // hms-cpap#108: the miner lets go of the saved AirSense 11 so a
+        // different machine can be paired. keys (default true) drops the
+        // pairing's keys too: they only open sessions on the old machine.
+        if (req.isMember("keys") && !req["keys"].isBool()) return refuse(400, "keys is true or false");
+        f["keys"] = req.get("keys", true).asBool();
+        // A mule before 6.0.3 refuses the command on this socket, a miner
+        // before it never answers: said here instead.
+        std::lock_guard<std::mutex> lk(mu_);
+        const auto it = units_.find(serial);
+        if (it == units_.end()) return refuse(404, "no Mule & Miner \"" + serial + "\" has connected here");
+        if (compareVersions(it->second.fw, kAs11ForgetFw) < 0 || compareVersions(it->second.miner_fw, kAs11ForgetFw) < 0)
+            return refuse(409, std::string("update the Mule & Miner to ") + kAs11ForgetFw +
+                                   " first: this firmware cannot forget a paired machine");
     } else if (cmd == "as11_download") {
         const std::string from  = req.get("from", "").asString();
         const std::string spool = req.get("spool", "Summary").asString();

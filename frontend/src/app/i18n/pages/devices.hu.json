@@ -143,7 +143,16 @@
       "pairCode": "A készülék kijelzőjén látható kód",
       "pairSend": "Kód elküldése",
       "pairCancel": "Párosítás megszakítása",
-      "pairHint": "A készülék kódot mutat, amint az egység elkezdi a párosítást. Írja be azonnal."
+      "pairHint": "A készülék kódot mutat, amint az egység elkezdi a párosítást. Írja be azonnal.",
+      "as11Pairing": "AirSense 11",
+      "as11Paired": "Párosítva",
+      "as11PairedWith": "Párosítva: {{machine}}",
+      "as11NotPaired": "Nincs párosítva",
+      "as11Forget": "Készülék elfelejtése",
+      "as11ForgetConfirm": "Az egység elfelejti a(z) {{machine}} készüléket és a párosítás kulcsait, így egy másik AirSense 11 párosítható. Amíg nincs újra párosított készülék, Bluetooth-on nem érkeznek éjszakák. Elfelejti?",
+      "as11Forgetting": "A készülék elfelejtése folyamatban...",
+      "as11Forgotten": "Az egység elfelejtette a készüléket. Az új AirSense 11-et a Több alatt párosíthatja.",
+      "as11ForgetFailed": "Az egység nem tudta elfelejteni a készüléket: {{error}}"
     },
     "sleepbridge": {
       "lastWrite": "Utolsó írás",
