@@ -5,6 +5,18 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.3.0] - 2026-11-25
+
+### Added
+- **Forget this machine, for a Mule & Miner's AirSense 11 (#108).** On the
+  Devices page, a Mule & Miner in local mode now shows which AirSense 11 it
+  is paired with, and a "Forget this machine" action with the usual inline
+  confirm. The unit lets go of the machine and the pairing's keys, so a
+  different AirSense 11 can be paired (under More). It needs firmware 6.0.3
+  on both the mule and the miner; an older unit is told to update first.
+  The local socket takes it as `as11_forget` (`keys`, default true); see
+  docs/MULE_LOCAL_STREAM.md.
+
 ## [7.2.1] - 2026-11-24
 
 ### Fixed
