@@ -502,7 +502,7 @@ bool O2RingBleClient::oxySession() {
                 if (std::llabs(off) > kDefaultZoneLimitS && !(zone_chosen_ && zone_chosen_())) {
                     left_off = off;
                     std::cout << "O2Ring BLE: " << drift << ", which may be another time zone; "
-                                 "choose the Ring clock on the Devices page to have it set"
+                                 "choose a time zone under Ring clock on the Devices page to have it set"
                               << std::endl;
                 } else if (oxyMeasuring()) {
                     std::cout << "O2Ring BLE: " << drift << "; not set while it is measuring"

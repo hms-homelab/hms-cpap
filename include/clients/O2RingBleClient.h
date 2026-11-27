@@ -38,8 +38,9 @@ public:
     /// ring's own clock is written back as it was.
     ///
     /// The ring reports no zone. Unless `zone_chosen` says the Ring clock
-    /// setting names one, only a difference up to kDefaultZoneLimitS is set:
-    /// a larger one may be a ring on another zone than this computer's.
+    /// setting names a time zone, only a difference up to kDefaultZoneLimitS is
+    /// set: a larger one may be a ring on another zone, or one that has moved
+    /// for daylight saving.
     using WallNowFn = std::function<long long()>;
     void setWallNow(WallNowFn fn, std::function<bool()> zone_chosen = nullptr) {
         wall_now_ = std::move(fn);

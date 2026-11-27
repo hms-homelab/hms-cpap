@@ -100,7 +100,7 @@
       "bleRadioOff": "Bluetooth is switched off on this computer. Switch it on and check again.",
       "bleUnauthorized": "CpapDash is not allowed to use Bluetooth on this Mac. Allow it in System Settings, Privacy & Security, Bluetooth.",
       "setClock": "Correct the ring's clock",
-      "setClockHint": "An O2Ring-S more than a minute off the Ring clock's time is set to it, never while it is measuring. The Ring clock is on the Devices page. With Ring clock left at Same as this computer, only differences up to 14 minutes are corrected."
+      "setClockHint": "An O2Ring-S more than a minute off the Ring clock's time is set to it, never while it is measuring. The Ring clock is on the Devices page. Unless Ring clock is set to a Time zone, only differences up to 14 minutes are corrected."
     },
     "garmin": {
       "heading": "Garmin SpO2",

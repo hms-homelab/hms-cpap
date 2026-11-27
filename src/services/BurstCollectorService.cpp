@@ -485,8 +485,10 @@ std::string BurstCollectorService::summaryPromptTemplate(const AppConfig* cfg, s
 namespace {
 // With set_clock (Settings, o2ring.set_clock), an O2Ring-S found off its clock
 // is set to the time now on the ring clock's setting (the Devices page);
-// without, it is left as the ring's own app set it. On "Same as this computer"
-// only a small difference is set (O2RingBleClient::kDefaultZoneLimitS).
+// without, it is left as the ring's own app set it. Unless the Ring clock is a
+// named time zone, only a small difference is set
+// (O2RingBleClient::kDefaultZoneLimitS): "Same as this computer" may not be the
+// ring's zone, and a fixed offset does not follow its daylight saving.
 std::shared_ptr<O2RingBleClient> makeO2RingBleClient(bool set_clock) {
     auto client = std::make_shared<O2RingBleClient>();
     if (set_clock)
@@ -495,7 +497,7 @@ std::shared_ptr<O2RingBleClient> makeO2RingBleClient(bool set_clock) {
                 return machine_clocks::nowWall(kOximetryDeviceId,
                                                static_cast<long long>(std::time(nullptr)));
             },
-            [] { return !machine_clocks::zoneFor(kOximetryDeviceId).isHost(); });
+            [] { return machine_clocks::zoneFor(kOximetryDeviceId).isNamed(); });
     return client;
 }
 }  // namespace
