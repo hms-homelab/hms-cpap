@@ -1136,14 +1136,16 @@ constexpr oxyii::DateTime kRingTime{2026, 11, 9, 6, 30, 0};
 
 // The set time a file listing sends, with the time now `ahead_s` past the
 // ring's clock (none given: no wall clock on the client).
-std::vector<uint8_t> setTimeSent(FakeOxyRing& ring, std::optional<long long> ahead_s) {
+std::vector<uint8_t> setTimeSent(FakeOxyRing& ring, std::optional<long long> ahead_s,
+                                 bool zone_chosen = false, long long* left_off = nullptr) {
     auto t = oxyTransport(ring);
     O2RingBleClient client(t);
     if (ahead_s) {
         const long long now = static_cast<long long>(oxyii::epochOf(kRingTime)) + *ahead_s;
-        client.setWallNow([now] { return now; });
+        client.setWallNow([now] { return now; }, [zone_chosen] { return zone_chosen; });
     }
     EXPECT_FALSE(client.listFiles().empty());
+    if (left_off) *left_off = client.clockOffUncorrected();
     EXPECT_EQ(ring.times.size(), 1u);
     return ring.times.empty() ? std::vector<uint8_t>{} : ring.times.back();
 }
@@ -1179,6 +1181,33 @@ TEST(O2RingSetClock, NotWhenItDoesNotSayWhetherItIsMeasuring) {
     FakeOxyRing ring;
     ring.answers = [](uint8_t op) { return op != oxyii::kOpLive; };
     EXPECT_EQ(setTimeSent(ring, 807), payloadAt(30, 0));
+}
+
+// The ring reports no zone: on "Same as this computer", more than 14 minutes
+// either way may be another zone's time, and is left and reported.
+TEST(O2RingSetClock, WithNoZoneChosenOnlyASmallDifferenceIsSet) {
+    for (const long long off : {840LL, -840LL}) {
+        FakeOxyRing ring;
+        long long left = -1;
+        EXPECT_NE(setTimeSent(ring, off, false, &left), payloadAt(30, 0)) << off;
+        EXPECT_EQ(left, 0) << off;
+    }
+    for (const long long off : {841LL, -841LL, 7LL * 3600}) {
+        FakeOxyRing ring;
+        long long left = 0;
+        EXPECT_EQ(setTimeSent(ring, off, false, &left), payloadAt(30, 0)) << off;
+        EXPECT_EQ(left, off);
+        EXPECT_EQ(ring.count(oxyii::kOpLive), 0u) << "nothing to ask when it will not be set";
+    }
+}
+
+TEST(O2RingSetClock, WithAZoneChosenAnyDifferenceIsSet) {
+    FakeOxyRing ring;
+    long long left = -1;
+    oxyii::DateTime want = kRingTime;
+    want.hour = 13;
+    EXPECT_EQ(setTimeSent(ring, 7 * 3600, true, &left), oxyii::timePayload(want));
+    EXPECT_EQ(left, 0);
 }
 
 TEST(O2RingSetClock, ASmallDriftOrNoWallClockWritesTheRingsOwnTime) {

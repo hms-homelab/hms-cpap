@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <functional>
 #include "clients/IO2RingClient.h"
 #include "clients/ble/BleTransport.h"
@@ -35,9 +36,19 @@ public:
     /// clock is off by more than kClockToleranceS to it, unless the ring is
     /// measuring (a recording is not given a jump in time); without one the
     /// ring's own clock is written back as it was.
+    ///
+    /// The ring reports no zone. Unless `zone_chosen` says the Ring clock
+    /// setting names one, only a difference up to kDefaultZoneLimitS is set:
+    /// a larger one may be a ring on another zone than this computer's.
     using WallNowFn = std::function<long long()>;
-    void setWallNow(WallNowFn fn) { wall_now_ = std::move(fn); }
+    void setWallNow(WallNowFn fn, std::function<bool()> zone_chosen = nullptr) {
+        wall_now_ = std::move(fn);
+        zone_chosen_ = std::move(zone_chosen);
+    }
     static constexpr int kClockToleranceS = 60;
+    /// Zones differ by 15 minutes or more (nearly always 30 or more).
+    static constexpr int kDefaultZoneLimitS = 14 * 60;
+    long long clockOffUncorrected() const override { return clock_off_; }
 
     /// `transport`: the host's when null; a test passes a fake.
     explicit O2RingBleClient(std::shared_ptr<ble::ITransport> transport = nullptr);
@@ -120,6 +131,8 @@ private:
     // the vendor order straight away. Held for this client's life, not per link.
     bool oxy_vendor_order_ = false;
     WallNowFn wall_now_;
+    std::function<bool()> zone_chosen_;
+    std::atomic<long long> clock_off_{0};
     /// Whether the ring says a measurement is running, or does not say.
     bool oxyMeasuring();
     // Whether the handshake on this link sent auth.

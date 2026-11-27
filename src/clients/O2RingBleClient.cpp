@@ -494,10 +494,17 @@ bool O2RingBleClient::oxySession() {
                        t.day != r.day || t.month != r.month || t.year != r.year;
             };
             long long off = 0;
-            if (differs(oxyii::clockToSend(info->clock, wall_now_(), kClockToleranceS, &off))) {
+            const auto wanted = oxyii::clockToSend(info->clock, wall_now_(), kClockToleranceS, &off);
+            long long left_off = 0;
+            if (differs(wanted)) {
                 const std::string drift = "the O2Ring-S clock is " + std::to_string(std::llabs(off)) +
                                           " s " + (off > 0 ? "behind" : "ahead");
-                if (oxyMeasuring()) {
+                if (std::llabs(off) > kDefaultZoneLimitS && !(zone_chosen_ && zone_chosen_())) {
+                    left_off = off;
+                    std::cout << "O2Ring BLE: " << drift << ", which may be another time zone; "
+                                 "choose the Ring clock on the Devices page to have it set"
+                              << std::endl;
+                } else if (oxyMeasuring()) {
                     std::cout << "O2Ring BLE: " << drift << "; not set while it is measuring"
                               << std::endl;
                 } else {
@@ -509,6 +516,7 @@ bool O2RingBleClient::oxySession() {
                               << int(to_send.second) << std::endl;
                 }
             }
+            clock_off_ = left_off;
         }
         if (!oxyRequest(oxyii::kOpSetTime, oxyii::timePayload(to_send), 3000))
             std::cerr << "O2Ring BLE: O2Ring-S set time: no reply" << std::endl;

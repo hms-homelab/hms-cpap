@@ -194,12 +194,14 @@ IO2RingClient::LiveReading OximetryService::pollLive() {
 
 void OximetryService::noteFacts(bool connected) {
     const int battery = client_->getBattery();   // the client's own cached value
+    const long long clock_off = client_->clockOffUncorrected();
     std::lock_guard<std::mutex> lk(facts_mtx_);
     facts_.checked_at = static_cast<long long>(std::time(nullptr));
     facts_.connected  = connected;
     if (connected) facts_.last_contact = facts_.checked_at;
     if (battery >= 0) facts_.battery = battery;
     facts_.live = last_live_;
+    facts_.clock_off_s = clock_off;
 }
 
 OximetryService::Facts OximetryService::facts() const {

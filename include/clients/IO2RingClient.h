@@ -31,6 +31,9 @@ public:
     virtual std::vector<uint8_t> downloadFile(const std::string& filename) = 0;
     virtual LiveReading getLive() = 0;
     virtual int getBattery() const = 0;
+    /// Seconds the ring's clock was last found behind (negative: ahead) and
+    /// left so for want of a Ring clock setting. 0: nothing to say.
+    virtual long long clockOffUncorrected() const { return 0; }
 };
 
 } // namespace hms_cpap

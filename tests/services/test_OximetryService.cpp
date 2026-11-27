@@ -494,6 +494,8 @@ public:
         return it == contents.end() ? std::vector<uint8_t>{} : it->second;
     }
     LiveReading getLive() override { return live; }
+    long long clock_off = 0;
+    long long clockOffUncorrected() const override { return clock_off; }
     int getBattery() const override { return battery; }
 };
 
@@ -856,6 +858,16 @@ protected:
     std::shared_ptr<NiceMock<LastReadDb>> db;
     std::unique_ptr<OximetryService> svc;
 };
+
+TEST_F(LastReadTest, AClockLeftOffIsInTheFacts) {
+    db->answer("a.o2s", "60");
+    client->clock_off = 25200;
+    svc->pollLive();
+    EXPECT_EQ(svc->facts().clock_off_s, 25200);
+    client->clock_off = 0;
+    svc->pollLive();
+    EXPECT_EQ(svc->facts().clock_off_s, 0);
+}
 
 TEST_F(LastReadTest, ARestartTakesTheLastReadFromTheNewestRingFile) {
     db->answer("20261108232616.o2s", "3600");   // engines hand numbers back as text

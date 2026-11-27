@@ -226,6 +226,12 @@ TEST(Devices, TheRingThroughABridgeInABuildWithoutBluetoothAndDirect) {
     EXPECT_NE((*d)["recording_reason"].asString().find("ring"), std::string::npos);
     EXPECT_EQ((*d)["last_heard"].asInt64(), 1762299990);
     EXPECT_EQ((*d)["detail"]["last_contact"].asInt64(), 1762299990);
+    EXPECT_EQ((*d)["detail"]["clock_off_s"].asInt64(), 0);
+
+    // A clock left off for want of a Ring clock setting is passed to the page.
+    in.o2["clock_off_s"] = -25200;
+    out = buildDevices(in, store);
+    EXPECT_EQ((*find(out, "o2ring"))["detail"]["clock_off_s"].asInt64(), -25200);
 }
 
 // The ring reads as the AirSense 11 does: present while it answers, away once it

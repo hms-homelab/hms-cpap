@@ -71,6 +71,7 @@ public:
         long long   last_read_at = 0;      // the last file stored
         std::string last_file;
         IO2RingClient::LiveReading live;
+        long long   clock_off_s = 0;       // IO2RingClient::clockOffUncorrected
     };
     Facts facts() const;
 
