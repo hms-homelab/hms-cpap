@@ -109,12 +109,14 @@ public:
     std::string nightFor(const std::string& serial, int64_t utc_ms) const;
 
     static constexpr int64_t kSegmentGapMs = 60 * 1000;
-    /// What the strict policy calls a gap: a block this far or farther past
-    /// the one before. The machine stamps its seconds about 1000 ms apart, a
-    /// few ms either way, so a few ms late is the same stream, not a missed
-    /// sample; this is the dead band writeSegment lays samples with (three
-    /// quarters of a 40 ms sample).
-    static constexpr int64_t kStrictGapMs = 30;
+    /// How far from its place a block may be and still be the same stream:
+    /// three quarters of its sample interval. The machine stamps its seconds
+    /// about 1000 ms apart, a few ms either way, so a few ms late is not a
+    /// missed sample. writeSegment lays samples with this dead band, and the
+    /// strict policy splits only past it.
+    static constexpr int64_t gapSlackMs(int interval_ms) {
+        return (interval_ms > 0 ? interval_ms : as11::kIntervalMs) * 3 / 4;
+    }
     static constexpr int64_t kEventTailMs = 2 * 60 * 1000;
     static constexpr int64_t kLiveEveryMs = 10 * 1000;
     /// A stored event within this of a live one of the same kind is the same
@@ -123,7 +125,8 @@ public:
 
 private:
     bool preserve_gaps_ = false;   // mtx_ held
-    int64_t segment_gap_ms_;       // mtx_ held
+    /// A block joins a segment while it starts less than this past its end.
+    int64_t segmentGapMs(const as11::StreamBlock& b) const;   // mtx_ held
     struct Segment {
         std::string night;
         std::string file;           // the .cds1s

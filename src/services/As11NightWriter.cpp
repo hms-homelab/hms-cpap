@@ -239,13 +239,17 @@ std::string sleepDayFolder(const WallClock& wc) {
 // ── the writer ──
 
 As11NightWriter::As11NightWriter(std::string data_dir, WallClockFn default_clock, bool preserve_gaps)
-    : preserve_gaps_(preserve_gaps), segment_gap_ms_(preserve_gaps ? kStrictGapMs : kSegmentGapMs),
-      data_dir_(std::move(data_dir)), default_clock_(std::move(default_clock)) {}
+    : preserve_gaps_(preserve_gaps), data_dir_(std::move(data_dir)), default_clock_(std::move(default_clock)) {}
 
 void As11NightWriter::setPreserveGaps(bool on) {
     std::lock_guard<std::mutex> lk(mtx_);
     preserve_gaps_ = on;
-    segment_gap_ms_ = on ? kStrictGapMs : kSegmentGapMs;
+}
+
+int64_t As11NightWriter::segmentGapMs(const as11::StreamBlock& b) const {
+    // Strict: exactly the slack late still joins, as writeSegment, which
+    // calls it a gap only past that.
+    return preserve_gaps_ ? gapSlackMs(b.interval_ms) + 1 : kSegmentGapMs;
 }
 
 bool As11NightWriter::preserveGaps() const {
@@ -334,10 +338,11 @@ void As11NightWriter::onBlock(const as11::StreamBlock& b) {
     std::lock_guard<std::mutex> lk(mtx_);
     Machine& m = machine(b.serial);
 
+    const int64_t gap_ms = segmentGapMs(b);
     Segment* seg = nullptr;
     for (auto& s : m.segments) {
         if (s.starts.count(b.start_ms)) return;   // a resend, including an older segment
-        if (b.start_ms >= s.start_ms - segment_gap_ms_ && b.start_ms < s.end_ms + segment_gap_ms_) seg = &s;
+        if (b.start_ms >= s.start_ms - gap_ms && b.start_ms < s.end_ms + gap_ms) seg = &s;
     }
     // Split, a segment shorter than a second and the one after it can start
     // in the same second, and a segment's files are named by its start
@@ -372,7 +377,7 @@ void As11NightWriter::onBlock(const as11::StreamBlock& b) {
     // A segment this block can no longer join is closed: its files are final.
     for (auto& s : m.segments) {
         if (&s == seg || s.written_end == s.end_ms) continue;
-        if (b.start_ms >= s.end_ms + segment_gap_ms_) { writeSegment(b.serial, s); s.written_end = s.end_ms; }
+        if (b.start_ms >= s.end_ms + gap_ms) { writeSegment(b.serial, s); s.written_end = s.end_ms; }
     }
     // The open segment: live, every 10 s of stream (every block from a Mule &
     // Miner, whose blocks are 10 s). The files are rewritten whole and moved
@@ -541,7 +546,7 @@ void As11NightWriter::writeSegment(const std::string& serial, const Segment& seg
         const int iv = b.interval_ms > 0 ? b.interval_ms : as11::kIntervalMs;
         const int64_t delta = b.start_ms - cursor;
         size_t skip = 0;
-        const int64_t slack = iv * 3 / 4;
+        const int64_t slack = gapSlackMs(iv);
         if (delta > slack) {
             const size_t gap = static_cast<size_t>((delta + iv / 2) / iv);
             brp.flow_lpm.insert(brp.flow_lpm.end(), gap, 0.0);

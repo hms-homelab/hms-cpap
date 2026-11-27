@@ -741,6 +741,28 @@ TEST_F(NightTest, StrictBlocksAFewMsLateStayOneSegment) {
                            "20261016_220020_BRP.edf"));
 }
 
+// The strict threshold is three quarters of the block's own sample interval:
+// that late is the same segment, a millisecond more is a new one.
+TEST_F(NightTest, StrictGapThresholdFollowsTheSampleInterval) {
+    // The segments two seconds of stream make, the second `late` ms late.
+    const auto segments = [this](int interval_ms, int64_t late) {
+        const fs::path d = dir_ / (std::to_string(interval_ms) + "_" + std::to_string(late));
+        As11NightWriter w(d.string(), fixedOffsetClock(-300), true);
+        for (int i = 0; i < 2; ++i) {
+            StreamBlock b = second(kT0 + i * (1000 + late));
+            b.interval_ms = interval_ms;
+            for (auto& c : b.channels) c.values.resize(1000 / interval_ms);
+            w.onBlock(b);
+        }
+        return files(d / "as11" / kSerial / "stream" / "20261016").size();
+    };
+    for (const int iv : {20, 40, 100}) {
+        const int64_t slack = iv * 3 / 4;
+        EXPECT_EQ(segments(iv, slack), 1u) << iv << " ms samples";
+        EXPECT_EQ(segments(iv, slack + 1), 2u) << iv << " ms samples";
+    }
+}
+
 // The Settings switch reaches a running writer: from the next block on.
 TEST_F(NightTest, ThePolicyChangesOnARunningWriter) {
     auto w = writer();
