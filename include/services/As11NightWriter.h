@@ -113,7 +113,8 @@ public:
     /// three quarters of its sample interval. The machine stamps its seconds
     /// about 1000 ms apart, a few ms either way, so a few ms late is not a
     /// missed sample. writeSegment lays samples with this dead band, and the
-    /// strict policy splits only past it.
+    /// strict policy splits only past it: past the block before, or past the
+    /// place writeSegment would lay it, where small delays have added up.
     static constexpr int64_t gapSlackMs(int interval_ms) {
         return (interval_ms > 0 ? interval_ms : as11::kIntervalMs) * 3 / 4;
     }
@@ -131,9 +132,12 @@ private:
         std::string night;
         std::string file;           // the .cds1s
         int64_t start_ms = 0, end_ms = 0;
+        int64_t cursor_ms = 0;      // where writeSegment's samples have got to
         std::set<int64_t> starts;   // blocks held, by start
         int64_t written_end = 0;    // end the EDFs were last written for
     };
+    /// The time a block's lateness in this segment is measured from.
+    int64_t joinEndMs(const Segment& s, const as11::StreamBlock& b) const;   // mtx_ held
     struct Machine {
         std::vector<Segment> segments;
         bool loaded = false;

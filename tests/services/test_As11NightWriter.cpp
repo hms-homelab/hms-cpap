@@ -720,11 +720,8 @@ TEST_F(NightTest, StrictTwoSegmentsInOneSecondShareOneSegment) {
 // A block a sample or more late is a gap and still splits.
 TEST_F(NightTest, StrictBlocksAFewMsLateStayOneSegment) {
     As11NightWriter w(dir_.string(), fixedOffsetClock(-300), true);
-    int64_t t = kT0;
-    for (int i = 0; i < 60; ++i) {
-        w.onBlock(second(t));
-        t += 1000 + (i % 3 == 1 ? 4 : i % 3 == 2 ? 8 : 0);   // 0, +4, +8 ms late
-    }
+    for (int i = 0; i < 60; ++i)   // 0, +4, +8 ms late
+        w.onBlock(second(kT0 + i * 1000 + (i % 3) * 4));
     w.onStreamEnd(kSerial);
     const auto names = files(night());
     EXPECT_EQ(std::count_if(names.begin(), names.end(), [](const auto& n) {
@@ -761,6 +758,23 @@ TEST_F(NightTest, StrictGapThresholdFollowsTheSampleInterval) {
         EXPECT_EQ(segments(iv, slack), 1u) << iv << " ms samples";
         EXPECT_EQ(segments(iv, slack + 1), 2u) << iv << " ms samples";
     }
+}
+
+// Delays that are each within the threshold but add up past it are a missed
+// sample too: the segment splits, rather than being filled with a zero.
+TEST_F(NightTest, StrictDelaysThatAddUpSplitInsteadOfFilling) {
+    As11NightWriter w(dir_.string(), fixedOffsetClock(-300), true);
+    for (int i = 0; i < 6; ++i) w.onBlock(second(kT0 + i * 1012));   // 12 ms more each
+    const auto stream = dir_ / "as11" / kSerial / "stream" / "20261016";
+    // The fourth is 36 ms past its place, 12 ms past the third.
+    EXPECT_EQ(files(stream).size(), 2u) << ::testing::PrintToString(files(stream));
+
+    // The same after a restart, from the stored blocks.
+    As11NightWriter first(dir_.string() + "_b", fixedOffsetClock(-300), true);
+    for (int i = 0; i < 3; ++i) first.onBlock(second(kT0 + i * 1012));
+    As11NightWriter again(dir_.string() + "_b", fixedOffsetClock(-300), true);
+    again.onBlock(second(kT0 + 3 * 1012));
+    EXPECT_EQ(files(fs::path(dir_.string() + "_b") / "as11" / kSerial / "stream" / "20261016").size(), 2u);
 }
 
 // The Settings switch reaches a running writer: from the next block on.
