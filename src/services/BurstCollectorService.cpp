@@ -1033,11 +1033,12 @@ void BurstCollectorService::observeCardListing(
 
     for (const auto& [folder, files] : listings) {
         for (const auto& f : files) {
-            // YYYYMMDD_HHMMSS_BRP.edf
-            if (f.is_dir || f.name.size() < 19 || f.name[15] != '_') continue;
-            std::string type = f.name.substr(16, 3);
+            // YYYYMMDD_HHMMSS_BRP.edf, and only it: the .crc beside it shares the
+            // stem, and its size would read as the BRP changing.
+            if (f.is_dir || f.name.size() != 23 || f.name[15] != '_') continue;
+            std::string type = f.name.substr(16);
             std::transform(type.begin(), type.end(), type.begin(), ::toupper);
-            if (type != "BRP") continue;
+            if (type != "BRP.EDF") continue;
             const std::string stem = f.name.substr(0, 15);
             if (!card_mask_.session().empty() && stem < card_mask_.session()) continue;
 
@@ -3720,6 +3721,10 @@ bool BurstCollectorService::executeBurstCycle() {
                                     session.session_start, std::chrono::system_clock::now());
                     downloaded_sessions.push_back({session_dir, session});
                     stored_inline.insert(session.session_start);
+
+                    // The mask, as the card shows it: a new session is growth.
+                    if (session.date_folder == current_night)
+                        observeCardSession(session, session_dir, nowSeconds());
                 } else {
                     std::cerr << "CPAP: Failed to download session " << session.session_prefix << std::endl;
                     // SDD-054 D6: a failed download lists its folder again.
@@ -4768,14 +4773,18 @@ bool BurstCollectorService::parseAndStoreSession(
     // built from a Bluetooth stream of the same therapy (overlapping in time;
     // the machine may cut its card files where the stream had one) is
     // replaced by this row. The collector and a local folder both save here.
-    As11NightImport::replaceConstructedFiles(*db_service_, device_id_, session_start,
-                                             dataEndOf(*parsed).value_or(session_start));
+    const int replaced = As11NightImport::replaceConstructedFiles(
+        *db_service_, device_id_, session_start, dataEndOf(*parsed).value_or(session_start));
 
     // SDD-026: the night's row in cpap_daily_summary is ours wherever the
     // night has sessions, so every save re-derives it. Per session, so the
     // dashboard follows the sessions list as it fills (issue #16 was a full
-    // session list behind a blank dashboard).
-    db_service_->aggregateDailySummaryFromSessions(device_id_);
+    // session list behind a blank dashboard). Only this night changed, unless
+    // a replaced copy stood in another one.
+    if (replaced > 0)
+        db_service_->aggregateDailySummaryFromSessions(device_id_);
+    else
+        db_service_->aggregateDailySummaryForNight(device_id_, session_start);
 
     return true;
 }

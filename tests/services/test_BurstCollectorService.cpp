@@ -4544,6 +4544,32 @@ TEST_F(BurstOrchestrationTest, Sdd054_TheIndexIsListedOncePerRunNotOnEveryBurst)
     EXPECT_EQ(src_raw->index_lists, 1) << "it used to be listed twice on every burst";
 }
 
+// The mask goes on with the burst that first stores the session, not one later.
+TEST_F(BurstOrchestrationTest, ANewSessionsFirstBurstSaysTheMaskIsOn) {
+    long long now = kSdd054T0;   // the machine's 23:00 on the 14th
+    std::vector<std::string> masks;
+    auto live = std::make_shared<LiveState>(
+        [&masks](const std::string& topic, const std::string& payload, int, bool) {
+            if (topic.size() > 14 && topic.compare(topic.size() - 14, 14, "/realtime/mask") == 0)
+                masks.push_back(payload);
+            return true;
+        },
+        "cpap_test", "Test CPAP", LiveState::Clock::time_point(std::chrono::seconds(now)));
+    auto svc = makeService([](FakeDataSource& ds) {
+        ds.date_folders = {"20261014"};
+        ds.folder_files["20261014"] = {mkStampedEntry("20261014_225800_BRP.edf", 7,
+                                                      2026, 10, 14, 22, 59, 0)};
+    });
+    onSdd054Clock(*svc, now);
+    svc->setSourceForTest("ezshare");
+    svc->setLiveState(live);
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(false));
+
+    svc->runBurstCycleForTest();
+    EXPECT_EQ(masks, std::vector<std::string>{"ON"});
+}
+
 TEST_F(BurstOrchestrationTest, Sdd054_TonightIsListedEveryBurstEvenBeforeItExists) {
     long long now = kSdd054T0;
     auto svc = makeService([](FakeDataSource& ds) { ds.date_folders = {"20261012"}; });

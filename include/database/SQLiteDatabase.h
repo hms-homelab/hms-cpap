@@ -120,6 +120,10 @@ public:
 
     bool aggregateDailySummaryFromSessions(const std::string& device_id) override;
 
+    bool aggregateDailySummaryForNight(
+        const std::string& device_id,
+        const std::chrono::system_clock::time_point& session_start) override;
+
     std::optional<SessionMetrics> getNightlyMetrics(
         const std::string& device_id,
         const std::chrono::system_clock::time_point& session_start) override;
@@ -219,6 +223,10 @@ public:
                           const std::vector<std::string>& params = {}) override;
 
 private:
+    /// The daily summary of one night, or of every night when session_start
+    /// (fmtTimestamp) is empty.
+    bool aggregateDailySummary(const std::string& device_id, const std::string& session_start);
+
     std::string db_path_;
     sqlite3* db_ = nullptr;
     mutable std::recursive_mutex mutex_;
