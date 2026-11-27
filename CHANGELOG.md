@@ -5,6 +5,41 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.3.2] - 2026-11-27
+
+### Fixed
+- **Mask ON and OFF from a card, and one night's summary per saved session
+  (#124, fixes #122 and #123).** On a card, only the `_BRP.edf` file counts
+  toward mask off: the `.crc` file beside it no longer resets the unchanged
+  count, so the mask goes off when the therapy ends. A new session's first
+  burst now says the mask is on (for the current night only). A saved
+  session re-derives its own night's daily summary instead of every night's,
+  so a save no longer gets slower as the history grows on SQLite; MySQL and
+  PostgreSQL keep the full pass, and so does a save that removed a replaced
+  Bluetooth copy. Thanks [nathanzm](https://github.com/nathanzm).
+- **Strict stream gaps split where a sample is missed (#125).** With the
+  strict stream gaps option on, an AirSense 11 night streamed over Bluetooth
+  was cut into a new BRP/PLD file pair whenever a block arrived 1 ms or more
+  late, and the machine's seconds wander a few ms either way, so the night
+  ended up in hundreds of one-minute files. A block now starts a new
+  segment only when it begins 30 ms or more after the previous one ended,
+  the same dead band the sample placement uses; a block a whole sample
+  (40 ms) late still splits. The default 60-second joining is unchanged.
+  Thanks [rccoleman](https://github.com/rccoleman).
+- **A card's settled night is closed, and a done folder's night is not
+  Partial (#128, fixes #127).** The sweep that closes settled open nights
+  now also closes ez Share and FlashAir nights, at their own data's end, so
+  they no longer stay Live. A folder with every EDF stored that closed once
+  has its ledger row completed, so its night no longer reads Partial.
+  Thanks [nathanzm](https://github.com/nathanzm).
+
+### Thank you
+hms-cpap 7.x was shaped by the people who use it. A special thank you to:
+- **[rccoleman](https://github.com/rccoleman)**, for the O2 ring and Home Assistant work, the AirSense 11 stream timing fixes and much more across ten pull requests.
+- **[nathanzm](https://github.com/nathanzm)**, for finding and fixing the card mask-off, the SQLite summary cost and the nights stuck Live or Partial.
+- **[djbill99-hue](https://github.com/djbill99-hue)**, for the strict AirSense 11 stream gap option and the Home Assistant collector proposal.
+- **[TLaren](https://github.com/TLaren)**, for the two-machine AirSense 11 Bluetooth report.
+
 ## [7.3.1] - 2026-11-25
 
 ### Fixed
