@@ -98,7 +98,9 @@
       "bleNotCompiled": "This build has no Bluetooth support. Built from source on Linux, it needs -DBUILD_WITH_BLE=ON.",
       "bleError": "Bluetooth could not be checked. Check that Bluetooth works on this computer.",
       "bleRadioOff": "Bluetooth is switched off on this computer. Switch it on and check again.",
-      "bleUnauthorized": "CpapDash is not allowed to use Bluetooth on this Mac. Allow it in System Settings, Privacy & Security, Bluetooth."
+      "bleUnauthorized": "CpapDash is not allowed to use Bluetooth on this Mac. Allow it in System Settings, Privacy & Security, Bluetooth.",
+      "setClock": "Correct the ring's clock",
+      "setClockHint": "An O2Ring-S more than a minute off the Ring clock's time is set to it, never while it is measuring. The Ring clock is on the Devices page."
     },
     "garmin": {
       "heading": "Garmin SpO2",

@@ -98,7 +98,9 @@
       "bleNotCompiled": "Esta compilación no tiene soporte Bluetooth. Compilada desde el código en Linux, necesita -DBUILD_WITH_BLE=ON.",
       "bleError": "No se pudo comprobar el Bluetooth. Revisa que el Bluetooth funcione en este equipo.",
       "bleRadioOff": "El Bluetooth está apagado en este equipo. Enciéndelo y vuelve a comprobarlo.",
-      "bleUnauthorized": "CpapDash no tiene permiso para usar el Bluetooth en este Mac. Permítelo en Ajustes del Sistema, Privacidad y seguridad, Bluetooth."
+      "bleUnauthorized": "CpapDash no tiene permiso para usar el Bluetooth en este Mac. Permítelo en Ajustes del Sistema, Privacidad y seguridad, Bluetooth.",
+      "setClock": "Corregir el reloj del anillo",
+      "setClockHint": "Un O2Ring-S con más de un minuto de diferencia respecto a la hora del anillo se ajusta a ella, nunca mientras está midiendo. La hora del anillo está en la página Dispositivos."
     },
     "garmin": {
       "heading": "SpO2 de Garmin",

@@ -1362,6 +1362,7 @@ private:
         int burst_interval = 0;
         bool o2ring_enabled = false;
         std::string o2ring_mode, o2ring_mule_url;
+        bool o2ring_set_clock = true;
         bool airsense11_enabled = false;
         std::string airsense11_mule_url;
         int airsense11_pull_hours = 6;

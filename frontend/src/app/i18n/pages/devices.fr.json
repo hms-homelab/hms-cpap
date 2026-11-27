@@ -574,7 +574,7 @@
       "zonePick": "Choisissez un fuseau horaire dans la liste.",
       "inUse": "En service : UTC{{offset}} maintenant",
       "help": "L'heure affichée sur l'écran de votre CPAP. Ne la changez que si ce n'est pas l'heure de cet ordinateur.",
-      "ringHelp": "L'heure des enregistrements de votre bague O2. Une O2Ring-S qui a plus d'une minute d'écart est remise à cette heure à sa connexion ; ne la changez donc que si ce n'est pas l'heure de cet ordinateur.",
+      "ringHelp": "L'heure des enregistrements de votre bague O2. Une O2Ring-S qui a plus d'une minute d'écart est remise à cette heure à sa connexion, jamais pendant une mesure (désactivable dans les Réglages) ; ne la changez donc que si ce n'est pas l'heure de cet ordinateur.",
       "save": "Enregistrer",
       "saving": "Enregistrement...",
       "saved": "Enregistré. Les nuits lues à partir de maintenant utilisent cette horloge.",

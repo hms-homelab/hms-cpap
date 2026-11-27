@@ -524,6 +524,7 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
         if (o.isMember("enabled")) config_->o2ring.enabled = o["enabled"].asBool();
         if (o.isMember("mode")) config_->o2ring.mode = o["mode"].asString();
         if (o.isMember("mule_url")) config_->o2ring.mule_url = o["mule_url"].asString();
+        if (o.isMember("set_clock")) config_->o2ring.set_clock = o["set_clock"].asBool();
     }
 
     if (j.isMember("airsense11_ble")) {

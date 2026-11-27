@@ -1,6 +1,7 @@
 #include "clients/O2RingBleClient.h"
 #include "clients/OxyIIProtocol.h"
 #include "clients/ble/LinkRecovery.h"
+#include <cstdlib>
 #include <nlohmann/json.hpp>
 #include <iostream>
 #include <chrono>
@@ -487,16 +488,27 @@ bool O2RingBleClient::oxySession() {
         // on the ring's clock setting, so its files and this app's agree.
         oxyii::DateTime to_send = info->clock;
         if (wall_now_) {
+            auto differs = [&](const oxyii::DateTime& t) {
+                const auto& r = info->clock;
+                return t.second != r.second || t.minute != r.minute || t.hour != r.hour ||
+                       t.day != r.day || t.month != r.month || t.year != r.year;
+            };
             long long off = 0;
-            to_send = oxyii::clockToSend(info->clock, wall_now_(), kClockToleranceS, &off);
-            if (to_send.second != info->clock.second || to_send.minute != info->clock.minute ||
-                to_send.hour != info->clock.hour || to_send.day != info->clock.day ||
-                to_send.month != info->clock.month || to_send.year != info->clock.year)
-                std::cout << "O2Ring BLE: the O2Ring-S clock was " << off << " s "
-                          << (off > 0 ? "behind" : "ahead") << "; setting it to "
-                          << to_send.year << "-" << int(to_send.month) << "-" << int(to_send.day)
-                          << " " << int(to_send.hour) << ":" << int(to_send.minute) << ":"
-                          << int(to_send.second) << std::endl;
+            if (differs(oxyii::clockToSend(info->clock, wall_now_(), kClockToleranceS, &off))) {
+                const std::string drift = "the O2Ring-S clock is " + std::to_string(std::llabs(off)) +
+                                          " s " + (off > 0 ? "behind" : "ahead");
+                if (oxyMeasuring()) {
+                    std::cout << "O2Ring BLE: " << drift << "; not set while it is measuring"
+                              << std::endl;
+                } else {
+                    // The time again: the question above took a while.
+                    to_send = oxyii::clockToSend(info->clock, wall_now_(), kClockToleranceS);
+                    std::cout << "O2Ring BLE: " << drift << "; setting it to " << to_send.year
+                              << "-" << int(to_send.month) << "-" << int(to_send.day) << " "
+                              << int(to_send.hour) << ":" << int(to_send.minute) << ":"
+                              << int(to_send.second) << std::endl;
+                }
+            }
         }
         if (!oxyRequest(oxyii::kOpSetTime, oxyii::timePayload(to_send), 3000))
             std::cerr << "O2Ring BLE: O2Ring-S set time: no reply" << std::endl;
@@ -507,6 +519,14 @@ bool O2RingBleClient::oxySession() {
     if (!oxyRequest(oxyii::kOpGetConfig, {}, 3000))
         std::cerr << "O2Ring BLE: O2Ring-S GET_CONFIG: no reply" << std::endl;
     return true;
+}
+
+// Run status 1 (measure prep) and 2 (measuring) are a recording in progress;
+// 0 and 3 are before and after one. No answer counts as one.
+bool O2RingBleClient::oxyMeasuring() {
+    if (!oxyRequest(oxyii::kOpLive, {}, 3000)) return true;
+    const auto live = oxyii::parseLive(resp_buf_);
+    return !live || live->run == 1 || live->run == 2;
 }
 
 // 0xF4 clears a handle left open, without which 0xF1 hangs: the ring's own

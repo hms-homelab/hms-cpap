@@ -272,6 +272,9 @@ struct AppConfig {
         bool enabled = false;
         std::string mode = "http";      // "http" or "ble"
         std::string mule_url;           // e.g. "http://cpapdash.local"
+        /// Set an O2Ring-S whose clock has drifted to the time now, when it
+        /// is not measuring. Direct Bluetooth only.
+        bool set_clock = true;
     } o2ring;
 
     // An AirSense 11 read over its own Bluetooth, through the bridge
@@ -890,6 +893,7 @@ struct AppConfig {
                 if (o.contains("enabled"))              config.o2ring.enabled = o["enabled"];
                 if (o.contains("mode"))                 config.o2ring.mode = o["mode"];
                 if (o.contains("mule_url"))             config.o2ring.mule_url = o["mule_url"];
+                if (o.contains("set_clock"))            config.o2ring.set_clock = o["set_clock"];
             }
 
             if (j.contains("airsense11")) {
@@ -1083,6 +1087,7 @@ struct AppConfig {
             j["o2ring"]["enabled"] = o2ring.enabled;
             j["o2ring"]["mode"] = o2ring.mode;
             j["o2ring"]["mule_url"] = o2ring.mule_url;
+            j["o2ring"]["set_clock"] = o2ring.set_clock;
 
             j["airsense11"]["enabled"] = airsense11.enabled;
             j["airsense11"]["mule_url"] = airsense11.mule_url;
@@ -1254,6 +1259,7 @@ struct AppConfig {
         j["o2ring"]["enabled"] = o2ring.enabled;
         j["o2ring"]["mode"] = o2ring.mode;
         j["o2ring"]["mule_url"] = o2ring.mule_url;
+        j["o2ring"]["set_clock"] = o2ring.set_clock;
 
         // airsense11 was missing here although save() persists it; every
         // persisted key belongs in both serialisers.

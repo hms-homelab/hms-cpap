@@ -78,6 +78,9 @@ export interface AppConfig {
     max_training_days: number;
   };
   o2ring: {
+    /** Set a drifted O2Ring-S to the time now, when it is not measuring.
+     *  Direct Bluetooth only. */
+    set_clock?: boolean;
     enabled: boolean;
     mode: string;          // 'http' | 'ble'
     mule_url: string;      // for HTTP mode

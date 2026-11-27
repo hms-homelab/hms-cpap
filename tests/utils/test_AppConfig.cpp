@@ -605,6 +605,27 @@ TEST_F(AppConfigTest, AirSense11BluetoothSettingsSurviveSaveAndLoad) {
     EXPECT_TRUE(defaults.airsense11_ble.address.empty());
 }
 
+// Setting a drifted O2Ring-S is a Settings option, on by default.
+TEST_F(AppConfigTest, TheRingClockSettingIsOnByDefaultAndSurvivesSaveAndLoad) {
+    AppConfig defaults;
+    EXPECT_TRUE(defaults.o2ring.set_clock);
+    EXPECT_EQ(defaults.toJson()["o2ring"]["set_clock"], true);
+
+    AppConfig a;
+    a.o2ring.set_clock = false;
+    a.save(config_path_);
+    AppConfig b;
+    ASSERT_TRUE(AppConfig::load(config_path_, b));
+    EXPECT_FALSE(b.o2ring.set_clock);
+    EXPECT_EQ(b.toJson()["o2ring"]["set_clock"], false);
+
+    // A config.json written before the setting existed reads as on.
+    writeConfig(R"({"o2ring": {"enabled": true, "mode": "ble"}})");
+    AppConfig old;
+    ASSERT_TRUE(AppConfig::load(config_path_, old));
+    EXPECT_TRUE(old.o2ring.set_clock);
+}
+
 // PR #106: the strict stream gap switch is a Settings option, off by default,
 // kept in config.json and read back by the page.
 TEST_F(AppConfigTest, TheStrictStreamGapSettingIsOffByDefaultAndSurvivesSaveAndLoad) {

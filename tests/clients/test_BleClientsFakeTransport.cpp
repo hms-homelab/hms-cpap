@@ -1060,6 +1060,8 @@ struct FakeOxyRing {
     std::vector<uint8_t> ops;            // every request's opcode, in the order sent
     std::function<bool(uint8_t)> answers = [](uint8_t) { return true; };
     bool authed = false;                 // a 0xFF has been received
+    std::vector<std::vector<uint8_t>> times;   // each set time's payload
+    int run = 0;                         // the live reply's run status
 
     static std::vector<uint8_t> reply(uint8_t op, const std::vector<uint8_t>& payload) {
         auto f = oxyii::encode(op, 0, payload);
@@ -1097,7 +1099,13 @@ struct FakeOxyRing {
             while (auto f = oxyii::takeFrame(pending)) {
                 ops.push_back(f->op);
                 if (f->op == oxyii::kOpAuth) authed = true;
-                if (answers(f->op)) l.notify(reply(f->op, payloadFor(f->op)));
+                if (f->op == oxyii::kOpSetTime) times.push_back(f->payload);
+                auto p = payloadFor(f->op);
+                if (f->op == oxyii::kOpLive) {
+                    p.assign(14, 0);
+                    p[4] = static_cast<uint8_t>(run);
+                }
+                if (answers(f->op)) l.notify(reply(f->op, p));
             }
         };
     }
@@ -1119,6 +1127,67 @@ std::shared_ptr<FakeTransport> oxyTransport(FakeOxyRing& ring) {
 }
 
 }  // namespace
+
+// ── The set-time path: the fake ring's clock reads 2026-11-09 06:30:00. ──
+
+namespace {
+
+constexpr oxyii::DateTime kRingTime{2026, 11, 9, 6, 30, 0};
+
+// The set time a file listing sends, with the time now `ahead_s` past the
+// ring's clock (none given: no wall clock on the client).
+std::vector<uint8_t> setTimeSent(FakeOxyRing& ring, std::optional<long long> ahead_s) {
+    auto t = oxyTransport(ring);
+    O2RingBleClient client(t);
+    if (ahead_s) {
+        const long long now = static_cast<long long>(oxyii::epochOf(kRingTime)) + *ahead_s;
+        client.setWallNow([now] { return now; });
+    }
+    EXPECT_FALSE(client.listFiles().empty());
+    EXPECT_EQ(ring.times.size(), 1u);
+    return ring.times.empty() ? std::vector<uint8_t>{} : ring.times.back();
+}
+
+std::vector<uint8_t> payloadAt(int minute, int second) {
+    oxyii::DateTime t = kRingTime;
+    t.minute = static_cast<uint8_t>(minute);
+    t.second = static_cast<uint8_t>(second);
+    return oxyii::timePayload(t);
+}
+
+}  // namespace
+
+TEST(O2RingSetClock, ADriftedRingIsSetToTheTimeNow) {
+    for (const int run : {0, 3}) {   // before and after a measurement
+        FakeOxyRing ring;
+        ring.run = run;
+        EXPECT_EQ(setTimeSent(ring, 807), payloadAt(43, 27)) << "run " << run;
+        EXPECT_EQ(ring.count(oxyii::kOpLive), 1u);
+        EXPECT_LT(ring.at(oxyii::kOpLive), ring.at(oxyii::kOpSetTime));
+    }
+}
+
+TEST(O2RingSetClock, NotWhileItIsMeasuring) {
+    for (const int run : {1, 2}) {
+        FakeOxyRing ring;
+        ring.run = run;
+        EXPECT_EQ(setTimeSent(ring, 807), payloadAt(30, 0)) << "run " << run;
+    }
+}
+
+TEST(O2RingSetClock, NotWhenItDoesNotSayWhetherItIsMeasuring) {
+    FakeOxyRing ring;
+    ring.answers = [](uint8_t op) { return op != oxyii::kOpLive; };
+    EXPECT_EQ(setTimeSent(ring, 807), payloadAt(30, 0));
+}
+
+TEST(O2RingSetClock, ASmallDriftOrNoWallClockWritesTheRingsOwnTime) {
+    for (const auto ahead : {std::optional<long long>(30), std::optional<long long>()}) {
+        FakeOxyRing ring;
+        EXPECT_EQ(setTimeSent(ring, ahead), payloadAt(30, 0));
+        EXPECT_EQ(ring.count(oxyii::kOpLive), 0u) << "nothing to ask when there is nothing to set";
+    }
+}
 
 TEST(O2RingSHandshake, AnAnsweringRingIsAskedGetInfoFirstAndListedBeforeAnyClose) {
     FakeOxyRing ring;

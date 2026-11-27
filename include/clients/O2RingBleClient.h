@@ -32,7 +32,8 @@ class O2RingBleClient : public IO2RingClient {
 public:
     /// The ring clock's wall time now, as seconds since 1970 read as a wall
     /// time (the label form). With one, a connection sets an O2Ring-S whose
-    /// clock is off by more than kClockToleranceS to it; without one the
+    /// clock is off by more than kClockToleranceS to it, unless the ring is
+    /// measuring (a recording is not given a jump in time); without one the
     /// ring's own clock is written back as it was.
     using WallNowFn = std::function<long long()>;
     void setWallNow(WallNowFn fn) { wall_now_ = std::move(fn); }
@@ -119,6 +120,8 @@ private:
     // the vendor order straight away. Held for this client's life, not per link.
     bool oxy_vendor_order_ = false;
     WallNowFn wall_now_;
+    /// Whether the ring says a measurement is running, or does not say.
+    bool oxyMeasuring();
     // Whether the handshake on this link sent auth.
     bool oxy_authed_ = false;
     int oxy_list_timeout_ms_ = 5000;
