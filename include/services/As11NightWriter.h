@@ -68,7 +68,8 @@ std::string sleepDayFolder(const cpapdash::parser::WallClock& wc);
  */
 class As11NightWriter : public IAs11NightSink {
 public:
-    /// preserve_gaps splits at positive gaps; false retains the default 60 s joining.
+    /// preserve_gaps splits where the stream missed a sample or more; false
+    /// retains the default 60 s joining.
     As11NightWriter(std::string data_dir, WallClockFn default_clock, bool preserve_gaps = false);
 
     /// The Settings switch (airsense11_ble.strict_stream_gaps), applied live:
@@ -108,6 +109,12 @@ public:
     std::string nightFor(const std::string& serial, int64_t utc_ms) const;
 
     static constexpr int64_t kSegmentGapMs = 60 * 1000;
+    /// What the strict policy calls a gap: a block this far or farther past
+    /// the one before. The machine stamps its seconds about 1000 ms apart, a
+    /// few ms either way, so a few ms late is the same stream, not a missed
+    /// sample; this is the dead band writeSegment lays samples with (three
+    /// quarters of a 40 ms sample).
+    static constexpr int64_t kStrictGapMs = 30;
     static constexpr int64_t kEventTailMs = 2 * 60 * 1000;
     static constexpr int64_t kLiveEveryMs = 10 * 1000;
     /// A stored event within this of a live one of the same kind is the same

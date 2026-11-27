@@ -714,6 +714,33 @@ TEST_F(NightTest, StrictTwoSegmentsInOneSecondShareOneSegment) {
     EXPECT_TRUE(fs::exists(night() / "20261016_220040_BRP.edf"));
 }
 
+// The machine stamps its seconds about 1000 ms apart, a few ms either way. A
+// block a few ms late is the same stream: under the strict policy it must not
+// cut the night into a file per late block (a real night had 392 of them).
+// A block a sample or more late is a gap and still splits.
+TEST_F(NightTest, StrictBlocksAFewMsLateStayOneSegment) {
+    As11NightWriter w(dir_.string(), fixedOffsetClock(-300), true);
+    int64_t t = kT0;
+    for (int i = 0; i < 60; ++i) {
+        w.onBlock(second(t));
+        t += 1000 + (i % 3 == 1 ? 4 : i % 3 == 2 ? 8 : 0);   // 0, +4, +8 ms late
+    }
+    w.onStreamEnd(kSerial);
+    const auto names = files(night());
+    EXPECT_EQ(std::count_if(names.begin(), names.end(), [](const auto& n) {
+        return n.find("_BRP.edf") != std::string::npos;
+    }), 1) << ::testing::PrintToString(names);
+    EXPECT_EQ(records(night() / "20261016_220000_BRP.edf"), 60);
+
+    // A block a whole sample late (40 ms) is a missed sample: a new file.
+    As11NightWriter w2(dir_.string() + "_b", fixedOffsetClock(-300), true);
+    for (int i = 0; i < 20; ++i) w2.onBlock(second(kT0 + i * 1000));
+    for (int i = 0; i < 20; ++i) w2.onBlock(second(kT0 + 20040 + i * 1000));
+    w2.onStreamEnd(kSerial);
+    EXPECT_TRUE(fs::exists(fs::path(dir_.string() + "_b") / "as11" / kSerial / "DATALOG" / "20261016" /
+                           "20261016_220020_BRP.edf"));
+}
+
 // The Settings switch reaches a running writer: from the next block on.
 TEST_F(NightTest, ThePolicyChangesOnARunningWriter) {
     auto w = writer();
