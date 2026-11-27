@@ -3915,13 +3915,20 @@ TEST(BurstLocalSweep, ASettledOpenLocalNightClosesOnItsOwnData) {
     save(young, 6 * 3600);
     save(no_span, 0);
 
-    // Any other source is left alone.
-    svc.setSourceForTest("ezshare");
-    EXPECT_EQ(svc.closeSettledOpenLocalNightsForTest(now), 0);
-    svc.setSourceForTest("local");
+    // A source that closes its own nights is left alone.
+    svc.setSourceForTest("bmc");
+    EXPECT_EQ(svc.closeSettledOpenNightsForTest(now), 0);
 
-    EXPECT_EQ(svc.closeSettledOpenLocalNightsForTest(now), 1);
-    EXPECT_EQ(svc.closeSettledOpenLocalNightsForTest(now), 0) << "a closed night stays as it was";
+    // A card's night as much as a local folder's.
+    svc.setSourceForTest("ezshare");
+    EXPECT_EQ(svc.closeSettledOpenNightsForTest(now), 1);
+    EXPECT_EQ(svc.closeSettledOpenNightsForTest(now), 0) << "a closed night stays as it was";
+
+    // And a local folder's.
+    const auto settled_local = settled - hours(12);
+    save(settled_local, 5 * 3600);
+    svc.setSourceForTest("local");
+    EXPECT_EQ(svc.closeSettledOpenNightsForTest(now), 1);
 
     const auto open = openSessionsStartedBefore(*db, "sweep_dev", now);
     ASSERT_EQ(open.size(), 2u) << "the young night and the one with no span stay open";
@@ -3932,14 +3939,18 @@ TEST(BurstLocalSweep, ASettledOpenLocalNightClosesOnItsOwnData) {
     const auto p = sql::param(1, db->dbType());
     auto rows = db->executeQuery(
         "SELECT session_start, session_end FROM cpap_sessions WHERE device_id = " + p +
-        " AND session_end IS NOT NULL", {"sweep_dev"});
-    ASSERT_EQ(rows.size(), 1u);
-    const std::time_t want_t = system_clock::to_time_t(settled + seconds(7 * 3600));
-    std::tm want{};
-    gmtime_r(&want_t, &want);   // starts are labels (SDD-074 D4)
-    char buf[32];
-    std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &want);
-    EXPECT_EQ(rows[0]["session_end"].asString().substr(0, 19), std::string(buf));
+        " AND session_end IS NOT NULL ORDER BY session_start", {"sweep_dev"});
+    ASSERT_EQ(rows.size(), 2u);
+    const auto endText = [](system_clock::time_point end) {
+        const std::time_t t = system_clock::to_time_t(end);
+        std::tm tm{};
+        gmtime_r(&t, &tm);   // starts are labels (SDD-074 D4)
+        char buf[32];
+        std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm);
+        return std::string(buf);
+    };
+    EXPECT_EQ(rows[0]["session_end"].asString().substr(0, 19), endText(settled_local + seconds(5 * 3600)));
+    EXPECT_EQ(rows[1]["session_end"].asString().substr(0, 19), endText(settled + seconds(7 * 3600)));
 
     // svc holds the database too: let go of it, or the file is still open at
     // the remove, which Windows refuses.
@@ -4875,6 +4886,30 @@ TEST_F(BurstOrchestrationTest, Issue126_ADoneFolderWhoseNightIsMissingIsFetchedA
     EXPECT_EQ(src_raw->folder_lists["20261012"], listed + 1) << "the done folder was not listed again";
     EXPECT_GT(fetches("20261012_220000_BRP.edf"), before) << "its done files were not fetched again";
     EXPECT_EQ(fetches("20261013_220000_BRP.edf"), other) << "a stored night's done folder was fetched";
+}
+
+// A settled night whose ledger row last saw a file missing (its working copy
+// had been given back) is in the archive in full, so it is complete.
+TEST_F(BurstOrchestrationTest, ADoneFoldersLedgerRowIsComplete) {
+    long long now = kSdd054T0;
+    auto svc = makeService([](FakeDataSource& ds) {
+        ds.date_folders = {"20250301", "20261012", "20261013"};
+        for (const auto& f : ds.date_folders)
+            ds.folder_files[f] = {mkEntry(f + "_220000_BRP.edf", 1),
+                                  mkEntry(f + "_220000_PLD.edf", 1)};
+    });
+    onSdd054Clock(*svc, now);
+    expectFreshDownload(*db_raw);
+    svc->runBurstCycleForTest();
+    ASSERT_TRUE(svc->storedListingsForTest().at("20250301").edf_done);
+
+    auto& row = db_raw->sync_folders["20250301"];
+    row.date_folder = row.str_day = "20250301";
+    row.stable = true;
+    row.complete = false;
+    now += kSdd054Min;
+    svc->runBurstCycleForTest();
+    EXPECT_TRUE(db_raw->sync_folders["20250301"].complete);
 }
 
 // ── One way to survive an ez Share ──────────────────────────────────────────

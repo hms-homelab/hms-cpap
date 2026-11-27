@@ -2690,9 +2690,9 @@ bool BurstCollectorService::executeBurstCycle() {
     // SDD-029: what the operator removed, for every branch of this burst.
     removed_nights_ = removedNightSet(*db_service_, device_id_);
 
-    // SDD-043: before anything can return early, close the local nights that
-    // have settled, whichever path stored them and whenever.
-    closeSettledOpenLocalNights(std::chrono::system_clock::now());
+    // SDD-043: before anything can return early, close the nights that have
+    // settled, whichever path stored them and whenever.
+    closeSettledOpenNights(std::chrono::system_clock::now());
 
     // SDD-010: the retention anchor. Everything else that decides whether to
     // re-check a session is anchored on the CURRENT DATE (today's folder, or
@@ -3549,6 +3549,19 @@ bool BurstCollectorService::executeBurstCycle() {
                     std::filesystem::remove_all(std::filesystem::path(workingDir()) / f, rm_ec);
                 }
             }
+            // The ledger reads the working copy, before a download and after a
+            // done folder gives it back, and a done folder gets no second look,
+            // so it is completed here. Only one that closed once (str_day): its
+            // debts are armed at that close.
+            if (db_service_ && !in_place) {
+                for (auto ledger : db_service_->listSyncFolders()) {
+                    if (ledger.complete || ledger.str_day.empty()) continue;
+                    const auto it = stored_listings_.find(ledger.date_folder);
+                    if (it == stored_listings_.end() || !it->second.edf_done) continue;
+                    ledger.stable = ledger.complete = true;
+                    db_service_->upsertSyncFolder(ledger);
+                }
+            }
             if (edf_now > 0 || fully_now > 0)
                 std::cout << "CPAP: folders done: " << edf_now << " with every EDF stored, "
                           << fully_now << " complete (not listed again)" << std::endl;
@@ -4294,8 +4307,10 @@ void BurstCollectorService::closeIfSettledLocalNight(
     }
 }
 
-int BurstCollectorService::closeSettledOpenLocalNights(std::chrono::system_clock::time_point now) {
-    if (cpap_source_ != "local" || !db_service_) return 0;
+int BurstCollectorService::closeSettledOpenNights(std::chrono::system_clock::time_point now) {
+    // The sources the burst lists folder by folder. The others close their own.
+    if (cpap_source_ != "local" && cpap_source_ != "ezshare" && cpap_source_ != "flashair") return 0;
+    if (!db_service_) return 0;
     int closed = 0;
     // The starts are the machine's clock: so is the cutoff (SDD-074 D7).
     const auto machine_now = machine_clocks::nowWall(device_id_, now);
@@ -4308,7 +4323,7 @@ int BurstCollectorService::closeSettledOpenLocalNights(std::chrono::system_clock
         }
     }
     if (closed > 0) {
-        std::cout << "CPAP: closed " << closed << " settled local night(s) on their own data" << std::endl;
+        std::cout << "CPAP: closed " << closed << " settled night(s) on their own data" << std::endl;
     }
     return closed;
 }

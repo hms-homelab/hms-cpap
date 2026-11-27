@@ -949,14 +949,15 @@ private:
      * gave no end and no duration.
      */
     /**
-     * SDD-043: close every local night that is still open and older than
+     * SDD-043: close every night that is still open and older than
      * kLocalSettledAfter, at its stored start plus duration. The store-time close
      * above only sees a night once; a night first stored between two and five
      * days old was too young then and too old to be rediscovered, so it stayed
      * Live for good (ticket 129, after a restart re-imported 9/13 to 9/15).
-     * Returns how many it closed. A no-op for every other source.
+     * A card's night needs it too: one the walk back imported is listed once
+     * (SDD-054), so nothing else closes it. Returns how many it closed.
      */
-    int closeSettledOpenLocalNights(std::chrono::system_clock::time_point now);
+    int closeSettledOpenNights(std::chrono::system_clock::time_point now);
 
     /// SDD-043: close one open session at start plus its STORED duration, the
     /// data's end rather than the clock's. Falls back to the clock only when no
@@ -1014,8 +1015,8 @@ public:
         return publishStreamedSessionEnd(start);
     }
     /// Test-only seam for the SDD-043 sweep.
-    int closeSettledOpenLocalNightsForTest(std::chrono::system_clock::time_point now) {
-        return closeSettledOpenLocalNights(now);
+    int closeSettledOpenNightsForTest(std::chrono::system_clock::time_point now) {
+        return closeSettledOpenNights(now);
     }
     void setSourceForTest(const std::string& source) { cpap_source_ = source; }
     void setLocalDirForTest(const std::string& dir) { local_source_dir_ = dir; }
