@@ -100,7 +100,7 @@
       "bleRadioOff": "O Bluetooth está desligado neste computador. Ligue-o e verifique de novo.",
       "bleUnauthorized": "O CpapDash não tem permissão para usar o Bluetooth neste Mac. Permita em Ajustes do Sistema, Privacidade e Segurança, Bluetooth.",
       "setClock": "Corrigir o relógio do anel",
-      "setClockHint": "Um O2Ring-S com mais de um minuto de diferença do relógio do anel é ajustado para ele, nunca enquanto está medindo. O relógio do anel fica na página Dispositivos. Se o relógio do anel não estiver em um Fuso horário, apenas diferenças de até 14 minutos são corrigidas."
+      "setClockHint": "Um O2Ring-S com mais de um minuto de diferença do relógio do anel é ajustado para ele, nunca enquanto está medindo. O relógio do anel fica na página Dispositivos. Com o relógio do anel em Igual a este computador ou em Diferença fixa, apenas diferenças de até 14 minutos são corrigidas; com um Fuso horário, qualquer diferença."
     },
     "garmin": {
       "heading": "SpO2 da Garmin",

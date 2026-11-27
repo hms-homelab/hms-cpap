@@ -576,7 +576,7 @@
       "zonePick": "Válasszon időzónát a listából.",
       "inUse": "Használatban: most UTC{{offset}}",
       "help": "Az az idő, amit a CPAP saját kijelzője mutat. Csak akkor módosítsa, ha nem egyezik ennek a számítógépnek az idejével.",
-      "ringHelp": "Az az idő, amit az O2 gyűrű felvételei használnak. Az egy percnél nagyobb eltérésű O2Ring-S csatlakozáskor erre az időre áll át, mérés közben soha (a Beállításokban kikapcsolható), ezért csak akkor módosítsa, ha nem egyezik ennek a számítógépnek az idejével. Ha a gyűrű órája nem Időzónára van állítva, csak a legfeljebb 14 perces eltérés javul.",
+      "ringHelp": "Az az idő, amit az O2 gyűrű felvételei használnak. Az egy percnél nagyobb eltérésű O2Ring-S csatlakozáskor erre az időre áll át, mérés közben soha (a Beállításokban kikapcsolható). Ha a gyűrű órája „Ugyanaz, mint ezen a számítógépen” vagy „Rögzített eltérés”, csak a legfeljebb 14 perces eltérés javul; „Időzóna” esetén bármekkora.",
       "save": "Mentés",
       "saving": "Mentés...",
       "saved": "Mentve. A mostantól beolvasott éjszakák ezt az órát használják.",
