@@ -185,6 +185,30 @@ bool keepFilled(const std::string& root, const std::string& night, const Filled&
     return writeFileAtomic(filledPath(root, night), std::vector<uint8_t>(text.begin(), text.end()));
 }
 
+// Where a block's fast samples go on a segment's grid, `cursor` being the time
+// the next sample stands for: zeros to insert before them, or samples of
+// theirs already covered. The cursor is left past the block. A block within the
+// slack of its place is laid there, not moved. Nothing to lay: nothing moves.
+struct Laid { size_t zeros = 0, skip = 0; };
+Laid laySamples(int64_t& cursor, const as11::StreamBlock& b) {
+    Laid out;
+    const auto* fl = b.channel(as11::kFlow);
+    const auto* pr = b.channel(as11::kMaskPressure);
+    if (!fl && !pr) return out;
+    const int iv = b.interval_ms > 0 ? b.interval_ms : as11::kIntervalMs;
+    const int64_t delta = b.start_ms - cursor;
+    const int64_t slack = As11NightWriter::gapSlackMs(iv);
+    if (delta > slack) {
+        out.zeros = static_cast<size_t>((delta + iv / 2) / iv);
+        cursor += static_cast<int64_t>(out.zeros) * iv;
+    } else if (delta < -slack) {
+        out.skip = static_cast<size_t>((-delta + iv / 2) / iv);
+    }
+    const size_t n = std::max(fl ? fl->values.size() : 0, pr ? pr->values.size() : 0);
+    if (n > out.skip) cursor += static_cast<int64_t>(n - out.skip) * iv;
+    return out;
+}
+
 } // namespace
 
 // ── clocks ──
@@ -239,18 +263,32 @@ std::string sleepDayFolder(const WallClock& wc) {
 // ── the writer ──
 
 As11NightWriter::As11NightWriter(std::string data_dir, WallClockFn default_clock, bool preserve_gaps)
-    : preserve_gaps_(preserve_gaps), segment_gap_ms_(preserve_gaps ? kStrictGapMs : kSegmentGapMs),
-      data_dir_(std::move(data_dir)), default_clock_(std::move(default_clock)) {}
+    : preserve_gaps_(preserve_gaps), data_dir_(std::move(data_dir)), default_clock_(std::move(default_clock)) {}
 
 void As11NightWriter::setPreserveGaps(bool on) {
     std::lock_guard<std::mutex> lk(mtx_);
     preserve_gaps_ = on;
-    segment_gap_ms_ = on ? kStrictGapMs : kSegmentGapMs;
+}
+
+int64_t As11NightWriter::segmentGapMs(const as11::StreamBlock& b) const {
+    // Strict: exactly the slack late still joins, as writeSegment, which
+    // calls it a gap only past that.
+    return preserve_gaps_ ? gapSlackMs(b.interval_ms) + 1 : kSegmentGapMs;
 }
 
 bool As11NightWriter::preserveGaps() const {
     std::lock_guard<std::mutex> lk(mtx_);
     return preserve_gaps_;
+}
+
+int64_t As11NightWriter::joinEndMs(const Segment& s, const as11::StreamBlock& b) const {
+    // Strict: late is measured from the block before and from the grid
+    // writeSegment lays on, whichever the block is farther past, so a gap
+    // writeSegment would fill with zeros starts a new segment instead (bar one
+    // in a second a segment already started in, joined below). A block with no
+    // fast samples is not laid on the grid.
+    const bool laid = b.channel(as11::kFlow) || b.channel(as11::kMaskPressure);
+    return preserve_gaps_ && laid ? std::min(s.end_ms, s.cursor_ms) : s.end_ms;
 }
 
 void As11NightWriter::setClock(const std::string& serial, WallClockFn clock) {
@@ -306,7 +344,8 @@ void As11NightWriter::load(const std::string& serial, Machine& m) {
                 s.night = night.path().filename().string();
                 s.file = f.path().string();
                 for (const auto& b : readSegment(s.file)) {
-                    if (s.starts.empty()) s.start_ms = b.start_ms;
+                    if (s.starts.empty()) s.start_ms = s.cursor_ms = b.start_ms;
+                    laySamples(s.cursor_ms, b);
                     s.starts.insert(b.start_ms);
                     s.end_ms = std::max(s.end_ms, b.endMs());
                 }
@@ -334,10 +373,11 @@ void As11NightWriter::onBlock(const as11::StreamBlock& b) {
     std::lock_guard<std::mutex> lk(mtx_);
     Machine& m = machine(b.serial);
 
+    const int64_t gap_ms = segmentGapMs(b);
     Segment* seg = nullptr;
     for (auto& s : m.segments) {
         if (s.starts.count(b.start_ms)) return;   // a resend, including an older segment
-        if (b.start_ms >= s.start_ms - segment_gap_ms_ && b.start_ms < s.end_ms + segment_gap_ms_) seg = &s;
+        if (b.start_ms >= s.start_ms - gap_ms && b.start_ms < joinEndMs(s, b) + gap_ms) seg = &s;
     }
     // Split, a segment shorter than a second and the one after it can start
     // in the same second, and a segment's files are named by its start
@@ -353,7 +393,7 @@ void As11NightWriter::onBlock(const as11::StreamBlock& b) {
         s.night = sleepDayFolder(clockFor(b.serial)(b.start_ms));
         s.file = (fs::path(rootFor(b.serial)) / "stream" / s.night /
                   (std::to_string(b.start_ms) + ".cds1s")).string();
-        s.start_ms = b.start_ms;
+        s.start_ms = s.cursor_ms = b.start_ms;
         s.written_end = b.start_ms;   // the first live write after 10 s of it
         m.segments.push_back(std::move(s));
         std::sort(m.segments.begin(), m.segments.end(),
@@ -365,6 +405,7 @@ void As11NightWriter::onBlock(const as11::StreamBlock& b) {
         return;
     }
     seg->starts.insert(b.start_ms);
+    laySamples(seg->cursor_ms, b);
     seg->start_ms = std::min(seg->start_ms, b.start_ms);
     seg->end_ms = std::max(seg->end_ms, b.endMs());
     m.nights_touched.insert(seg->night);
@@ -372,7 +413,7 @@ void As11NightWriter::onBlock(const as11::StreamBlock& b) {
     // A segment this block can no longer join is closed: its files are final.
     for (auto& s : m.segments) {
         if (&s == seg || s.written_end == s.end_ms) continue;
-        if (b.start_ms >= s.end_ms + segment_gap_ms_) { writeSegment(b.serial, s); s.written_end = s.end_ms; }
+        if (b.start_ms >= joinEndMs(s, b) + gap_ms) { writeSegment(b.serial, s); s.written_end = s.end_ms; }
     }
     // The open segment: live, every 10 s of stream (every block from a Mule &
     // Miner, whose blocks are 10 s). The files are rewritten whole and moved
@@ -538,26 +579,16 @@ void As11NightWriter::writeSegment(const std::string& serial, const Segment& seg
         const auto* fl = b.channel(as11::kFlow);
         const auto* pr = b.channel(as11::kMaskPressure);
         if (!fl && !pr) continue;
-        const int iv = b.interval_ms > 0 ? b.interval_ms : as11::kIntervalMs;
-        const int64_t delta = b.start_ms - cursor;
-        size_t skip = 0;
-        const int64_t slack = iv * 3 / 4;
-        if (delta > slack) {
-            const size_t gap = static_cast<size_t>((delta + iv / 2) / iv);
-            brp.flow_lpm.insert(brp.flow_lpm.end(), gap, 0.0);
-            brp.press_cmh2o.insert(brp.press_cmh2o.end(), gap, 0.0);
-            cursor += static_cast<int64_t>(gap) * iv;
-        } else if (delta < -slack) {
-            // Samples before the cursor overlap what is already laid: skipped.
-            skip = static_cast<size_t>((-delta + iv / 2) / iv);
-        }
+        const Laid laid = laySamples(cursor, b);
+        brp.flow_lpm.insert(brp.flow_lpm.end(), laid.zeros, 0.0);
+        brp.press_cmh2o.insert(brp.press_cmh2o.end(), laid.zeros, 0.0);
         const size_t n = std::max(fl ? fl->values.size() : 0, pr ? pr->values.size() : 0);
-        for (size_t i = skip; i < n; i++) {
+        // Samples before the cursor overlap what is already laid: skipped.
+        for (size_t i = laid.skip; i < n; i++) {
             const double f = fl && i < fl->values.size() ? as11::physical(as11::kFlow, fl->values[i]) : NAN;
             const double p = pr && i < pr->values.size() ? as11::physical(as11::kMaskPressure, pr->values[i]) : NAN;
             brp.flow_lpm.push_back(std::isnan(f) ? 0.0 : f * 60.0);   // L/s to L/min
             brp.press_cmh2o.push_back(std::isnan(p) ? 0.0 : p);
-            cursor += iv;
         }
     }
     if (brp.flow_lpm.empty()) return;
