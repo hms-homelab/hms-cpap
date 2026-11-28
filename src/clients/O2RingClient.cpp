@@ -18,22 +18,34 @@ O2RingClient::~O2RingClient() {
     }
 }
 
+// No exception may leave a callback: it would unwind through curl's C frames
+// and leave the handle mid-transfer. A short count makes curl end the transfer
+// with a write error instead.
 size_t O2RingClient::WriteCallback(void* contents, size_t size, size_t nmemb, void* userp) {
     size_t total_size = size * nmemb;
-    static_cast<std::string*>(userp)->append(static_cast<char*>(contents), total_size);
+    try {
+        static_cast<std::string*>(userp)->append(static_cast<char*>(contents), total_size);
+    } catch (...) {
+        return 0;
+    }
     return total_size;
 }
 
 size_t O2RingClient::WriteBinaryCallback(void* contents, size_t size, size_t nmemb, void* userp) {
     size_t total_size = size * nmemb;
-    auto* vec = static_cast<std::vector<uint8_t>*>(userp);
-    auto* bytes = static_cast<uint8_t*>(contents);
-    vec->insert(vec->end(), bytes, bytes + total_size);
+    try {
+        auto* vec = static_cast<std::vector<uint8_t>*>(userp);
+        auto* bytes = static_cast<uint8_t*>(contents);
+        vec->insert(vec->end(), bytes, bytes + total_size);
+    } catch (...) {
+        return 0;
+    }
     return total_size;
 }
 
 std::string O2RingClient::httpGet(const std::string& url) {
     std::string response;
+    std::lock_guard<std::mutex> lk(curl_mtx_);
 
     curl_easy_setopt(curl_, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl_, CURLOPT_WRITEFUNCTION, WriteCallback);
@@ -105,6 +117,7 @@ std::vector<std::string> O2RingClient::listFiles() {
 
 std::vector<uint8_t> O2RingClient::downloadFile(const std::string& filename) {
     std::vector<uint8_t> data;
+    std::lock_guard<std::mutex> lk(curl_mtx_);
 
     try {
         // URL-encode the filename parameter

@@ -27,11 +27,27 @@ public:
                     std::shared_ptr<IDatabase> db,
                     std::string cpap_device_id = "");
 
+    /// What one collection did. A download that came back empty is a failure;
+    /// a file left for later (still being written, or on a removed night) is not.
+    struct CollectResult {
+        int saved = 0;
+        int download_failed = 0;
+        bool unreachable = false;   // nothing listed, and the ring did not answer
+    };
+
     /**
-     * Poll for new files, parse, and store.
-     * @return true if any new data was processed
+     * Poll for new files, parse, and store. One collection at a time: the
+     * collect endpoint and the collection cycle can both ask, and the second
+     * waits for the first rather than reading the same file beside it.
      */
-    bool collectAndPublish();
+    CollectResult collect();
+
+    /// collect(), true if any new data was stored.
+    bool collectAndPublish() { return collect().saved > 0; }
+
+    /// The collect endpoint's status for [r]: "collected" when anything was
+    /// stored, else "download_failed", "ring_unreachable" or "no_new_files".
+    static const char* collectStatus(const CollectResult& r);
 
     /// Where the ring's raw file is kept: <archive>/DATALOG/<filename>, beside
     /// the CPAP nights but flat, since every folder in DATALOG is read as a
@@ -81,6 +97,7 @@ private:
     /// ring file in the database, once, so the Devices page can say when the
     /// ring was last heard before this start's first read.
     void seedLastRead() const;
+    std::mutex collect_mtx_;               // collect(), one at a time
     mutable std::mutex facts_mtx_;
     std::set<std::string> saved_nights_;   // under facts_mtx_
     mutable Facts facts_;

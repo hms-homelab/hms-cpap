@@ -2175,9 +2175,24 @@ void CpapController::oximetryCollect(const drogon::HttpRequestPtr&,
         cb(jsonError("Oximetry service not available", drogon::k503ServiceUnavailable));
         return;
     }
-    bool ok = burst_service_->getOximetryService()->collectAndPublish();
+    const auto r = burst_service_->getOximetryService()->collect();
+    const std::string status = OximetryService::collectStatus(r);
+    // A failure is not an empty ring: the caller is told, with a 502.
+    if (status == "download_failed" || status == "ring_unreachable") {
+        Json::Value body;
+        body["error"] = status == "download_failed" ? "The ring's file could not be downloaded"
+                                                    : "The ring did not answer";
+        body["status"] = status;
+        body["download_failed"] = r.download_failed;
+        auto out = jsonResp(body);
+        out->setStatusCode(drogon::k502BadGateway);
+        cb(out);
+        return;
+    }
     Json::Value result;
-    result["status"] = ok ? "collected" : "no_new_files";
+    result["status"] = status;
+    result["saved"] = r.saved;
+    result["download_failed"] = r.download_failed;
     cb(jsonResp(result));
 }
 

@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <mutex>
 #include <curl/curl.h>
 #include "utils/FailureLogThrottle.h"
 
@@ -56,6 +57,12 @@ public:
 
 private:
     CURL* curl_;
+    // The one handle, one request at a time. The collect endpoint downloads on
+    // a web thread while the collection cycle polls /o2ring/live; a poll that
+    // set the handle's options mid-download sent the file's bytes into its own
+    // buffer, and the exception that threw out of curl's callback left the
+    // handle answering "Failed initialization" to every request after.
+    std::mutex curl_mtx_;
     // Collapses repeated identical HTTP failures (offline device) into one
     // line plus periodic summaries, instead of one error per poll cycle.
     FailureLogThrottle http_fail_log_;

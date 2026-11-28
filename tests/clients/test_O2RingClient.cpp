@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 #include "clients/O2RingClient.h"
 
+#include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -368,4 +370,139 @@ TEST(O2RingHttp, DownloadFileUrlEncodesFilename) {
 TEST(O2RingHttp, GetBaseUrlReturnsConfigured) {
     O2RingClient client("http://192.168.1.9");
     EXPECT_EQ(client.getBaseURL(), "http://192.168.1.9");
+}
+// ── One request at a time (issue #135) ──────────────────────────────────
+//
+// The collect endpoint downloads on a web thread while the collection cycle
+// polls /o2ring/live. Both went through the one curl handle at once: the poll
+// sent the file's bytes into its own buffer, and the handle answered "Failed
+// initialization" to every request after until a restart.
+
+namespace {
+
+// A mule that serves many connections, each on its own thread: the file slowly,
+// in chunks, as the ring sends it over Bluetooth; the list and live replies at once.
+class SlowMule {
+public:
+    SlowMule(size_t file_size, int chunks, std::chrono::milliseconds gap)
+        : chunks_(chunks), gap_(gap) {
+        for (size_t i = 0; i < file_size; i++) file_.push_back(static_cast<uint8_t>(i % 251));
+        listen_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
+        EXPECT_GE(listen_fd_, 0);
+        int one = 1;
+        ::setsockopt(listen_fd_, SOL_SOCKET, SO_REUSEADDR,
+                     reinterpret_cast<const char*>(&one), sizeof(one));
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        addr.sin_port = 0;
+        EXPECT_EQ(::bind(listen_fd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)), 0);
+        EXPECT_EQ(::listen(listen_fd_, 8), 0);
+        socklen_t len = sizeof(addr);
+        EXPECT_EQ(::getsockname(listen_fd_, reinterpret_cast<sockaddr*>(&addr), &len), 0);
+        port_ = ntohs(addr.sin_port);
+        accept_thread_ = std::thread([this] { acceptLoop(); });
+    }
+
+    ~SlowMule() {
+        stopListening(listen_fd_);
+        if (accept_thread_.joinable()) accept_thread_.join();
+        for (auto& t : conns_) if (t.joinable()) t.join();
+        if (listen_fd_ >= 0) closeSocket(listen_fd_);
+    }
+
+    std::string baseUrl() const { return "http://127.0.0.1:" + std::to_string(port_); }
+    const std::vector<uint8_t>& file() const { return file_; }
+
+    /// True once a download has sent its first chunk, within [limit].
+    bool waitForDownloadStart(std::chrono::milliseconds limit) const {
+        const auto until = std::chrono::steady_clock::now() + limit;
+        while (!download_started_) {
+            if (std::chrono::steady_clock::now() > until) return false;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        return true;
+    }
+
+private:
+    void acceptLoop() {
+        for (;;) {
+            int conn = ::accept(listen_fd_, nullptr, nullptr);
+            if (conn < 0) return;
+            conns_.emplace_back([this, conn] { serve(conn); });
+        }
+    }
+
+    static void sendAll(int conn, const char* p, size_t n) {
+        size_t sent = 0;
+        while (sent < n) {
+            ssize_t k = ::send(conn, p + sent, static_cast<int>(n - sent), 0);
+            if (k <= 0) return;
+            sent += static_cast<size_t>(k);
+        }
+    }
+
+    void serve(int conn) {
+        std::string req;
+        char buf[2048];
+        while (req.find("\r\n\r\n") == std::string::npos) {
+            ssize_t n = ::recv(conn, buf, sizeof(buf), 0);
+            if (n <= 0) { closeSocket(conn); return; }
+            req.append(buf, static_cast<size_t>(n));
+        }
+        const std::string line = req.substr(0, req.find("\r\n"));
+        auto head = [](size_t len, const char* type) {
+            return "HTTP/1.1 200 OK\r\nContent-Type: " + std::string(type) +
+                   "\r\nContent-Length: " + std::to_string(len) +
+                   "\r\nConnection: close\r\n\r\n";
+        };
+        if (line.find("/o2ring/files?name=") != std::string::npos) {
+            const std::string h = head(file_.size(), "application/octet-stream");
+            sendAll(conn, h.data(), h.size());
+            const size_t step = (file_.size() + chunks_ - 1) / chunks_;
+            for (size_t at = 0; at < file_.size(); at += step) {
+                sendAll(conn, reinterpret_cast<const char*>(file_.data()) + at,
+                        std::min(step, file_.size() - at));
+                download_started_ = true;
+                std::this_thread::sleep_for(gap_);
+            }
+        } else {
+            const std::string body = line.find("/o2ring/live") != std::string::npos
+                ? R"({"spo2":255,"hr":255,"motion":0,"active":false})"
+                : R"({"files":["20261128005640"],"battery":83})";
+            const std::string r = head(body.size(), "application/json") + body;
+            sendAll(conn, r.data(), r.size());
+        }
+        closeSocket(conn);
+    }
+
+    std::vector<uint8_t> file_;
+    int chunks_;
+    std::chrono::milliseconds gap_;
+    std::atomic<bool> download_started_{false};
+    int listen_fd_ = -1;
+    uint16_t port_ = 0;
+    std::thread accept_thread_;
+    std::vector<std::thread> conns_;   // only the accept thread adds to it
+};
+
+}  // namespace
+
+TEST(O2RingHttp, ALivePollDuringADownloadWaitsAndBothSucceed) {
+    SlowMule mule(34000, 20, std::chrono::milliseconds(25));
+    O2RingClient client(mule.baseUrl());
+
+    std::vector<uint8_t> got;
+    std::thread download([&] { got = client.downloadFile("20261128005640"); });
+    ASSERT_TRUE(mule.waitForDownloadStart(std::chrono::seconds(5)));
+    const auto live = client.getLive();   // the collection cycle's poll, mid-download
+    download.join();
+
+    EXPECT_EQ(got, mule.file()) << "the whole file, byte for byte";
+    EXPECT_TRUE(live.answered());
+    EXPECT_EQ(live.spo2, 255);
+
+    // And the handle answers after, with no "Failed initialization".
+    EXPECT_EQ(client.listFiles(), std::vector<std::string>{"20261128005640"});
+    EXPECT_EQ(client.downloadFile("20261128005640"), mule.file());
 }
