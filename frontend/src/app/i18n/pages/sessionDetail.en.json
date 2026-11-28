@@ -1,6 +1,12 @@
 {
   "sessionDetail": {
     "overview": "Overview",
+    "stats": {
+      "night": "Night",
+      "view": "In view",
+      "about": "Where these figures come from",
+      "basis": "Calculated from the values the chart draws: one a minute for the machine's signals, every few seconds for the ring, one a breath for breath flow limitation. OSCAR uses the card's full-resolution data, so these figures won't match it exactly."
+    },
     "oximetryFrom": "Oximetry - {{device}}",
     "oximetryOnly": "Oximetry only ({{device}}); no CPAP session was recorded for this night",
     "oximetryUpload": "Upload",

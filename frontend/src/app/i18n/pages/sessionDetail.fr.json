@@ -1,6 +1,12 @@
 {
   "sessionDetail": {
     "overview": "Aperçu",
+    "stats": {
+      "night": "Nuit",
+      "view": "Affiché",
+      "about": "D'où viennent ces valeurs",
+      "basis": "Calculé à partir des valeurs tracées par le graphique : une par minute pour les signaux de l'appareil, toutes les quelques secondes pour la bague, une par respiration pour la limitation de débit par respiration. OSCAR utilise les données en pleine résolution de la carte, ces valeurs ne correspondront donc pas exactement."
+    },
     "oximetryFrom": "Oxymétrie - {{device}}",
     "oximetryOnly": "Oxymétrie seule ({{device}}) ; aucune séance de PPC n'a été enregistrée cette nuit",
     "oximetryUpload": "Import",

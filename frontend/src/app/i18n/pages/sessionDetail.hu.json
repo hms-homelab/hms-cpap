@@ -1,6 +1,12 @@
 {
   "sessionDetail": {
     "overview": "Áttekintés",
+    "stats": {
+      "night": "Éjszaka",
+      "view": "Látható",
+      "about": "Honnan származnak ezek az értékek",
+      "basis": "A diagramon ábrázolt értékekből számolva: a készülék jeleinél percenként egy, a gyűrűnél néhány másodpercenként, a légvételenkénti áramláskorlátozásnál légvételenként egy. Az OSCAR a kártya teljes felbontású adatait használja, ezért ezek az értékek nem fognak pontosan egyezni vele."
+    },
     "oximetryFrom": "Oximetria - {{device}}",
     "oximetryOnly": "Csak oximetria ({{device}}); ezen az éjszakán nem rögzült CPAP-alkalom",
     "oximetryUpload": "Feltöltés",
