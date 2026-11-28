@@ -33,6 +33,13 @@ class SefamIngestion {
 public:
     explicit SefamIngestion(const std::string& data_dir);
 
+    // Whether [dir] holds a Sefam card: a session folder (DATA_<n>/ or a
+    // <YYMMDD>/ day, with a manifest) within four levels, that discovery then
+    // accepts (a manifest it can read a start time from), so a stray DATA_1 is
+    // not enough. The upload's classifier and the Sleep Bridge's card format
+    // both ask this.
+    static bool holdsCard(const std::string& dir);
+
     // Walk the card for session manifests. False when there are none, which is
     // the honest answer for a folder that is not a Sefam card.
     bool initialize();

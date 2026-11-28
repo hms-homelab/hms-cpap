@@ -1,6 +1,6 @@
 #include "sleepbridge/BridgeSource.h"
 
-#include "services/CardUpload.h"   // classifyUploadedCard
+#include "services/SefamIngestion.h"   // SefamIngestion::holdsCard
 
 #include <algorithm>
 #include <cctype>
@@ -46,7 +46,7 @@ bool holdsSefamCard(const std::string& dir) {
     if (dir.empty() || fs::exists(fs::path(dir) / "DATALOG", ec) ||
         fs::exists(fs::path(dir) / "STR.edf", ec))
         return false;
-    return classifyUploadedCard(dir) == UploadedCard::Sefam;
+    return SefamIngestion::holdsCard(dir);
 }
 
 bool holdsPhilipsCard(const std::string& dir) {

@@ -1,6 +1,7 @@
 #include "services/SefamIngestion.h"
 
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <iostream>
 
@@ -16,7 +17,45 @@ namespace {
 // whole disk if someone points at the wrong place.
 constexpr int kMaxDepth = 4;
 
+std::string lower(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return s;
+}
+
+/// A DATA_<n>/ or <YYMMDD>/ folder holding a .ini, within [depth] levels. The
+/// parser's own check stops at three, one short of a card inside a wrapper folder.
+bool hasSessionFolder(const fs::path& dir, int depth) {
+    std::error_code ec;
+    for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+        std::error_code e;
+        if (!it->is_directory(e)) continue;
+        const std::string name = it->path().filename().string();
+        const auto up = lower(name);
+        const bool data_n = up.rfind("data_", 0) == 0 && up.size() > 5 &&
+                            std::all_of(up.begin() + 5, up.end(),
+                                        [](unsigned char c) { return std::isdigit(c); });
+        const bool day = up.size() == 6 &&
+                         std::all_of(up.begin(), up.end(),
+                                     [](unsigned char c) { return std::isdigit(c); });
+        if (data_n || day) {
+            for (fs::directory_iterator f(it->path(), e), fe; !e && f != fe; f.increment(e))
+                if (lower(f->path().extension().string()) == ".ini") return true;
+        }
+        if (depth > 0 && hasSessionFolder(it->path(), depth - 1)) return true;
+    }
+    return false;
+}
+
 } // namespace
+
+bool SefamIngestion::holdsCard(const std::string& dir) {
+    std::error_code ec;
+    if (dir.empty() || !fs::is_directory(dir, ec)) return false;
+    if (!hasSessionFolder(dir, kMaxDepth)) return false;
+    SefamIngestion probe(dir);
+    return probe.initialize();
+}
 
 SefamIngestion::SefamIngestion(const std::string& data_dir)
     : data_dir_(data_dir) {}

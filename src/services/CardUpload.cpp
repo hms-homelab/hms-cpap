@@ -57,31 +57,6 @@ bool hasLowensteinFile(const fs::path& dir, int depth) {
     return false;
 }
 
-/// A Sefam session folder (DATA_<n> or a YYMMDD day) holding a manifest,
-/// anywhere within [depth] levels. The parser's own check stops at three,
-/// one short of a card inside a wrapper folder.
-bool hasSefamSessionFolder(const fs::path& dir, int depth) {
-    std::error_code ec;
-    for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
-        std::error_code e;
-        if (!it->is_directory(e)) continue;
-        const std::string name = it->path().filename().string();
-        const auto up = lower(name);
-        const bool data_n = up.rfind("data_", 0) == 0 && up.size() > 5 &&
-                            std::all_of(up.begin() + 5, up.end(),
-                                        [](unsigned char c) { return std::isdigit(c); });
-        const bool day = up.size() == 6 &&
-                         std::all_of(up.begin(), up.end(),
-                                     [](unsigned char c) { return std::isdigit(c); });
-        if (data_n || day) {
-            for (fs::directory_iterator f(it->path(), e), fe; !e && f != fe; f.increment(e))
-                if (lower(f->path().extension().string()) == ".ini") return true;
-        }
-        if (depth > 0 && hasSefamSessionFolder(it->path(), depth - 1)) return true;
-    }
-    return false;
-}
-
 std::string dashed(const std::string& yyyymmdd) {
     return yyyymmdd.size() == 8
         ? yyyymmdd.substr(0, 4) + "-" + yyyymmdd.substr(4, 2) + "-" + yyyymmdd.substr(6, 2)
@@ -111,10 +86,7 @@ UploadedCard classifyUploadedCard(const std::string& dir) {
     if (dir.empty() || !fs::is_directory(dir, ec)) return UploadedCard::Unknown;
     // Sefam first: a session folder that the Sefam discovery then accepts (a
     // manifest it can read a start time from), so a stray DATA_1 is not enough.
-    if (hasSefamSessionFolder(dir, kZipDepth)) {
-        SefamIngestion probe(dir);
-        if (probe.initialize()) return UploadedCard::Sefam;
-    }
+    if (SefamIngestion::holdsCard(dir)) return UploadedCard::Sefam;
     if (hasLowensteinFile(dir, kZipDepth)) return UploadedCard::Lowenstein;
     // SDD-049: the parser's own test (a serial-named .usr beside a .evt), in the
     // folder or in one a zip wrapped it in.
