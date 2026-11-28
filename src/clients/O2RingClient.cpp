@@ -19,31 +19,53 @@ O2RingClient::~O2RingClient() {
 }
 
 size_t O2RingClient::WriteCallback(void* contents, size_t size, size_t nmemb, void* userp) {
-    size_t total_size = size * nmemb;
-    static_cast<std::string*>(userp)->append(static_cast<char*>(contents), total_size);
-    return total_size;
+    try {
+        size_t total_size = size * nmemb;
+        auto* target = static_cast<WriteTarget*>(userp);
+        target->self->onBodyChunk(total_size);
+        target->text->append(static_cast<char*>(contents), total_size);
+        return total_size;
+    } catch (...) {
+        return 0;   // curl stops the transfer: CURLE_WRITE_ERROR
+    }
 }
 
 size_t O2RingClient::WriteBinaryCallback(void* contents, size_t size, size_t nmemb, void* userp) {
-    size_t total_size = size * nmemb;
-    auto* vec = static_cast<std::vector<uint8_t>*>(userp);
-    auto* bytes = static_cast<uint8_t*>(contents);
-    vec->insert(vec->end(), bytes, bytes + total_size);
-    return total_size;
+    try {
+        size_t total_size = size * nmemb;
+        auto* target = static_cast<WriteTarget*>(userp);
+        target->self->onBodyChunk(total_size);
+        auto* bytes = static_cast<uint8_t*>(contents);
+        target->bytes->insert(target->bytes->end(), bytes, bytes + total_size);
+        return total_size;
+    } catch (...) {
+        return 0;   // curl stops the transfer: CURLE_WRITE_ERROR
+    }
+}
+
+void O2RingClient::renewHandle() {
+    if (curl_) curl_easy_cleanup(curl_);
+    curl_ = curl_easy_init();
 }
 
 std::string O2RingClient::httpGet(const std::string& url) {
+    std::lock_guard<std::mutex> lk(http_mtx_);
+    if (!curl_) renewHandle();
+    if (!curl_) throw std::runtime_error("HTTP GET failed (" + url + "): no curl handle");
+
     std::string response;
+    WriteTarget target{this, &response, nullptr};
 
     curl_easy_setopt(curl_, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl_, CURLOPT_WRITEFUNCTION, WriteCallback);
-    curl_easy_setopt(curl_, CURLOPT_WRITEDATA, &response);
+    curl_easy_setopt(curl_, CURLOPT_WRITEDATA, &target);
     curl_easy_setopt(curl_, CURLOPT_TIMEOUT, DOWNLOAD_TIMEOUT);
     curl_easy_setopt(curl_, CURLOPT_CONNECTTIMEOUT, CONNECTION_TIMEOUT);
     curl_easy_setopt(curl_, CURLOPT_FOLLOWLOCATION, 0L);
 
     CURLcode res = curl_easy_perform(curl_);
     if (res != CURLE_OK) {
+        renewHandle();
         std::string error = std::string("HTTP GET failed (") + url + "): " + curl_easy_strerror(res);
         // An offline device fails every poll cycle; log the first one, then
         // summarise instead of repeating the same line thousands of times.
@@ -106,22 +128,30 @@ std::vector<std::string> O2RingClient::listFiles() {
 std::vector<uint8_t> O2RingClient::downloadFile(const std::string& filename) {
     std::vector<uint8_t> data;
 
+    std::lock_guard<std::mutex> lk(http_mtx_);
     try {
+        if (!curl_) renewHandle();
+        if (!curl_) {
+            std::cerr << "O2Ring: Download failed (" << filename << "): no curl handle" << std::endl;
+            return data;
+        }
         // URL-encode the filename parameter
         char* encoded = curl_easy_escape(curl_, filename.c_str(),
                                           static_cast<int>(filename.size()));
-        std::string url = base_url_ + "/o2ring/files?name=" + std::string(encoded);
+        std::string url = base_url_ + "/o2ring/files?name=" + std::string(encoded ? encoded : "");
         curl_free(encoded);
 
+        WriteTarget target{this, nullptr, &data};
         curl_easy_setopt(curl_, CURLOPT_URL, url.c_str());
         curl_easy_setopt(curl_, CURLOPT_WRITEFUNCTION, WriteBinaryCallback);
-        curl_easy_setopt(curl_, CURLOPT_WRITEDATA, &data);
+        curl_easy_setopt(curl_, CURLOPT_WRITEDATA, &target);
         curl_easy_setopt(curl_, CURLOPT_TIMEOUT, DOWNLOAD_TIMEOUT);
         curl_easy_setopt(curl_, CURLOPT_CONNECTTIMEOUT, CONNECTION_TIMEOUT);
         curl_easy_setopt(curl_, CURLOPT_FOLLOWLOCATION, 0L);
 
         CURLcode res = curl_easy_perform(curl_);
         if (res != CURLE_OK) {
+            renewHandle();
             std::cerr << "O2Ring: Download failed (" << filename << "): "
                       << curl_easy_strerror(res) << std::endl;
             data.clear();
@@ -144,6 +174,7 @@ std::vector<uint8_t> O2RingClient::downloadFile(const std::string& filename) {
         std::cout << "O2Ring: " << filename << " -> " << data.size() << " bytes" << std::endl;
 
     } catch (const std::exception& e) {
+        renewHandle();
         std::cerr << "O2Ring: Download error (" << filename << "): " << e.what() << std::endl;
         data.clear();
     }

@@ -5,8 +5,11 @@
 #include "clients/O2RingClient.h"
 #include "database/IDatabase.h"
 #include "parsers/CpapdashBridge.h"
+#include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <thread>
 #ifndef _WIN32
 #include <unistd.h>
 #else
@@ -915,6 +918,98 @@ TEST_F(LastReadTest, AFileReadThisRunIsNotReplacedByTheOlderOne) {
     EXPECT_EQ(f.last_file, "20260418_220000.vld");
     EXPECT_NEAR(static_cast<double>(f.last_read_at), static_cast<double>(std::time(nullptr)), 5);
     EXPECT_EQ(db->queries, 0) << "a real read means there is nothing to look up";
+}
+
+// ── #135: the collect endpoint tells a failure from "nothing new" ──
+
+TEST_F(OximetryServiceTest, Collect_NothingListedRingAnswers_NoNewFiles) {
+    client->files.clear();
+    client->connected = true;
+    EXPECT_EQ(svc->collect(), OximetryService::CollectResult::NoNewFiles);
+}
+
+TEST_F(OximetryServiceTest, Collect_NothingListedRingSilent_RingUnreachable) {
+    client->files.clear();
+    client->connected = false;
+    EXPECT_EQ(svc->collect(), OximetryService::CollectResult::RingUnreachable);
+}
+
+TEST_F(OximetryServiceTest, Collect_ListedFileNotDownloaded_DownloadFailed) {
+    client->files = {"20261128005300.vld"};   // no contents: the download fails
+    EXPECT_CALL(*db, oximetrySessionExists("o2ring", _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db, saveOximetrySession(_, _)).Times(0);
+    EXPECT_EQ(svc->collect(), OximetryService::CollectResult::DownloadFailed);
+}
+
+TEST_F(OximetryServiceTest, Collect_AlreadyStored_NoNewFiles) {
+    client->files = {"old.vld"};
+    EXPECT_CALL(*db, oximetrySessionExists("o2ring", "old.vld")).WillRepeatedly(Return(true));
+    EXPECT_EQ(svc->collect(), OximetryService::CollectResult::NoNewFiles);
+}
+
+TEST_F(OximetryServiceTest, Collect_NewFileStored_Collected) {
+    client->files = {"20260418_220000.vld"};
+    client->contents["20260418_220000.vld"] = makeVld(20);
+    EXPECT_CALL(*db, oximetrySessionExists("o2ring", _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db, saveOximetrySession("o2ring", _)).WillOnce(Return(true));
+    EXPECT_EQ(svc->collect(), OximetryService::CollectResult::Collected);
+}
+
+TEST(OximetryCollectStatus, EndpointStatusNames) {
+    using R = OximetryService::CollectResult;
+    EXPECT_STREQ(OximetryService::statusName(R::Collected), "collected");
+    EXPECT_STREQ(OximetryService::statusName(R::NoNewFiles), "no_new_files");
+    EXPECT_STREQ(OximetryService::statusName(R::RingUnreachable), "ring_unreachable");
+    EXPECT_STREQ(OximetryService::statusName(R::DownloadFailed), "download_failed");
+}
+
+// A ring whose download takes a while and counts how many run at once.
+class SlowO2RingClient : public IO2RingClient {
+public:
+    std::vector<uint8_t> vld = makeVld(20);
+    std::atomic<int> in_flight{0};
+    std::atomic<int> max_in_flight{0};
+    std::atomic<int> downloads{0};
+
+    bool isConnected() override { return true; }
+    std::vector<std::string> listFiles() override { return {"20261128005300.vld"}; }
+    std::vector<uint8_t> downloadFile(const std::string&) override {
+        const int now = ++in_flight;
+        int seen = max_in_flight.load();
+        while (now > seen && !max_in_flight.compare_exchange_weak(seen, now)) {}
+        ++downloads;
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        --in_flight;
+        return vld;
+    }
+    LiveReading getLive() override { return {}; }
+    int getBattery() const override { return 50; }
+};
+
+// The collect endpoint (a drogon thread) and the burst worker collect at the
+// same moment: one at a time, and the file is downloaded and stored once.
+TEST(OximetryCollectSerial, TwoCollectsAtOnceTakeTurns) {
+    auto client = std::make_shared<SlowO2RingClient>();
+    auto db = std::make_shared<NiceMock<MockDatabase>>();
+    EXPECT_CALL(*db, oximetrySessionExists("o2ring", _)).WillRepeatedly(Return(false));
+    std::atomic<int> saves{0};
+    EXPECT_CALL(*db, saveOximetrySession("o2ring", _))
+        .WillRepeatedly(::testing::Invoke([&](const std::string&, const cpapdash::parser::OximetrySession&) {
+            ++saves;
+            return true;
+        }));
+    OximetryService svc(client, db);
+
+    std::atomic<int> collected{0};
+    std::thread endpoint([&] { if (svc.collectAndPublish()) ++collected; });
+    std::thread burst([&]    { if (svc.collectAndPublish()) ++collected; });
+    endpoint.join();
+    burst.join();
+
+    EXPECT_EQ(client->max_in_flight.load(), 1) << "two collects talked to the ring at once";
+    EXPECT_EQ(client->downloads.load(), 1);
+    EXPECT_EQ(saves.load(), 1);
+    EXPECT_EQ(collected.load(), 1);
 }
 
 }  // namespace oxi_service
