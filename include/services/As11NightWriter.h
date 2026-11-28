@@ -16,6 +16,13 @@
 
 namespace hms_cpap {
 
+/// How far a segment's fast samples have got: the time the next one laid stands
+/// for, and the latest end the blocks' own stamps have reached.
+struct SampleGrid {
+    int64_t cursor_ms = 0;
+    int64_t stamped_end_ms = 0;
+};
+
 /**
  * Whatever feeds an AirSense 11's night (SDD-057 step 4). Two producers drive
  * it: hms-cpap's own Bluetooth session (the machine's StreamData assembled
@@ -132,7 +139,7 @@ private:
         std::string night;
         std::string file;           // the .cds1s
         int64_t start_ms = 0, end_ms = 0;
-        int64_t cursor_ms = 0;      // where writeSegment's samples have got to
+        SampleGrid grid;            // where writeSegment's samples have got to
         std::set<int64_t> starts;   // blocks held, by start
         int64_t written_end = 0;    // end the EDFs were last written for
     };

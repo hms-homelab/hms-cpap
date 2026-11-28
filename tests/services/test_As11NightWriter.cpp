@@ -801,6 +801,69 @@ TEST_F(NightTest, StrictDelaysThatAddUpSplitInsteadOfFilling) {
     EXPECT_EQ(files(fs::path(dir_.string() + "_b") / "as11" / kSerial / "stream" / "20261016").size(), 2u);
 }
 
+// Stamps that run short of their samples, block after block, add up past the
+// slack. Nothing is repeated, so every sample is laid, under either policy and
+// across a restart.
+TEST_F(NightTest, StampsThatRunEarlyDropNoSample) {
+    for (const bool strict : {false, true}) {
+        const fs::path d = dir_ / (strict ? "strict" : "joined");
+        {
+            As11NightWriter first(d.string(), fixedOffsetClock(-300), strict);
+            for (int i = 0; i < 30; ++i) first.onBlock(second(kT0 + i * 990));
+        }
+        As11NightWriter w(d.string(), fixedOffsetClock(-300), strict);
+        for (int i = 30; i < 60; ++i) w.onBlock(second(kT0 + i * 990));
+        w.onStreamEnd(kSerial);
+        EXPECT_EQ(records(d / "as11" / kSerial / "DATALOG" / "20261016" / "20261016_220000_BRP.edf"), 60)
+            << (strict ? "strict" : "joined");
+    }
+}
+
+// With the grid already ahead of the stamps, a block that repeats half of the
+// one before is still cut by what its stamp says is repeated, no more.
+TEST_F(NightTest, ARepeatedStretchIsStillSkippedWhenTheGridIsAhead) {
+    auto w = writer();
+    for (int i = 0; i < 40; ++i) w.onBlock(second(kT0 + i * 990));   // 390 ms ahead
+    const int64_t end = kT0 + 39 * 990 + 1000;
+    StreamBlock again = second(end - 500);
+    again.channels[1].values.assign(25, 400);   // a pressure of its own
+    w.onBlock(again);
+    for (int i = 0; i < 4; ++i) w.onBlock(second(end + 500 + i * 1000));
+    w.onStreamEnd(kSerial);
+
+    cpapdash::parser::EDFFile edf;
+    ASSERT_TRUE(edf.open((night() / "20261016_220000_BRP.edf").string()));
+    std::vector<double> press;
+    edf.readSignal(1, press);
+    const auto own = std::count_if(press.begin(), press.end(), [&](double p) { return p < press.front() - 1.0; });
+    EXPECT_EQ(own, 12);   // 25 less the 13 that cover 500 ms
+}
+
+// A block late and the next one back on time is not a repeat.
+TEST_F(NightTest, ABlockBackOnTimeAfterALateOneKeepsItsSamples) {
+    auto w = writer();
+    for (int i = 0; i < 40; ++i) w.onBlock(second(kT0 + i * 1000 + (i == 0 ? 0 : (i % 2 ? 25 : -10))));
+    w.onStreamEnd(kSerial);
+
+    // Every sample laid and no zero put in its place.
+    cpapdash::parser::EDFFile edf;
+    ASSERT_TRUE(edf.open((night() / "20261016_220000_BRP.edf").string()));
+    std::vector<double> press;
+    edf.readSignal(1, press);
+    ASSERT_EQ(press.size(), 1000u);
+    for (size_t i = 0; i < press.size(); i++) EXPECT_GT(press[i], 5.0) << "sample " << i;
+}
+
+// A grid ahead of the stamps does not hide a missed sample from the strict
+// policy: late is still measured from the block before.
+TEST_F(NightTest, StrictSplitsAMissedSampleWhenTheGridIsAhead) {
+    As11NightWriter w(dir_.string(), fixedOffsetClock(-300), true);
+    for (int i = 0; i < 10; ++i) w.onBlock(second(kT0 + i * 990));   // 90 ms ahead
+    w.onBlock(second(kT0 + 9 * 990 + 1040));
+    const auto stream = dir_ / "as11" / kSerial / "stream" / "20261016";
+    EXPECT_EQ(files(stream).size(), 2u) << ::testing::PrintToString(files(stream));
+}
+
 // The Settings switch reaches a running writer: from the next block on.
 TEST_F(NightTest, ThePolicyChangesOnARunningWriter) {
     auto w = writer();
