@@ -55,7 +55,24 @@ public:
 
     std::string getBaseURL() const { return base_url_; }
 
+protected:
+    /// Called for each piece of a reply body before it is kept. Does nothing;
+    /// a test overrides it to throw, which is what a failed append looks like
+    /// (#135: a std::bad_alloc inside the write callback).
+    virtual void onBodyChunk(size_t /*bytes*/) {}
+
 private:
+    /// Where a reply body goes: one of the two, and the client for onBodyChunk.
+    struct WriteTarget {
+        O2RingClient* self = nullptr;
+        std::string* text = nullptr;
+        std::vector<uint8_t>* bytes = nullptr;
+    };
+
+    /// A fresh handle after a failed request, so no failure sticks to the
+    /// handle. Called with curl_mtx_ held.
+    void renewHandle();
+
     CURL* curl_;
     // The one handle, one request at a time. The collect endpoint downloads on
     // a web thread while the collection cycle polls /o2ring/live; a poll that

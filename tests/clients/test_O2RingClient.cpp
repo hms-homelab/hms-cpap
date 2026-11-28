@@ -6,11 +6,15 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <new>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "TestSocketCompat.h"
+#ifndef _WIN32
+#include <sys/select.h>
+#endif
 
 using namespace hms_cpap;
 
@@ -405,7 +409,7 @@ public:
     }
 
     ~SlowMule() {
-        stopListening(listen_fd_);
+        stopping_ = true;
         if (accept_thread_.joinable()) accept_thread_.join();
         for (auto& t : conns_) if (t.joinable()) t.join();
         if (listen_fd_ >= 0) closeSocket(listen_fd_);
@@ -425,9 +429,20 @@ public:
     }
 
 private:
+    // Waits in select() with a timeout, not in accept(): a shutdown() of the
+    // listening socket does not wake accept() on macOS, and the test hung in
+    // the destructor there.
     void acceptLoop() {
-        for (;;) {
-            int conn = ::accept(listen_fd_, nullptr, nullptr);
+        const int fd = listen_fd_;
+        while (!stopping_) {
+            fd_set rd;
+            FD_ZERO(&rd);
+            FD_SET(fd, &rd);
+            timeval tv{0, 50 * 1000};
+            const int ready = ::select(fd + 1, &rd, nullptr, nullptr, &tv);
+            if (ready < 0) return;
+            if (ready == 0) continue;
+            int conn = ::accept(fd, nullptr, nullptr);
             if (conn < 0) return;
             conns_.emplace_back([this, conn] { serve(conn); });
         }
@@ -480,6 +495,7 @@ private:
     int chunks_;
     std::chrono::milliseconds gap_;
     std::atomic<bool> download_started_{false};
+    std::atomic<bool> stopping_{false};
     int listen_fd_ = -1;
     uint16_t port_ = 0;
     std::thread accept_thread_;
@@ -504,5 +520,48 @@ TEST(O2RingHttp, ALivePollDuringADownloadWaitsAndBothSucceed) {
 
     // And the handle answers after, with no "Failed initialization".
     EXPECT_EQ(client.listFiles(), std::vector<std::string>{"20261128005640"});
+    EXPECT_EQ(client.downloadFile("20261128005640"), mule.file());
+}
+
+namespace {
+
+// A body chunk that cannot be kept: the first [throws] chunks throw, as the
+// append did in #135.
+class ThrowingO2RingClient : public O2RingClient {
+public:
+    using O2RingClient::O2RingClient;
+    std::atomic<int> throws{0};
+protected:
+    void onBodyChunk(size_t) override {
+        if (throws.load() > 0) { --throws; throw std::bad_alloc(); }
+    }
+};
+
+}  // namespace
+
+// A write callback that throws ends that one download; the next requests
+// work, not "Failed initialization" until a restart.
+TEST(O2RingHttp, ThrowingDownloadCallbackDoesNotWedgeTheClient) {
+    SlowMule mule(4000, 4, std::chrono::milliseconds(5));
+    ThrowingO2RingClient client(mule.baseUrl());
+
+    client.throws = 1;
+    EXPECT_TRUE(client.downloadFile("20261128005640").empty());
+    EXPECT_EQ(client.throws.load(), 0);
+
+    EXPECT_EQ(client.downloadFile("20261128005640"), mule.file());
+    EXPECT_TRUE(client.getLive().answered());
+    EXPECT_EQ(client.listFiles(), std::vector<std::string>{"20261128005640"});
+}
+
+TEST(O2RingHttp, ThrowingTextCallbackDoesNotWedgeTheClient) {
+    SlowMule mule(4000, 4, std::chrono::milliseconds(5));
+    ThrowingO2RingClient client(mule.baseUrl());
+
+    client.throws = 1;
+    EXPECT_FALSE(client.getLive().answered());
+    EXPECT_EQ(client.throws.load(), 0);
+
+    EXPECT_TRUE(client.getLive().answered());
     EXPECT_EQ(client.downloadFile("20261128005640"), mule.file());
 }
