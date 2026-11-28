@@ -47,6 +47,14 @@ TEST(MachineZone, AFixedOffsetIsTheSameInJanuaryAndJuly) {
     EXPECT_EQ(z.toWall(L(2026, 1, 15, 12)), L(2026, 1, 15, 22));
 }
 
+// Only a named zone follows daylight saving: what the ring's clock is set in
+// full to, and a fixed offset or the host is not.
+TEST(MachineZone, OnlyAZoneNameIsNamed) {
+    EXPECT_TRUE(MachineZone::parse("Australia/Sydney")->isNamed());
+    EXPECT_FALSE(MachineZone::parse("+10:00")->isNamed());
+    EXPECT_FALSE(MachineZone::parse("")->isNamed());
+}
+
 TEST(MachineZone, SydneyHasItsTwoOffsets) {
     const auto z = zone("Australia/Sydney");
     EXPECT_EQ(z.kind(), MachineZone::Kind::Named);

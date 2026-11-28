@@ -1,6 +1,7 @@
 #include "clients/O2RingBleClient.h"
 #include "clients/OxyIIProtocol.h"
 #include "clients/ble/LinkRecovery.h"
+#include <cstdlib>
 #include <nlohmann/json.hpp>
 #include <iostream>
 #include <chrono>
@@ -483,7 +484,41 @@ bool O2RingBleClient::oxySession() {
     const bool clock_ok = info && info->clock_valid;
 
     if (clock_ok) {
-        if (!oxyRequest(oxyii::kOpSetTime, oxyii::timePayload(info->clock), 3000))
+        // The ring's own clock back, unless it has drifted: then the time now
+        // on the ring's clock setting, so its files and this app's agree.
+        oxyii::DateTime to_send = info->clock;
+        if (wall_now_) {
+            auto differs = [&](const oxyii::DateTime& t) {
+                const auto& r = info->clock;
+                return t.second != r.second || t.minute != r.minute || t.hour != r.hour ||
+                       t.day != r.day || t.month != r.month || t.year != r.year;
+            };
+            long long off = 0;
+            const auto wanted = oxyii::clockToSend(info->clock, wall_now_(), kClockToleranceS, &off);
+            long long left_off = 0;
+            if (differs(wanted)) {
+                const std::string drift = "the O2Ring-S clock is " + std::to_string(std::llabs(off)) +
+                                          " s " + (off > 0 ? "behind" : "ahead");
+                if (std::llabs(off) > kDefaultZoneLimitS && !(zone_chosen_ && zone_chosen_())) {
+                    left_off = off;
+                    std::cout << "O2Ring BLE: " << drift << ", which may be another time zone; "
+                                 "choose a time zone under Ring clock on the Devices page to have it set"
+                              << std::endl;
+                } else if (oxyMeasuring()) {
+                    std::cout << "O2Ring BLE: " << drift << "; not set while it is measuring"
+                              << std::endl;
+                } else {
+                    // The time again: the question above took a while.
+                    to_send = oxyii::clockToSend(info->clock, wall_now_(), kClockToleranceS);
+                    std::cout << "O2Ring BLE: " << drift << "; setting it to " << to_send.year
+                              << "-" << int(to_send.month) << "-" << int(to_send.day) << " "
+                              << int(to_send.hour) << ":" << int(to_send.minute) << ":"
+                              << int(to_send.second) << std::endl;
+                }
+            }
+            clock_off_ = left_off;
+        }
+        if (!oxyRequest(oxyii::kOpSetTime, oxyii::timePayload(to_send), 3000))
             std::cerr << "O2Ring BLE: O2Ring-S set time: no reply" << std::endl;
     } else {
         std::cerr << "O2Ring BLE: the O2Ring-S clock is not set; file reads may be refused "
@@ -492,6 +527,14 @@ bool O2RingBleClient::oxySession() {
     if (!oxyRequest(oxyii::kOpGetConfig, {}, 3000))
         std::cerr << "O2Ring BLE: O2Ring-S GET_CONFIG: no reply" << std::endl;
     return true;
+}
+
+// Run status 1 (measure prep) and 2 (measuring) are a recording in progress;
+// 0 and 3 are before and after one. No answer counts as one.
+bool O2RingBleClient::oxyMeasuring() {
+    if (!oxyRequest(oxyii::kOpLive, {}, 3000)) return true;
+    const auto live = oxyii::parseLive(resp_buf_);
+    return !live || live->run == 1 || live->run == 2;
 }
 
 // 0xF4 clears a handle left open, without which 0xF1 hangs: the ring's own

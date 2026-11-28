@@ -171,6 +171,35 @@ uint32_t epochOf(const DateTime& t) {
     return static_cast<uint32_t>(days * 86400L + t.hour * 3600L + t.minute * 60L + t.second);
 }
 
+DateTime dateTimeOf(long long label) {
+    // Civil from days (Howard Hinnant).
+    long long days = label >= 0 ? label / 86400 : -((-label + 86399) / 86400);
+    const long long sod = label - days * 86400;
+    days += 719468;
+    const long long era = (days >= 0 ? days : days - 146096) / 146097;
+    const long long doe = days - era * 146097;
+    const long long yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    const long long y = yoe + era * 400;
+    const long long doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    const long long mp = (5 * doy + 2) / 153;
+    const long long d = doy - (153 * mp + 2) / 5 + 1;
+    const long long m = mp < 10 ? mp + 3 : mp - 9;
+    DateTime t;
+    t.year = static_cast<uint16_t>(y + (m <= 2));
+    t.month = static_cast<uint8_t>(m);
+    t.day = static_cast<uint8_t>(d);
+    t.hour = static_cast<uint8_t>(sod / 3600);
+    t.minute = static_cast<uint8_t>((sod % 3600) / 60);
+    t.second = static_cast<uint8_t>(sod % 60);
+    return t;
+}
+
+DateTime clockToSend(const DateTime& ring, long long now_label, int tolerance_s, long long* off_s) {
+    const long long off = now_label - static_cast<long long>(epochOf(ring));
+    if (off_s) *off_s = off;
+    return (off > tolerance_s || off < -tolerance_s) ? dateTimeOf(now_label) : ring;
+}
+
 std::optional<Info> parseInfo(const std::vector<uint8_t>& p) {
     if (p.size() < 38) return std::nullopt;
     Info info;

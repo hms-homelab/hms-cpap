@@ -183,6 +183,7 @@ Json::Value buildDevices(const DeviceInputs& in, DevicesStore& store) {
             detail["battery"]      = in.o2.get("battery", -1);
             detail["last_read_at"] = in.o2.get("last_read_at", 0);
             detail["last_file"]    = in.o2.get("last_file", "");
+            detail["clock_off_s"]  = in.o2.get("clock_off_s", 0);
             detail["live"]         = in.o2.get("live", Json::Value(Json::nullValue));
             // The ring recording is not the machine recording: shown, never
             // a reason to warn (nothing on this card warns).

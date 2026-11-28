@@ -98,7 +98,9 @@
       "bleNotCompiled": "Ez a változat nem támogatja a Bluetooth-t. Linuxon forrásból fordítva a -DBUILD_WITH_BLE=ON kapcsoló kell hozzá.",
       "bleError": "A Bluetooth nem ellenőrizhető. Ellenőrizze, hogy működik-e a Bluetooth ezen a számítógépen.",
       "bleRadioOff": "A Bluetooth ki van kapcsolva ezen a számítógépen. Kapcsolja be, és ellenőrizze újra.",
-      "bleUnauthorized": "A CpapDash nem használhatja a Bluetooth-t ezen a Macen. Engedélyezze a Rendszerbeállítások, Adatvédelem és biztonság, Bluetooth menüpontban."
+      "bleUnauthorized": "A CpapDash nem használhatja a Bluetooth-t ezen a Macen. Engedélyezze a Rendszerbeállítások, Adatvédelem és biztonság, Bluetooth menüpontban.",
+      "setClock": "A gyűrű órájának javítása",
+      "setClockHint": "A gyűrű órájának idejétől egy percnél jobban eltérő O2Ring-S erre az időre áll át, mérés közben soha. A gyűrű órája az Eszközök oldalon állítható. Ha a gyűrű órája „Ugyanaz, mint ezen a számítógépen” vagy „Rögzített eltérés”, csak a legfeljebb 14 perces eltérés javul; „Időzóna” esetén bármekkora."
     },
     "garmin": {
       "heading": "Garmin SpO2",

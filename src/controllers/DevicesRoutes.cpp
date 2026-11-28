@@ -144,6 +144,7 @@ Json::Value oximetryStatus() {
     v["battery"]      = f.battery;
     v["last_read_at"] = static_cast<Json::Int64>(f.last_read_at);
     v["last_file"]    = f.last_file;
+    v["clock_off_s"]  = static_cast<Json::Int64>(f.clock_off_s);
     Json::Value live(Json::objectValue);
     live["active"] = f.live.active;
     live["valid"]  = f.live.valid;

@@ -190,6 +190,7 @@
           <ng-container *ngIf="!d.detail.through_bridge && !d.detail.not_compiled">
             <div *ngIf="d.present === 'unknown'" class="wide"><dd class="quiet">{{ 'devices.o2ring.notAsked' | translate }}</dd></div>
             <div *ngIf="d.present !== 'unknown'"><dt></dt><dd>{{ (d.present === 'yes' ? 'devices.o2ring.connectedNow' : 'devices.o2ring.notConnected') | translate }}</dd></div>
+            <div class="wide" *ngIf="d.detail.clock_off_s"><dd class="amber" role="status">{{ (d.detail.clock_off_s > 0 ? 'devices.o2ring.clockBehind' : 'devices.o2ring.clockAhead') | translate:{ minutes: ((d.detail.clock_off_s > 0 ? d.detail.clock_off_s : -d.detail.clock_off_s) / 60 | number:'1.0-0') } }}</dd></div>
             <div *ngIf="d.detail.last_contact"><dt>{{ 'devices.o2ring.lastContact' | translate }}</dt><dd>{{ ms(d.detail.last_contact) | date:'short' }}</dd></div>
             <div *ngIf="d.detail.last_file"><dt>{{ 'devices.o2ring.lastFile' | translate }}</dt>
               <dd>{{ ms(d.detail.last_read_at) | date:'short' }} · <span class="mono">{{ d.detail.last_file }}</span></dd></div>

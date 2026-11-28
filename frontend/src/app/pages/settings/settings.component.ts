@@ -304,6 +304,13 @@ import { showLocalModelSection } from './local-model';
                 <span class="hint" *ngIf="bleStatus === 'radio_off'" style="color: #fb923c;">{{ 'settings.o2ring.bleRadioOff' | translate }}</span>
                 <span class="hint" *ngIf="bleStatus === 'unauthorized'" style="color: #ef4444;">{{ 'settings.o2ring.bleUnauthorized' | translate }}</span>
               </label>
+              <ng-container *ngIf="config.o2ring.mode === 'ble'">
+                <label class="toggle-row">
+                  {{ 'settings.o2ring.setClock' | translate }}
+                  <input type="checkbox" [(ngModel)]="config.o2ring.set_clock" name="o2ring_set_clock" />
+                </label>
+                <p class="hint">{{ 'settings.o2ring.setClockHint' | translate }}</p>
+              </ng-container>
             </ng-container>
           </div>
         </div>
@@ -1965,6 +1972,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
         if (!cfg.o2ring) {
           cfg.o2ring = { enabled: false, mode: 'http', mule_url: '' };
         }
+        if (cfg.o2ring.set_clock === undefined) cfg.o2ring.set_clock = true;
         if (!cfg.airsense11_ble) {
           cfg.airsense11_ble = { enabled: false, address: '', capture: false, strict_stream_gaps: false };
         }

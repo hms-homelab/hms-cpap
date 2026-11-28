@@ -481,6 +481,28 @@ std::string BurstCollectorService::summaryPromptTemplate(const AppConfig* cfg, s
             "Session data:\n{metrics}";
 }
 
+#ifdef WITH_BLE
+namespace {
+// With set_clock (Settings, o2ring.set_clock), an O2Ring-S found off its clock
+// is set to the time now on the ring clock's setting (the Devices page);
+// without, it is left as the ring's own app set it. Unless the Ring clock is a
+// named time zone, only a small difference is set
+// (O2RingBleClient::kDefaultZoneLimitS): "Same as this computer" may not be the
+// ring's zone, and a fixed offset does not follow its daylight saving.
+std::shared_ptr<O2RingBleClient> makeO2RingBleClient(bool set_clock) {
+    auto client = std::make_shared<O2RingBleClient>();
+    if (set_clock)
+        client->setWallNow(
+            [] {
+                return machine_clocks::nowWall(kOximetryDeviceId,
+                                               static_cast<long long>(std::time(nullptr)));
+            },
+            [] { return machine_clocks::zoneFor(kOximetryDeviceId).isNamed(); });
+    return client;
+}
+}  // namespace
+#endif
+
 void BurstCollectorService::initO2Ring() {
     bool o2ring_enabled       = app_config_ ? app_config_->o2ring.enabled   : false;
     std::string o2ring_url    = app_config_ ? app_config_->o2ring.mule_url  : "";
@@ -493,7 +515,7 @@ void BurstCollectorService::initO2Ring() {
     std::shared_ptr<IO2RingClient> client;
 #ifdef WITH_BLE
     if (o2ring_mode == "ble") {
-        client = std::make_shared<O2RingBleClient>();
+        client = makeO2RingBleClient(!app_config_ || app_config_->o2ring.set_clock);
         std::cout << "O2Ring: Enabled (mode=ble, direct Bluetooth)" << std::endl;
     }
 #else
@@ -5350,6 +5372,7 @@ void BurstCollectorService::snapshotConfig(ConfigSnapshot& snap) {
     snap.o2ring_enabled = app_config_->o2ring.enabled;
     snap.o2ring_mode = app_config_->o2ring.mode;
     snap.o2ring_mule_url = app_config_->o2ring.mule_url;
+    snap.o2ring_set_clock = app_config_->o2ring.set_clock;
     snap.airsense11_enabled = app_config_->airsense11.enabled;
     snap.airsense11_mule_url = app_config_->airsense11.mule_url;
     snap.airsense11_pull_hours = app_config_->airsense11.pull_hours;
@@ -5632,12 +5655,13 @@ void BurstCollectorService::reloadConfig() {
     // O2 Ring
     if (nc.o2ring_enabled != last_config_.o2ring_enabled ||
         nc.o2ring_mule_url != last_config_.o2ring_mule_url ||
-        nc.o2ring_mode != last_config_.o2ring_mode) {
+        nc.o2ring_mode != last_config_.o2ring_mode ||
+        nc.o2ring_set_clock != last_config_.o2ring_set_clock) {
         if (nc.o2ring_enabled) {
             std::shared_ptr<IO2RingClient> client;
 #ifdef WITH_BLE
             if (nc.o2ring_mode == "ble") {
-                client = std::make_shared<O2RingBleClient>();
+                client = makeO2RingBleClient(nc.o2ring_set_clock);
                 std::cout << "Config reload: O2Ring -> ble (direct Bluetooth)" << std::endl;
             }
 #else

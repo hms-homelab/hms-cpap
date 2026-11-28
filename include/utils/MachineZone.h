@@ -98,6 +98,8 @@ public:
 
     Kind kind() const { return kind_; }
     bool isHost() const { return kind_ == Kind::Host; }
+    /// A named zone, which follows its daylight saving.
+    bool isNamed() const { return kind_ == Kind::Named; }
 
     /// The canonical setting: "", "+10:00", or the zone name.
     std::string setting() const;
