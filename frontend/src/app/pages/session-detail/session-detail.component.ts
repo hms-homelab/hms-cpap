@@ -16,6 +16,7 @@ import { isGradable, indexLabelKey } from '../../utils/index-kind';
 import { nightAhi, sessionSeconds } from './night-ahi';
 import { nightDesaturations } from './night-odi';
 import { hasAnyValue, hasReading, sessionPressurePlan, SessionPressurePlan } from './session-pressure';
+import { signalStats, validFor, statsDigits, SignalStats } from './signal-stats';
 import { Chart, ChartDataset, registerables } from 'chart.js';
 import annotationPlugin from 'chartjs-plugin-annotation';
 import zoomPlugin from 'chartjs-plugin-zoom';
@@ -42,6 +43,7 @@ interface SignalDef {
   // night by sessionPressurePlan (the delivered pressure, the mask's dashed).
   pressure?: boolean;
   pressurePlan?: SessionPressurePlan;
+  noStats?: boolean;       // no min/med/max line: a minute's mean flow is near 0
 }
 
 // SDD-080: `titleKey` rather than `title`. The names come from core.signal so
@@ -52,7 +54,7 @@ interface SignalDef {
 // %, ratio and the 0-1 / 0-5 scale hints are notation, not copy -- identical in
 // every language this product ships.
 const SIGNAL_DEFS: SignalDef[] = [
-  { key: 'flow_avg', titleKey: 'signal.flow', unit: 'L/min', color: '#64b5f6', hasBand: true, bandMinKey: 'flow_min', bandMaxKey: 'flow_max', showEvents: true, breaths: true, source: 'signals' },
+  { key: 'flow_avg', titleKey: 'signal.flow', unit: 'L/min', color: '#64b5f6', hasBand: true, bandMinKey: 'flow_min', bandMaxKey: 'flow_max', showEvents: true, breaths: true, source: 'signals', noStats: true },
   // Issue #56: resolved per night by withPressurePlan(); these are the mask
   // fallback's values, what the chart was before it showed the delivered pressure.
   { key: 'pressure_avg', titleKey: 'signal.maskPressure', unit: 'cmH2O', color: '#ce93d8', hasBand: true, bandMinKey: 'pressure_min', bandMaxKey: 'pressure_max', showEvents: true, source: 'signals', pressure: true },
@@ -191,6 +193,31 @@ const EVENT_TYPE_KEYS: Record<string, string> = {
             </button>
           </div>
         </div>
+        <!-- OSCAR's figures for a channel, for the whole night and, zoomed in,
+             for the part in view. Min/Med and the percentiles are notation. -->
+        <div class="signal-stats" *ngIf="nightStats && !selectedSignal.pressurePlan?.pending">
+          <!-- The info button sits by the label, so it stays on the line however the figures wrap.
+               A tap shows where the figures come from: a hover title never shows on a touch screen. -->
+          <span class="stats-label">{{ 'sessionDetail.stats.night' | translate }}<button type="button" class="stats-info"
+                  (click)="showStatsBasis = !showStatsBasis"
+                  [class.active]="showStatsBasis" [attr.aria-expanded]="showStatsBasis"
+                  [attr.aria-label]="'sessionDetail.stats.about' | translate"
+                  [title]="'sessionDetail.stats.about' | translate"><i class="fa-solid fa-circle-info"></i></button></span>
+          <span>Min {{ fmtStat(nightStats.min) }}</span>
+          <span>Med {{ fmtStat(nightStats.med) }}</span>
+          <span>95% {{ fmtStat(nightStats.p95) }}</span>
+          <span>99.5% {{ fmtStat(nightStats.p995) }}</span>
+        </div>
+        <div class="signal-stats" *ngIf="viewStats && !selectedSignal.pressurePlan?.pending">
+          <span class="stats-label">{{ 'sessionDetail.stats.view' | translate }}</span>
+          <span>Min {{ fmtStat(viewStats.min) }}</span>
+          <span>Med {{ fmtStat(viewStats.med) }}</span>
+          <span>95% {{ fmtStat(viewStats.p95) }}</span>
+          <span>99.5% {{ fmtStat(viewStats.p995) }}</span>
+        </div>
+        <p class="detail-note" *ngIf="showStatsBasis && nightStats && !selectedSignal.pressurePlan?.pending">
+          {{ 'sessionDetail.stats.basis' | translate }}
+        </p>
         <!-- Issue #56: which pressure is drawn, in one line. -->
         <p class="detail-note" *ngIf="selectedSignal.pressurePlan && !selectedSignal.pressurePlan.pending">
           {{ selectedSignal.pressurePlan.noteKey | translate }}
@@ -294,6 +321,12 @@ const EVENT_TYPE_KEYS: Record<string, string> = {
     .detail-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; }
     .detail-header h3 { margin: 0; }
     .detail-unit { color: #888; font-size: 0.75rem; font-weight: normal; }
+    .signal-stats { display: flex; flex-wrap: wrap; gap: 0.15rem 0.9rem; margin: 0.4rem 0 0;
+      color: #aaa; font-size: 0.75rem; font-variant-numeric: tabular-nums; }
+    .signal-stats .stats-label { color: #777; min-width: 3.5rem; }
+    .stats-info { background: none; border: none; padding: 0 0.3rem; color: #777; cursor: pointer;
+      font-size: 0.8rem; line-height: 1; }
+    .stats-info:hover, .stats-info.active { color: #64b5f6; }
     .detail-note { color: #999; font-size: 0.75rem; line-height: 1.45; margin: 0.35rem 0 0; max-width: 80ch; }
     .detail-controls { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
     .range-buttons { display: flex; gap: 2px; }
@@ -414,6 +447,11 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
   detailOdi: number | null = null;   // ODI for the selected SpO2 chart (F2)
   /** SDD-001 F1: the colour key for the selected chart's spans. */
   detailLegend: { type: string; color: string }[] = [];
+  /** The selected chart's figures: the whole night, and the part in view when zoomed. */
+  nightStats: SignalStats | null = null;
+  viewStats: SignalStats | null = null;
+  private statsPlaces = 1;
+  showStatsBasis = false;   // the note under the figures, opened by its info button
 
   // SDD-001 F2: the night's desaturations (machine SpO2 from the stored
   // sessions, else the ring's own, found here at the Settings threshold).
@@ -954,7 +992,23 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
     this.sliderEndLabel = labels[this.viewEnd - 1] || '';
   }
 
+  fmtStat(v: number): string {
+    return v.toFixed(this.statsPlaces);
+  }
+
+  /** The night's figures for [sig], and the window's when it is not the whole night. */
+  private setStats(sig: SignalDef, window: unknown[] | null) {
+    const valid = validFor(sig.key);
+    const night = this.getData(sig.key);
+    this.statsPlaces = statsDigits(sig.unit);
+    this.nightStats = sig.noStats ? null : signalStats(night, valid);
+    this.viewStats = this.nightStats && window && window.length < night.length
+      ? signalStats(window, valid) : null;
+  }
+
   private renderDetailChart() {
+    this.nightStats = null;
+    this.viewStats = null;
     if (!this.selectedSignal || !this.detailCanvasRef?.nativeElement) return;
     this.detailChart?.destroy();
     this.detailChart = null;
@@ -974,6 +1028,7 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
       mainData = mainData.slice(s, e);
       timestamps = timestamps.slice(s, e);
     }
+    this.setStats(sig, this.activeRange !== 'all' ? mainData : null);
 
     // Build datasets
     const sigTitle = this.t.instant(sig.titleKey);
@@ -1041,8 +1096,12 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
     }, {});
     const withBreaths = sig.breaths && this.breathOnsets.length > 0;
     const onZoomed = ({ chart }: { chart: Chart }) => {
-      if (!withBreaths) return;
       const x = chart.scales['x'];
+      // The figures for what is in view: the category indices into this window.
+      const lo = Math.max(0, Math.ceil(x.min));
+      const hi = Math.min(mainData.length - 1, Math.floor(x.max));
+      this.setStats(sig, hi >= lo ? mainData.slice(lo, hi + 1) : []);
+      if (!withBreaths) return;
       const anns = { ...baseAnns };
       breathAnnotations(this.breathOnsets, timestamps, x.min, x.max)
         .forEach((a, i) => anns['br' + i] = a);

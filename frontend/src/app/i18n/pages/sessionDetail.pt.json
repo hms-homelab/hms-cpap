@@ -1,6 +1,12 @@
 {
   "sessionDetail": {
     "overview": "Visão geral",
+    "stats": {
+      "night": "Noite",
+      "view": "Visível",
+      "about": "De onde vêm estes valores",
+      "basis": "Calculado a partir dos valores que o gráfico desenha: um por minuto para os sinais do aparelho, a cada poucos segundos para o anel e um por respiração para a limitação de fluxo por respiração. O OSCAR usa os dados de resolução total do cartão, por isso estes valores não coincidirão exatamente."
+    },
     "oximetryFrom": "Oximetria - {{device}}",
     "oximetryOnly": "Apenas oximetria ({{device}}); nenhuma sessão de CPAP foi registada nesta noite",
     "oximetryUpload": "Envio",
