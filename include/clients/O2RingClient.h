@@ -1,6 +1,8 @@
 #pragma once
 
 #include "clients/IO2RingClient.h"
+#include <atomic>
+#include <mutex>
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -50,17 +52,28 @@ public:
      * Get battery level from last status/list call.
      * @return 0-100 percent, or -1 if unknown
      */
-    int getBattery() const override { return cached_battery_; }
+    int getBattery() const override { return cached_battery_.load(); }
 
     std::string getBaseURL() const { return base_url_; }
 
+protected:
+    /// Called for each piece of a reply body before it is kept. Does nothing;
+    /// a test overrides it to throw, which is what a failed append looks like
+    /// (#135: a std::bad_alloc inside the write callback).
+    virtual void onBodyChunk(size_t /*bytes*/) {}
+
 private:
+    // One handle, so one request at a time (#135): the collect endpoint's
+    // download and the burst worker's live poll used to run on it at once,
+    // and the poll swapped the write target out from under the download.
+    // Guards curl_ and http_fail_log_.
+    std::mutex http_mtx_;
     CURL* curl_;
     // Collapses repeated identical HTTP failures (offline device) into one
     // line plus periodic summaries, instead of one error per poll cycle.
     FailureLogThrottle http_fail_log_;
     std::string base_url_;
-    int cached_battery_ = -1;
+    std::atomic<int> cached_battery_{-1};
 
     // A full night does not fit in 60s. Measured on the bench 2026-08-25 against
     // a real O2Ring through the mule: ~620 B/s of streaming once connected, plus
@@ -70,8 +83,23 @@ private:
     static constexpr long DOWNLOAD_TIMEOUT  = 300L;
     static constexpr long CONNECTION_TIMEOUT = 5L;
 
+    /// Where a reply body goes: one of the two, and the client for onBodyChunk.
+    struct WriteTarget {
+        O2RingClient* self = nullptr;
+        std::string* text = nullptr;
+        std::vector<uint8_t>* bytes = nullptr;
+    };
+
+    // Neither lets an exception out: one thrown through libcurl leaves the
+    // handle unusable, every later request failing "Failed initialization"
+    // until a restart (#135). They return 0 instead, which makes curl stop
+    // the transfer with CURLE_WRITE_ERROR.
     static size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp);
     static size_t WriteBinaryCallback(void* contents, size_t size, size_t nmemb, void* userp);
+
+    /// A fresh handle after a failed request, so one failure never sticks.
+    /// Called with http_mtx_ held.
+    void renewHandle();
 
     /** Fetch string response from URL */
     std::string httpGet(const std::string& url);

@@ -2,13 +2,19 @@
 #include "clients/O2RingClient.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <mutex>
+#include <new>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "TestSocketCompat.h"
+#ifndef _WIN32
+#include <sys/select.h>
+#endif
 
 using namespace hms_cpap;
 
@@ -368,4 +374,204 @@ TEST(O2RingHttp, DownloadFileUrlEncodesFilename) {
 TEST(O2RingHttp, GetBaseUrlReturnsConfigured) {
     O2RingClient client("http://192.168.1.9");
     EXPECT_EQ(client.getBaseURL(), "http://192.168.1.9");
+}
+// ── #135: one request at a time, and a failure never sticks ─────────────
+//
+// In http mode the collect endpoint's download (a drogon thread) and the burst
+// worker's live poll shared the client's one curl handle at the same time. The
+// poll swapped the write target out from under the download, the append threw
+// std::bad_alloc through libcurl, and the handle then failed every request with
+// "Failed initialization" until a restart.
+
+namespace {
+
+// A loopback mule: any number of connections, each on its own thread.
+// /o2ring/files?name=... streams kDownloadSize bytes slowly (about a second),
+// everything else answers at once with a live reading.
+class SlowMuleServer {
+public:
+    static constexpr size_t kChunk = 64;
+    static constexpr size_t kChunks = 64;
+    static constexpr size_t kDownloadSize = kChunk * kChunks;
+
+    static uint8_t byteAt(size_t i) { return static_cast<uint8_t>((i * 7 + 3) & 0xFF); }
+
+    SlowMuleServer() {
+        listen_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
+        EXPECT_GE(listen_fd_, 0);
+        int one = 1;
+        ::setsockopt(listen_fd_, SOL_SOCKET, SO_REUSEADDR,
+                     reinterpret_cast<const char*>(&one), sizeof(one));
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        addr.sin_port = 0;
+        EXPECT_EQ(::bind(listen_fd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)), 0);
+        EXPECT_EQ(::listen(listen_fd_, 16), 0);
+        socklen_t len = sizeof(addr);
+        EXPECT_EQ(::getsockname(listen_fd_, reinterpret_cast<sockaddr*>(&addr), &len), 0);
+        port_ = ntohs(addr.sin_port);
+        accept_thread_ = std::thread([this] { acceptLoop(); });
+    }
+
+    ~SlowMuleServer() {
+        stopping_ = true;
+        if (accept_thread_.joinable()) accept_thread_.join();
+        if (listen_fd_ >= 0) closeSocket(listen_fd_);
+        std::lock_guard<std::mutex> lk(mtx_);
+        for (auto& t : conns_) if (t.joinable()) t.join();
+    }
+
+    std::string baseUrl() const { return "http://127.0.0.1:" + std::to_string(port_); }
+
+private:
+    // Waits in select() with a timeout, not in accept(): a shutdown() of the
+    // listening socket does not wake accept() on macOS.
+    void acceptLoop() {
+        const int fd = listen_fd_;
+        while (!stopping_) {
+            fd_set rd;
+            FD_ZERO(&rd);
+            FD_SET(fd, &rd);
+            timeval tv{0, 50 * 1000};
+            const int ready = ::select(fd + 1, &rd, nullptr, nullptr, &tv);
+            if (ready < 0) return;
+            if (ready == 0) continue;
+            int conn = ::accept(fd, nullptr, nullptr);
+            if (conn < 0) return;
+            std::lock_guard<std::mutex> lk(mtx_);
+            conns_.emplace_back([this, conn] { serve(conn); });
+        }
+    }
+
+    static void sendAll(int conn, const char* p, size_t n) {
+        size_t sent = 0;
+        while (sent < n) {
+            ssize_t k = ::send(conn, p + sent, static_cast<int>(n - sent), 0);
+            if (k <= 0) return;
+            sent += static_cast<size_t>(k);
+        }
+    }
+
+    void serve(int conn) {
+        std::string req;
+        char buf[1024];
+        while (req.find("\r\n\r\n") == std::string::npos) {
+            ssize_t n = ::recv(conn, buf, sizeof(buf), 0);
+            if (n <= 0) { closeSocket(conn); return; }
+            req.append(buf, static_cast<size_t>(n));
+        }
+        if (req.find("/o2ring/files?name=") != std::string::npos) {
+            std::string head =
+                "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n"
+                "Content-Length: " + std::to_string(kDownloadSize) +
+                "\r\nConnection: close\r\n\r\n";
+            sendAll(conn, head.data(), head.size());
+            std::string chunk(kChunk, '\0');
+            for (size_t c = 0; c < kChunks && !stopping_; ++c) {
+                for (size_t i = 0; i < kChunk; ++i)
+                    chunk[i] = static_cast<char>(byteAt(c * kChunk + i));
+                sendAll(conn, chunk.data(), chunk.size());
+                std::this_thread::sleep_for(std::chrono::milliseconds(15));
+            }
+        } else {
+            const std::string body =
+                R"({"spo2":97,"hr":68,"motion":1,"vibration":0,"active":true,"connected":true,"battery":61})";
+            std::string resp =
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                "Content-Length: " + std::to_string(body.size()) +
+                "\r\nConnection: close\r\n\r\n" + body;
+            sendAll(conn, resp.data(), resp.size());
+        }
+        closeSocket(conn);
+    }
+
+    int listen_fd_ = -1;
+    uint16_t port_ = 0;
+    std::atomic<bool> stopping_{false};
+    std::thread accept_thread_;
+    std::mutex mtx_;
+    std::vector<std::thread> conns_;
+};
+
+std::vector<uint8_t> expectedDownload() {
+    std::vector<uint8_t> v(SlowMuleServer::kDownloadSize);
+    for (size_t i = 0; i < v.size(); ++i) v[i] = SlowMuleServer::byteAt(i);
+    return v;
+}
+
+// A body chunk that cannot be kept: the first [throws] chunks throw, as the
+// append did in #135.
+class ThrowingO2RingClient : public O2RingClient {
+public:
+    using O2RingClient::O2RingClient;
+    std::atomic<int> throws{0};
+protected:
+    void onBodyChunk(size_t) override {
+        if (throws.load() > 0) { --throws; throw std::bad_alloc(); }
+    }
+};
+
+}  // namespace
+
+// The collect endpoint downloads while the burst worker polls live: both get
+// their own whole answer, and the client still works afterwards.
+TEST(O2RingHttp, LivePollDuringADownloadTakesItsTurn) {
+    SlowMuleServer srv;
+    O2RingClient client(srv.baseUrl());
+
+    std::vector<uint8_t> downloaded;
+    std::atomic<bool> download_done{false};
+    std::thread downloader([&] {
+        downloaded = client.downloadFile("20261128005300.vld");
+        download_done = true;
+    });
+
+    // The burst worker's polls, landing inside the download.
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    int polls = 0, good = 0;
+    for (int i = 0; i < 5; ++i) {
+        auto r = client.getLive();
+        ++polls;
+        if (r.valid && r.spo2 == 97 && r.hr == 68) ++good;
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    downloader.join();
+
+    EXPECT_TRUE(download_done.load());
+    EXPECT_EQ(downloaded, expectedDownload()) << "the download got the live poll's bytes, or was cut";
+    EXPECT_EQ(good, polls) << "a live poll got the download's bytes";
+
+    // And the handle is not wedged.
+    EXPECT_EQ(client.downloadFile("again.vld"), expectedDownload());
+    EXPECT_TRUE(client.getLive().valid);
+}
+
+// A write callback that throws aborts that one download; the next request
+// works, not "Failed initialization" until a restart.
+TEST(O2RingHttp, ThrowingDownloadCallbackDoesNotWedgeTheClient) {
+    SlowMuleServer srv;
+    ThrowingO2RingClient client(srv.baseUrl());
+
+    client.throws = 1;
+    EXPECT_TRUE(client.downloadFile("20261128005300.vld").empty());
+    EXPECT_EQ(client.throws.load(), 0);
+
+    EXPECT_EQ(client.downloadFile("20261128005300.vld"), expectedDownload());
+    auto r = client.getLive();
+    EXPECT_TRUE(r.valid);
+    EXPECT_TRUE(client.isConnected());
+    EXPECT_EQ(client.getBattery(), 61);
+}
+
+TEST(O2RingHttp, ThrowingTextCallbackDoesNotWedgeTheClient) {
+    SlowMuleServer srv;
+    ThrowingO2RingClient client(srv.baseUrl());
+
+    client.throws = 1;
+    EXPECT_FALSE(client.getLive().valid);
+    EXPECT_EQ(client.throws.load(), 0);
+
+    EXPECT_TRUE(client.getLive().valid);
+    EXPECT_EQ(client.downloadFile("20261128005300.vld"), expectedDownload());
 }

@@ -27,11 +27,28 @@ public:
                     std::shared_ptr<IDatabase> db,
                     std::string cpap_device_id = "");
 
+    /// What one collect found. A ring that did not answer or a file that
+    /// could not be downloaded is told apart from "nothing new" (#135).
+    enum class CollectResult {
+        Collected,        // at least one new file stored
+        NoNewFiles,       // the ring answered; nothing new to store
+        RingUnreachable,  // no file listed and the ring did not answer
+        DownloadFailed,   // a new file was listed but could not be downloaded
+    };
+
+    /// Poll for new files, parse, and store. One collect at a time: the
+    /// collect endpoint and the burst worker both call it (#135).
+    CollectResult collect();
+
+    /// The collect endpoint's "status": collected, no_new_files,
+    /// ring_unreachable or download_failed.
+    static const char* statusName(CollectResult r);
+
     /**
      * Poll for new files, parse, and store.
      * @return true if any new data was processed
      */
-    bool collectAndPublish();
+    bool collectAndPublish() { return collect() == CollectResult::Collected; }
 
     /// Where the ring's raw file is kept: <archive>/DATALOG/<filename>, beside
     /// the CPAP nights but flat, since every folder in DATALOG is read as a
@@ -81,6 +98,7 @@ private:
     /// ring file in the database, once, so the Devices page can say when the
     /// ring was last heard before this start's first read.
     void seedLastRead() const;
+    std::mutex collect_mtx_;               // one collect() at a time
     mutable std::mutex facts_mtx_;
     std::set<std::string> saved_nights_;   // under facts_mtx_
     mutable Facts facts_;

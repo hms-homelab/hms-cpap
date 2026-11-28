@@ -56,14 +56,27 @@ bool OximetryService::retainRawFile(const std::string& archive_dir, const std::s
     return true;
 }
 
-bool OximetryService::collectAndPublish() {
+const char* OximetryService::statusName(CollectResult r) {
+    switch (r) {
+        case CollectResult::Collected:       return "collected";
+        case CollectResult::NoNewFiles:      return "no_new_files";
+        case CollectResult::RingUnreachable: return "ring_unreachable";
+        case CollectResult::DownloadFailed:  return "download_failed";
+    }
+    return "no_new_files";
+}
+
+OximetryService::CollectResult OximetryService::collect() {
+    std::lock_guard<std::mutex> collect_lk(collect_mtx_);
+
     // Step 1: List available files
     auto files = client_->listFiles();
     if (files.empty()) {
         std::cout << "O2Ring: No files available" << std::endl;
         // Nothing listed: no file yet, or no ring. Its own answer says which.
-        noteFacts(client_->isConnected());
-        return false;
+        const bool connected = client_->isConnected();
+        noteFacts(connected);
+        return connected ? CollectResult::NoNewFiles : CollectResult::RingUnreachable;
     }
 
     std::cout << "O2Ring: " << files.size() << " file(s) on device"
@@ -76,6 +89,7 @@ bool OximetryService::collectAndPublish() {
 
     // Step 2: Filter out already-processed files
     bool any_new = false;
+    bool any_download_failed = false;
     for (const auto& filename : files) {
         // Skip if already processed in this session
         if (processed_files_.count(filename)) {
@@ -102,6 +116,7 @@ bool OximetryService::collectAndPublish() {
         auto data = client_->downloadFile(filename);
         if (data.empty()) {
             std::cerr << "O2Ring: Failed to download " << filename << std::endl;
+            any_download_failed = true;
             continue;
         }
 
@@ -171,7 +186,8 @@ bool OximetryService::collectAndPublish() {
     }
 
     noteFacts(true);
-    return any_new;
+    if (any_new) return CollectResult::Collected;
+    return any_download_failed ? CollectResult::DownloadFailed : CollectResult::NoNewFiles;
 }
 
 std::vector<std::string> OximetryService::takeSavedNights() {
