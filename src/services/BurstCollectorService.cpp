@@ -1314,21 +1314,77 @@ bool BurstCollectorService::forceCompleteSession(const std::string& sleep_day) {
             }
         }
     }
-    // SDD-046: a forced night is announced, so its hour does not announce it
-    // a second time.
-    {
-        const std::tm tm = wall::fieldsOf(wall::seconds(session_start.value()));   // SDD-074 D4
-        char folder[9];
-        std::strftime(folder, sizeof(folder), "%Y%m%d", &tm);
-        const auto now = std::chrono::system_clock::now();
-        noteNightSeen(*db_service_, device_id_, folder, session_start.value(), now,
-                      /*already_closed=*/true);
-        const STRDailyRecord* rec = strRecordForNight(session_start.value());
-        markNightAnnounced(*db_service_, device_id_, folder, now, rec ? strSignature(*rec) : "");
-        // SDD-013 D-701-3: closed by hand is closed: it landed.
-        night_landed::announce(strDayForSessionStart(session_start.value()),
-                               rec ? std::optional<STRDailyRecord>(*rec) : std::nullopt);
+    closeNightByHand(session_start.value());
+    return true;
+}
+
+std::vector<std::string> BurstCollectorService::nightFoldersOf(
+    std::chrono::system_clock::time_point session_start) {
+    // #136: the night is stored under its card folder (#126), which the
+    // sessions page reads its state from: the ledger row whose str_day is the
+    // night's sleep day. A night that starts after midnight is in the folder
+    // of the day before its start, not the folder of the start's date.
+    const std::string day = strDayForSessionStart(session_start);
+    std::set<std::string> folders;
+    for (const auto& f : db_service_->listSyncFolders())
+        if (f.str_day == day) folders.insert(f.date_folder);
+    // A ledger row has its str_day only once its folder has settled, and a
+    // Remove night / Reparse deletes the row; the restart after one brings it
+    // back without it. The night's hour row says where the collector stored
+    // the night: the folder whose newest session start is in this night.
+    night_quiet::ensureTable(*db_service_);
+    const DbType dt = db_service_->dbType();
+    for (const auto& n : night_quiet::rowsOf(db_service_->executeQuery(
+             "SELECT date_folder, last_growth, newest_start, announced, str_sig "
+             "FROM cpap_night_quiet WHERE device_id = " + sql::param(1, dt),
+             {device_id_}))) {
+        if (n.newest_start > 0 &&
+            strDayForSessionStart(wall::point(n.newest_start)) == day)
+            folders.insert(n.date_folder);
     }
+    if (!folders.empty()) return {folders.begin(), folders.end()};
+
+    // No ledger row: the folder of the start's own date, as before.
+    const std::tm tm = wall::fieldsOf(wall::seconds(session_start));   // SDD-074 D4
+    char folder[9];
+    std::strftime(folder, sizeof(folder), "%Y%m%d", &tm);
+    return {folder};
+}
+
+void BurstCollectorService::closeNightByHand(std::chrono::system_clock::time_point session_start) {
+    // SDD-046: a forced night is announced, so its hour does not announce it
+    // a second time, and the sessions page shows it complete.
+    const auto now = std::chrono::system_clock::now();
+    const STRDailyRecord* rec = strRecordForNight(session_start);
+    for (const auto& folder : nightFoldersOf(session_start)) {
+        noteNightSeen(*db_service_, device_id_, folder, session_start, now,
+                      /*already_closed=*/true);
+        markNightAnnounced(*db_service_, device_id_, folder, now, rec ? strSignature(*rec) : "");
+    }
+    // SDD-013 D-701-3: closed by hand is closed: it landed.
+    night_landed::announce(strDayForSessionStart(session_start),
+                           rec ? std::optional<STRDailyRecord>(*rec) : std::nullopt);
+}
+
+bool BurstCollectorService::forceCompleteLastSession() {
+    auto last_start = db_service_->getLastSessionStart(device_id_);
+    if (!last_start) return false;
+    db_service_->markSessionCompleted(device_id_, last_start.value());
+    db_service_->setForceCompleted(device_id_, last_start.value());
+    if (data_publisher_) {
+        data_publisher_->publishSessionCompleted();
+        processSessionSummary();
+        auto metrics = db_service_->getNightlyMetrics(device_id_, last_start.value());
+        if (metrics) {
+            data_publisher_->publishHistoricalState(metrics.value());
+            if (llm_enabled_ && llm_client_) {
+                const STRDailyRecord* str_rec = strRecordForNight(last_start.value());
+                generateAndPublishSummary(metrics.value(), str_rec);
+            }
+        }
+    }
+    // #136: the MQTT command closes the night too, as the HTTP one does.
+    closeNightByHand(last_start.value());
     return true;
 }
 
@@ -5811,22 +5867,7 @@ void BurstCollectorService::setupMqttSubscriptions() {
     // Force complete
     mqtt_client_->subscribe("cpap/" + device_id_ + "/command/force_complete",
         [this](const std::string&, const std::string&) {
-            auto last_start = db_service_->getLastSessionStart(device_id_);
-            if (!last_start) return;
-            db_service_->markSessionCompleted(device_id_, last_start.value());
-            db_service_->setForceCompleted(device_id_, last_start.value());
-            if (data_publisher_) {
-                data_publisher_->publishSessionCompleted();
-                processSessionSummary();
-                auto metrics = db_service_->getNightlyMetrics(device_id_, last_start.value());
-                if (metrics) {
-                    data_publisher_->publishHistoricalState(metrics.value());
-                    if (llm_enabled_ && llm_client_) {
-                        const STRDailyRecord* str_rec = strRecordForNight(last_start.value());
-                        generateAndPublishSummary(metrics.value(), str_rec);
-                    }
-                }
-            }
+            forceCompleteLastSession();
         }, 1);
 
     // Session completed subscription (for ML training trigger)
