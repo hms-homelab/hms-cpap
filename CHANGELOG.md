@@ -5,6 +5,39 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.3.3] - 2026-11-28
+
+### Added
+- **An O2Ring-S whose clock has drifted is set to the current time (#129).**
+  When a session opens and the ring's clock is more than 60 s from the time
+  now on the Ring clock setting (Devices page), the ring is set to the time
+  now. With "Same as this computer" or a fixed offset, a difference over 14
+  minutes is left alone, since it may be a ring on another time zone; it is
+  logged and shown on the ring's card on the Devices page with the advice to
+  set a time zone. The ring is not changed while it is recording. On by
+  default, as "Correct the ring's clock" in Settings (`o2ring.set_clock`),
+  for direct Bluetooth. Thanks [rccoleman](https://github.com/rccoleman).
+- **A Luna or a Sefam card in a Toshiba FlashAir (#134).** A FlashAir with a
+  BMC / React Health Luna or a Sefam S.Box card is now read through a copy of
+  the card, as over an ez Share, instead of looking for a ResMed DATALOG that
+  is not there. Settings and the setup wizard ask what machine wrote the
+  card. A Luna's growing file is appended over a FlashAir instead of fetched
+  whole every burst. On a Sleep Bridge Lite, a folder holding a Sefam card is
+  read as Sefam. These paths are not tested on a real machine yet.
+
+### Fixed
+- **Strict stream gaps: the threshold follows the sample interval (#131,
+  follow-up to #125).** The strict split is now three quarters of the
+  block's own sample interval, the same slack the sample placement uses, so
+  a block exactly that late stays in the same file. Delays that each stay
+  within it but add up past it now split the segment instead of filling a
+  zero, also after a restart. Thanks [rccoleman](https://github.com/rccoleman).
+- **A segment under a second writes no empty BRP (#132).** A BRP holds whole
+  one-second records, so a piece of stream under a second wrote a 0-byte
+  `_BRP.edf` and told the CpapDash uploader about it. Nothing is written or
+  noted for it now; its PLD is still written. Thanks
+  [rccoleman](https://github.com/rccoleman).
+
 ## [7.3.2] - 2026-11-27
 
 ### Fixed
