@@ -115,7 +115,7 @@ struct Pass {
             if (in.gcount() != static_cast<std::streamsize>(kOverlap)) return false;
         }
         if (fresh.compare(0, kOverlap, ours) != 0) {
-            std::cout << "Luna ez Share: " << f.name
+            std::cout << "Luna card copy (" << card.sourceName() << "): " << f.name
                       << " no longer starts with what we hold; taking it whole" << std::endl;
             return false;
         }
@@ -198,12 +198,13 @@ BmcMirrorResult mirrorBmcCard(IDataSource& card, const std::string& local_dir) {
     // An empty answer is a card that did not answer, not an empty card.
     const auto root = card.listDir("");
     if (root.empty()) {
-        p.r.error = "the ez Share did not answer a listing of the card root";
+        p.r.error = card.sourceName() + " did not answer a listing of the card root";
         return p.r;
     }
     const auto stem = bmcStemOf(root);
     if (!stem) {
-        p.r.error = "no Luna card on the ez Share (no <serial>.usr beside its .000 or .evt)";
+        p.r.error = "no Luna card on " + card.sourceName() +
+                    " (no <serial>.usr beside its .000 or .evt)";
         return p.r;
     }
     p.r.stem = *stem;
@@ -250,7 +251,7 @@ BmcMirrorResult mirrorBmcCard(IDataSource& card, const std::string& local_dir) {
         for (const auto& [name, kb] : p.manifest) out << name << "\t" << kb << "\n";
     }
     p.r.ok = true;
-    std::cout << "Luna ez Share: card " << p.r.stem << ", " << p.r.fetched << " fetched, "
+    std::cout << "Luna card copy (" << card.sourceName() << "): card " << p.r.stem << ", " << p.r.fetched << " fetched, "
               << p.r.appended << " appended, " << p.r.unchanged << " unchanged, "
               << p.r.failed << " failed" << std::endl;
     return p.r;

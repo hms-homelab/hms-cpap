@@ -8,6 +8,13 @@
 
 #include "services/SefamCardMirror.h"
 
+#include "FakeFlashAir.h"
+#include "clients/FlashAirClient.h"
+#include "database/SQLiteDatabase.h"
+#include "services/BurstCollectorService.h"
+#include "services/DataPublisherService.h"
+#include "utils/AppConfig.h"
+
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -191,4 +198,89 @@ TEST(SefamMirrorNights, WithoutStampsTheLastFourByNumber) {
     ASSERT_EQ(out.size(), 4u);
     EXPECT_EQ(out.front().name, "DATA_3");
     EXPECT_EQ(out.back().name, "DATA_10");
+}
+
+// ── A Sefam card in a Toshiba FlashAir ──────────────────────────────────────
+//
+// The same copy, over a real FlashAirClient against a loopback FlashAir that
+// serves the reporter's layout from a folder.
+
+namespace {
+
+/// buildCard()'s layout, on disk, for a FakeFlashAir to serve.
+void writeCardTree(const fs::path& root) {
+    const fs::path serial = root / "1263R" / "00000000";
+    fs::create_directories(serial);
+    std::ofstream(serial / "00000000.RAM", std::ios::binary) << "ram";
+    for (int n = 1; n <= 4; ++n) {
+        const std::string name = "DATA_" + std::to_string(n);
+        fs::create_directories(serial / name);
+        std::ofstream(serial / name / (name + ".INI"), std::ios::binary) << "manifest " << name;
+        std::ofstream(serial / name / (name + ".DAT"), std::ios::binary) << std::string(3000, 'x');
+    }
+}
+
+}  // namespace
+
+TEST_F(SefamMirrorTest, ThroughAFlashAirTheWholeCardIsCopied) {
+    const fs::path card = archive_.string() + "_card";
+    fs::remove_all(card);
+    writeCardTree(card);
+    FakeFlashAir fa(card);
+    FlashAirClient client;
+    client.setBaseURL(fa.baseUrl());
+
+    const auto r = mirrorSefamCard(client, archive_.string(), /*whole_card=*/true);
+    ASSERT_TRUE(r.ok) << r.error;
+    EXPECT_EQ(r.fetched, 9);
+    EXPECT_EQ(r.failed, 0);
+    EXPECT_TRUE(fs::exists(archive_ / "1263R/00000000/DATA_1/DATA_1.INI"));
+    EXPECT_TRUE(fs::exists(archive_ / "1263R/00000000/DATA_4/DATA_4.DAT"));
+    EXPECT_TRUE(fs::exists(archive_ / "1263R/00000000/00000000.RAM"));
+    EXPECT_TRUE(fa.asked("DIR=/1263R/00000000/DATA_2"));
+    EXPECT_TRUE(fa.asked("GET /1263R/00000000/DATA_2/DATA_2.INI"));
+
+    const auto again = mirrorSefamCard(client, archive_.string(), /*whole_card=*/true);
+    ASSERT_TRUE(again.ok) << again.error;
+    EXPECT_EQ(again.fetched, 0) << "an unchanged card fetches nothing";
+    std::error_code ec;
+    fs::remove_all(card, ec);
+}
+
+// transport flashair + format sefam, set in Settings: the burst copies the
+// card off the FlashAir into the archive, where the Sefam ingestion reads it.
+TEST_F(SefamMirrorTest, ASefamOnAFlashAirSetInSettingsIsCopiedByTheBurst) {
+    const fs::path card = archive_.string() + "_card";
+    fs::remove_all(card);
+    writeCardTree(card);
+    FakeFlashAir fa(card);
+
+    const fs::path db_path = archive_.string() + ".db";
+    auto db = std::make_shared<SQLiteDatabase>(db_path.string());
+    ASSERT_TRUE(db->connect());
+    BurstCollectorService svc(60);
+    svc.injectDependenciesForTest(
+        db, nullptr,
+        std::make_unique<DataPublisherService>(std::shared_ptr<hms::MqttClient>{}, db));
+    AppConfig cfg;
+    cfg.transport = "flashair";
+    cfg.format = "sefam";
+    cfg.flashair_url = fa.baseUrl();
+    cfg.archive_dir = archive_.string();
+    cfg.mqtt.enabled = false;
+    svc.setAppConfig(&cfg);
+    svc.markConfigDirty();
+    svc.reloadConfigForTest();
+    EXPECT_EQ(svc.dataSourceNameForTest(), "the FlashAir");
+    EXPECT_EQ(svc.cpapSourceForTest(), "sefam");
+
+    svc.runBurstCycleForTest();   // the made-up manifests are no sessions; the copy is what is tested
+    EXPECT_TRUE(fs::exists(archive_ / "1263R/00000000/DATA_1/DATA_1.INI"));
+    EXPECT_TRUE(fs::exists(archive_ / "1263R/00000000/DATA_4/DATA_4.DAT"));
+    EXPECT_FALSE(fa.asked("/DATALOG")) << "a Sefam card has no DATALOG";
+    svc.injectDependenciesForTest(nullptr, nullptr, nullptr);   // let go of the file (Windows)
+    db.reset();
+    std::error_code ec;
+    fs::remove_all(card, ec);
+    fs::remove(db_path, ec);
 }

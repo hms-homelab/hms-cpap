@@ -185,6 +185,21 @@ void BurstCollectorService::initialize(AppConfig* cfg) {
     }
 }
 
+namespace {
+
+/// The source everything downstream of the copy sees. SDD-031: a Sefam card
+/// behind an ez Share is still a Sefam source (no STR, sessions as the daily
+/// summary's writer); SDD-060: a Luna behind one is still a BMC source; and
+/// either behind a FlashAir is the same.
+std::string downstreamSource(const std::string& source) {
+    if (source == "sefam_ezshare" || source == "sefam_flashair") return "sefam";
+    if (source == "bmc_ezshare" || source == "bmc_flashair") return "bmc";
+    if (source == "philips_ezshare") return "philips";
+    return source;
+}
+
+}  // namespace
+
 void BurstCollectorService::initDataSource() {
     // SDD-022: two questions. CPAP_TRANSPORT/CPAP_FORMAT win when set; a config
     // or environment carrying only CPAP_SOURCE maps through the SAME table
@@ -199,13 +214,7 @@ void BurstCollectorService::initDataSource() {
     // the reconfigure path and the tests still compare against. Derived from the
     // pair so it cannot contradict them.
     std::string source = AppConfig::collectorSource(transport, format);
-    // SDD-031: a Sefam card behind an ez Share is still a Sefam source to
-    // everything downstream (no STR, sessions as the daily summary's writer).
-    // SDD-060: and a Luna behind one is still a BMC source.
-    cpap_source_ = (source == "sefam_ezshare")     ? "sefam"
-                   : (source == "bmc_ezshare")     ? "bmc"
-                   : (source == "philips_ezshare") ? "philips"
-                                                   : source;
+    cpap_source_ = downstreamSource(source);
     if (source == "local") {
         local_source_dir_ = ConfigManager::get("CPAP_LOCAL_DIR", "");
         // SDD-010: local_source_dir_ is the card ROOT. A wrong layout is NOT
@@ -259,10 +268,11 @@ void BurstCollectorService::initDataSource() {
         }
         bmc_ingestion_ = std::make_unique<BmcIngestion>(data_dir);
         std::cout << "CPAP: BMC / React Health Luna mode — reading from " << data_dir << std::endl;
-    } else if (source == "sefam_ezshare") {
-        startSefamOverEzShare(ConfigManager::get("CPAP_ARCHIVE_DIR", ""));
-    } else if (source == "bmc_ezshare") {
-        startBmcOverEzShare(ConfigManager::get("CPAP_ARCHIVE_DIR", ""));
+    } else if (source == "sefam_ezshare" || source == "sefam_flashair") {
+        startSefamOverCard(ConfigManager::get("CPAP_ARCHIVE_DIR", ""),
+                           source == "sefam_flashair");
+    } else if (source == "bmc_ezshare" || source == "bmc_flashair") {
+        startBmcOverCard(ConfigManager::get("CPAP_ARCHIVE_DIR", ""), source == "bmc_flashair");
     } else if (source == "philips") {
         // A Philips card with plain files in a folder: a card reader, a card
         // shared on the network, or a folder a Mule & Miner fills.
@@ -289,50 +299,58 @@ void BurstCollectorService::initDataSource() {
     }
 }
 
-void BurstCollectorService::startSefamOverEzShare(const std::string& archive_dir) {
-    // SDD-031: the ez Share client lists and fetches the S.Box card into the
-    // archive; the Sefam ingestion reads the archive like a local folder.
+std::unique_ptr<IDataSource> BurstCollectorService::makeWifiCardClient(bool flashair) const {
+    // SDD-056: a FlashAir answers the same interface as an ez Share.
+    if (flashair) return std::make_unique<FlashAirClient>();
+    auto ez = std::make_unique<EzShareClient>();
+    if (app_config_ && !app_config_->ezshare_range) ez->setSupportsRange(false);
+    return ez;
+}
+
+void BurstCollectorService::startSefamOverCard(const std::string& archive_dir, bool flashair) {
+    // SDD-031: the card's client (an ez Share or a FlashAir) lists and fetches
+    // the S.Box card into the archive; the Sefam ingestion reads the archive
+    // like a local folder.
     local_source_dir_.clear();
     prisma_ingestion_.reset();
     discovery_service_.reset();   // the ResMed DATALOG discovery is not used
-    auto ez = std::make_unique<EzShareClient>();
-    if (app_config_ && !app_config_->ezshare_range) ez->setSupportsRange(false);
-    data_source_ = std::move(ez);
+    data_source_ = makeWifiCardClient(flashair);
+    const std::string over = flashair ? "a FlashAir" : "ez Share";
     sefam_archive_dir_ = archive_dir;
     sefam_over_ezshare_ = true;
     sefam_ingestion_ = std::make_unique<SefamIngestion>(archive_dir);
     if (archive_dir.empty()) {
-        std::cerr << "CPAP: Sefam S.Box over ez Share needs an archive folder (archive_dir) "
-                     "to copy the card into; nothing will be imported until one is set"
+        std::cerr << "CPAP: Sefam S.Box over " << over
+                  << " needs an archive folder (archive_dir) to copy the card into; nothing "
+                     "will be imported until one is set"
                   << std::endl;
     } else {
-        std::cout << "CPAP: Sefam S.Box over ez Share — copying the card into "
+        std::cout << "CPAP: Sefam S.Box over " << over << " — copying the card into "
                   << archive_dir << std::endl;
     }
 }
 
-void BurstCollectorService::startBmcOverEzShare(const std::string& archive_dir) {
-    // SDD-060: the ez Share client (the card, or a Mule and Miner in local
-    // mode) copies the Luna's root files into <archive>/bmc; the BMC ingestion
-    // reads that folder exactly as it reads a local card.
+void BurstCollectorService::startBmcOverCard(const std::string& archive_dir, bool flashair) {
+    // SDD-060: the card's client (an ez Share, a Mule and Miner in local mode,
+    // or a FlashAir) copies the Luna's root files into <archive>/bmc; the BMC
+    // ingestion reads that folder exactly as it reads a local card.
     local_source_dir_.clear();
     prisma_ingestion_.reset();
     sefam_ingestion_.reset();
     discovery_service_.reset();   // the ResMed DATALOG discovery is not used
-    auto ez = std::make_unique<EzShareClient>();
-    if (app_config_ && !app_config_->ezshare_range) ez->setSupportsRange(false);
-    data_source_ = std::move(ez);
+    data_source_ = makeWifiCardClient(flashair);
+    const std::string over = flashair ? "a FlashAir" : "ez Share";
     bmc_mirror_dir_ =
         archive_dir.empty() ? std::string() : (std::filesystem::path(archive_dir) / "bmc").string();
     bmc_over_ezshare_ = true;
     bmc_ingestion_ = std::make_unique<BmcIngestion>(bmc_mirror_dir_);
     if (bmc_mirror_dir_.empty()) {
-        std::cerr << "CPAP: BMC / React Health Luna over ez Share needs an archive folder "
-                     "(archive_dir) to copy the card into; nothing will be imported until one "
-                     "is set"
+        std::cerr << "CPAP: BMC / React Health Luna over " << over
+                  << " needs an archive folder (archive_dir) to copy the card into; nothing "
+                     "will be imported until one is set"
                   << std::endl;
     } else {
-        std::cout << "CPAP: BMC / React Health Luna over ez Share — copying the card into "
+        std::cout << "CPAP: BMC / React Health Luna over " << over << " — copying the card into "
                   << bmc_mirror_dir_ << std::endl;
     }
 }
@@ -2839,8 +2857,9 @@ bool BurstCollectorService::executeBurstCycle() {
         // only the card's last two nights.
         if (sefam_over_ezshare_) {
             if (!data_source_ || sefam_archive_dir_.empty()) {
-                std::cerr << "CPAP: Sefam over ez Share is not ready (no archive folder)"
-                          << std::endl;
+                std::cerr << "CPAP: Sefam over "
+                          << (data_source_ ? data_source_->sourceName() : std::string("the card"))
+                          << " is not ready (no archive folder)" << std::endl;
                 return false;
             }
             const auto m = mirrorSefamCard(*data_source_, sefam_archive_dir_,
@@ -4438,7 +4457,9 @@ bool BurstCollectorService::executeBmcBurst() {
     // nothing to gain from asking more often than the burst does.
     if (bmc_over_ezshare_) {
         if (!data_source_ || bmc_mirror_dir_.empty()) {
-            std::cerr << "CPAP: BMC over ez Share is not ready (no archive folder)" << std::endl;
+            std::cerr << "CPAP: BMC over "
+                      << (data_source_ ? data_source_->sourceName() : std::string("the card"))
+                      << " is not ready (no archive folder)" << std::endl;
             return false;
         }
         const auto m = mirrorBmcCard(*data_source_, bmc_mirror_dir_);
@@ -5439,28 +5460,28 @@ void BurstCollectorService::reloadConfig() {
         nc.flashair_url != last_config_.flashair_url ||
         nc.local_dir != last_config_.local_dir ||
         ((nc.source == "sefam_ezshare" || nc.source == "bmc_ezshare" ||
-          nc.source == "philips_ezshare") &&
+          nc.source == "philips_ezshare" || nc.source == "sefam_flashair" ||
+          nc.source == "bmc_flashair") &&
          nc.archive_dir != last_config_.archive_dir)) {
         sefam_over_ezshare_ = false;
         bmc_over_ezshare_ = false;
         bmc_ingestion_.reset();   // SDD-049: only the bmc branches below build one
         philips_over_ezshare_ = false;
         philips_ingestion_.reset();   // only the philips branches below build one
-        if (nc.source == "sefam_ezshare") {
-#ifdef _WIN32
-            _putenv_s("EZSHARE_BASE_URL", nc.ezshare_url.c_str());
-#else
-            setenv("EZSHARE_BASE_URL", nc.ezshare_url.c_str(), 1);
-#endif
-            startSefamOverEzShare(nc.archive_dir);
-        } else if (nc.source == "bmc_ezshare") {
+        const bool over_flashair = nc.source == "sefam_flashair" || nc.source == "bmc_flashair";
+        if (nc.source == "sefam_ezshare" || nc.source == "bmc_ezshare" || over_flashair) {
             // SDD-060: the card (or a Mule and Miner) the URL names.
+            const char* key = over_flashair ? "FLASHAIR_BASE_URL" : "EZSHARE_BASE_URL";
+            const std::string& url = over_flashair ? nc.flashair_url : nc.ezshare_url;
 #ifdef _WIN32
-            _putenv_s("EZSHARE_BASE_URL", nc.ezshare_url.c_str());
+            _putenv_s(key, url.c_str());
 #else
-            setenv("EZSHARE_BASE_URL", nc.ezshare_url.c_str(), 1);
+            setenv(key, url.c_str(), 1);
 #endif
-            startBmcOverEzShare(nc.archive_dir);
+            if (nc.source == "sefam_ezshare" || nc.source == "sefam_flashair")
+                startSefamOverCard(nc.archive_dir, over_flashair);
+            else
+                startBmcOverCard(nc.archive_dir, over_flashair);
         } else if (nc.source == "philips_ezshare") {
             // The card (or a Mule & Miner in proxy mode) the URL names.
 #ifdef _WIN32
@@ -5537,10 +5558,7 @@ void BurstCollectorService::reloadConfig() {
             data_source_ = std::move(ez);
             discovery_service_ = std::make_unique<SessionDiscoveryService>(*data_source_);
         }
-        cpap_source_ = (nc.source == "sefam_ezshare")     ? "sefam"
-                       : (nc.source == "bmc_ezshare")     ? "bmc"
-                       : (nc.source == "philips_ezshare") ? "philips"
-                                                          : nc.source;
+        cpap_source_ = downstreamSource(nc.source);
         std::cout << "Config reload: source -> " << nc.source << std::endl;
     }
 

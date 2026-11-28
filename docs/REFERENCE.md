@@ -67,8 +67,11 @@ Automatically extracts sleep therapy data from ResMed and Lowenstein Prisma CPAP
 | **Sefam** | S.Box AUTO (1263R), SleepBox AUTO (1200R) | No -- the card is read after the night | Yes |
 | **BMC / React Health** | Luna | No -- the card is read after the night | Yes |
 
-An ezShare WiFi SD card works with a ResMed, Löwenstein or Sefam machine. A
-Luna card is read from a local folder or the upload page.
+An ezShare WiFi SD card works with a ResMed, Löwenstein or Sefam machine, and
+a Luna. A Toshiba FlashAir works with a ResMed machine; a Luna or Sefam card in
+one is read the same way as in an ezShare, through a copy of the card in
+`archive_dir`, and is not tested yet on a real machine. A Luna or Sefam card
+is also read from a local folder or the upload page.
 
 **ResMed** EDF files grow incrementally during therapy, enabling live session monitoring with pulsing LIVE badge and auto-refreshing charts.
 
@@ -322,8 +325,14 @@ Configuration example:
 ### Sefam S.Box
 
 Set `CPAP_SOURCE=sefam` and point `CPAP_LOCAL_DIR` at the card contents or a
-copy. There is no ezShare path: the S.Box has no WiFi card option, so the card
-is read after the night rather than during it.
+copy. The card is read after the night rather than during it.
+
+Over WiFi, set `CPAP_TRANSPORT=ezshare` or `CPAP_TRANSPORT=flashair` with
+`CPAP_FORMAT=sefam` (in config.json, `"transport"` and `"format": "sefam"`)
+and an archive folder: each burst copies the card into `CPAP_ARCHIVE_DIR` and
+reads it there. A card rebuilt by a Sleep Bridge Lite is read as a local
+folder, the bridge's own, and is recognised as Sefam by its files. None of
+these is tested yet on a real machine.
 
 Two device families are supported, and they disagree about what a folder holds,
 so point at any level from the card root down and hms-cpap finds the sessions:
@@ -367,9 +376,9 @@ measurement.
 ### BMC / React Health Luna
 
 Set `CPAP_SOURCE=bmc` (format "BMC / React Health Luna" in Setup and
-Settings) and point `CPAP_LOCAL_DIR` at the card contents or a copy. There is
-no WiFi path; the card is read after the night. Point at the card root or a
-folder up to three levels above it, and hms-cpap finds the card by its files:
+Settings) and point `CPAP_LOCAL_DIR` at the card contents or a copy. Point at
+the card root or a folder up to three levels above it, and hms-cpap finds the
+card by its files:
 
 ```
 26601017.000            # one 256-byte record per second of therapy
@@ -385,6 +394,18 @@ Configuration example:
   "source": "bmc",
   "local_dir": "/mnt/archive/luna",
   "device_name": "BMC Luna"
+}
+```
+
+Over WiFi, a Luna card in an ezShare (or a Mule & Miner) or in a Toshiba
+FlashAir is copied each burst into `<archive_dir>/bmc` and read there, after
+the night. The FlashAir path is not tested yet on a real machine:
+```json
+{
+  "transport": "flashair",
+  "format": "bmc",
+  "flashair_url": "http://flashair.local",
+  "archive_dir": "/mnt/archive/CPAPData"
 }
 ```
 
@@ -458,6 +479,9 @@ See [`.env.example`](.env.example) for the complete list of variable names, and
 ```bash
 # Data source
 CPAP_SOURCE=ezshare          # ezshare | flashair | local | lowenstein | sefam
+# Or the two questions: CPAP_TRANSPORT (ezshare | flashair | local) and
+# CPAP_FORMAT (resmed | lowenstein | sefam | bmc | philips). Over ezshare or
+# flashair, sefam and bmc are read through a copy in CPAP_ARCHIVE_DIR.
 EZSHARE_BASE_URL=http://192.168.4.1  # ezShare bridge IP
 FLASHAIR_BASE_URL=http://flashair.local  # Toshiba FlashAir on your WiFi (config.json key: flashair_url)
 

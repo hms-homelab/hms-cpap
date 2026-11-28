@@ -1243,6 +1243,9 @@ Json::Value SleepBridgeService::status() const {
         // SDD-080 D1: a DreamStation 2's rebuilt card is a Philips card.
         if (v["card_format"].asString().empty() && holdsPhilipsCard(v["card_root"].asString()))
             v["card_format"] = "philips";
+        // And a Sefam S.Box's is a Sefam card, known by its files.
+        if (v["card_format"].asString().empty() && holdsSefamCard(v["card_root"].asString()))
+            v["card_format"] = "sefam";
         // SDD-073: when this run heard the bridge's own hello and its card
         // statement last (epoch s, 0 for not yet), which the setup steps read.
         v["session_started_at"] = static_cast<Json::Int64>(b.session_started_at);

@@ -261,3 +261,15 @@ TEST(CollectorSource, TheTransportAndFormatPairMapsToWhatTheCollectorBuilds) {
     EXPECT_EQ(AppConfig::collectorSource("local", "philips"), "philips");
     EXPECT_EQ(AppConfig::collectorSource("ezshare", "philips"), "philips_ezshare");
 }
+
+// A FlashAir in a Luna or an S.Box is read as the ez Share in its slot is:
+// through a copy of the card, not the ResMed DATALOG discovery, which finds
+// nothing on a card with no DATALOG.
+TEST(CollectorSource, AFlashAirCarriesALunaOrASefamCardAsAnEzShareDoes) {
+    EXPECT_EQ(AppConfig::collectorSource("flashair", "resmed"), "flashair");
+    EXPECT_EQ(AppConfig::collectorSource("flashair", "bmc"), "bmc_flashair");
+    EXPECT_EQ(AppConfig::collectorSource("flashair", "sefam"), "sefam_flashair");
+    // Not pairs on a FlashAir: read as a ResMed card, as before.
+    EXPECT_EQ(AppConfig::collectorSource("flashair", "lowenstein"), "flashair");
+    EXPECT_EQ(AppConfig::collectorSource("flashair", "philips"), "flashair");
+}

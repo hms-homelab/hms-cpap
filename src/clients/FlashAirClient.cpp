@@ -299,8 +299,11 @@ bool FlashAirClient::downloadFileRange(const std::string& date_folder,
                                        const std::string& local_path,
                                        size_t start_byte,
                                        size_t& bytes_downloaded) {
-    return fetch(encodeCardPath("DATALOG\\" + date_folder + "\\" + filename),
-                 local_path, start_byte, bytes_downloaded);
+    // No date folder is a file at the card root (a Luna card's raw files,
+    // SDD-060 D4), as for an ez Share.
+    const std::string path =
+        date_folder.empty() ? filename : "DATALOG\\" + date_folder + "\\" + filename;
+    return fetch(encodeCardPath(path), local_path, start_byte, bytes_downloaded);
 }
 
 bool FlashAirClient::downloadRootFile(const std::string& filename,

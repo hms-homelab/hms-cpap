@@ -94,6 +94,16 @@ import { showLocalModelSection } from './local-model';
                 <option value="philips">{{ 'settings.source.philips' | translate }}</option>
               </select>
             </label>
+            <!-- A FlashAir reads a ResMed card, and a Luna's or a Sefam's the
+                 way an ez Share does: through a copy of the card. -->
+            <label *ngIf="config.transport === 'flashair'">
+              {{ 'settings.source.format' | translate }}
+              <select [(ngModel)]="config.format" name="format_flashair">
+                <option value="resmed">ResMed</option>
+                <option value="sefam">Sefam S.Box</option>
+                <option value="bmc">{{ 'settings.source.bmc' | translate }}</option>
+              </select>
+            </label>
             <!-- SDD-060 D5: over an ez Share a Luna session appears once the
                  mask is off, never during it. -->
             <small class="hint" *ngIf="config.transport === 'ezshare' && config.format === 'bmc'">
@@ -194,7 +204,7 @@ import { showLocalModelSection } from './local-model';
               <span class="restart-tag">{{ 'settings.tag.restart' | translate }}</span>
             </label>
             <!-- SDD-056: a FlashAir on the home WiFi answers as flashair.local.
-                 It carries a ResMed card; onTransportChange sets the format. -->
+                 It carries a ResMed, Luna or Sefam card (the format above). -->
             <label *ngIf="config.transport === 'flashair'">
               {{ 'settings.source.flashairUrl' | translate }}
               <input type="text" [(ngModel)]="config.flashair_url" name="flashair_url"
@@ -2168,7 +2178,8 @@ export class SettingsComponent implements OnInit, OnDestroy {
   }
 
   /** SDD-031: an ez Share reads ResMed or Sefam; any other format goes back to
-   *  ResMed. SDD-056: a FlashAir reads ResMed only. */
+   *  ResMed. SDD-056: a FlashAir reads ResMed, and a Luna or a Sefam card the
+   *  way an ez Share does. */
   onTransportChange(transport: string): void {
     if (!this.config) return;
     // SDD-060: a Luna (bmc) runs an ez Share too, and so does a Philips card.
@@ -2176,7 +2187,9 @@ export class SettingsComponent implements OnInit, OnDestroy {
         !['resmed', 'sefam', 'bmc', 'philips'].includes(this.config.format)) {
       this.config.format = 'resmed';
     }
-    if (transport === 'flashair') this.config.format = 'resmed';
+    if (transport === 'flashair' && !['resmed', 'sefam', 'bmc'].includes(this.config.format)) {
+      this.config.format = 'resmed';
+    }
   }
 
   /** Required by the current source, and empty. Ticket 67's silent failure. */

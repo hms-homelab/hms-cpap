@@ -315,7 +315,42 @@ TEST(SleepBridgeSetup, UseThisBridgeSetsItsFolderAndItsCardsFormat) {
 
     EXPECT_EQ(formatForBrand("Luna G3"), "bmc");
     EXPECT_EQ(formatForBrand("bmc"), "bmc");
-    EXPECT_EQ(formatForBrand("sefam"), "");
+    // A card learned on a computer names "sefam" for an S.Box card (the
+    // upload page's own name for it).
+    EXPECT_EQ(formatForBrand("sefam"), "sefam");
+    EXPECT_EQ(formatForBrand("lowenstein"), "");
+}
+
+// A Sefam card rebuilt by a bridge in an S.Box: the rebuild names ResMed and
+// Luna cards only, so the folder is read by its files, as a Philips card's is,
+// and never as the ResMed default.
+TEST(SleepBridgeSetup, UseThisBridgeReadsASefamCardInItsFolderAsSefam) {
+    TempDir t;
+    // A manifest the Sefam reader accepts (test_SefamIngestion's), invented serial.
+    const auto session = t.path / "1263R00000000" / "DATA_1";
+    std::filesystem::create_directories(session);
+    std::ofstream(session / "DATA_1.INI", std::ios::binary)
+        << "[Create Info]\r\nCreated By=S.Box_AUTO \r\nSerial Number=1263R00000000\r\n"
+           "Version=VER :A020400\r\nDate=10/11/25 22:25:16\r\n[Start Record]\r\nHour=22\r\n"
+           "Min=25\r\nSec=16\r\nDay=10\r\nMonth=11\r\nYear=2025\r\n"
+           "Programmed Record Duration=28800\r\nReal Record Duration=28800\r\n"
+           "[Chan0]\r\nName=FLW\r\nDescription=NO\r\nType=4\r\nUnit=lpm\r\nMin=-180\r\n"
+           "Max=280\r\nFreq=25\r\nBit=8\r\n";
+    Json::Value status(Json::objectValue);
+    Json::Value b(Json::objectValue);
+    b["sender"]      = "TAP-S3-00000045";
+    b["card_root"]   = t.path.string();
+    b["card_format"] = "";
+    status["bridges"].append(b);
+    status["learned_card"] = Json::Value(Json::nullValue);
+
+    std::string why;
+    const auto a = bridgeSource(status, "TAP-S3-00000045", &why);
+    ASSERT_TRUE(a) << why;
+    EXPECT_EQ(a->format, "sefam");
+    EXPECT_TRUE(a->format_known);
+    EXPECT_TRUE(holdsSefamCard(t.path.string()));
+    EXPECT_FALSE(holdsSefamCard((t.path / "nothing").string()));
 }
 
 // ── The events the steps wait for ─────────────────────────────────────────

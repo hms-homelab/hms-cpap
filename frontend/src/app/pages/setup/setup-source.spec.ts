@@ -42,6 +42,11 @@ test('the other choices still write their source', () => {
     source: 'ezshare', transport: 'ezshare', format: 'sefam', ezshare_url: 'http://192.168.4.1' });
   assert.deepEqual(sourceConfig('flashair', INPUTS), {
     source: 'flashair', transport: 'flashair', format: 'resmed', flashair_url: 'http://flashair.local' });
+  // A FlashAir in a Luna or an S.Box says which machine, as an ez Share does.
+  assert.deepEqual(sourceConfig('flashair', { ...INPUTS, cardFormat: 'bmc' }), {
+    source: 'flashair', transport: 'flashair', format: 'bmc', flashair_url: 'http://flashair.local' });
+  assert.deepEqual(sourceConfig('flashair', { ...INPUTS, cardFormat: 'sefam' }), {
+    source: 'flashair', transport: 'flashair', format: 'sefam', flashair_url: 'http://flashair.local' });
   assert.deepEqual(sourceConfig('local', INPUTS), {
     transport: 'local', format: 'resmed', source: 'local', local_dir: '/media/card' });
   assert.deepEqual(sourceConfig('local', { ...INPUTS, localFormat: 'lowenstein' }), {

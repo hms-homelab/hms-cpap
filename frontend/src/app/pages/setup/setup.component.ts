@@ -340,8 +340,8 @@ import type { SetupSource } from './setup-source';
 
             <!-- SDD-060 D7: an ez Share, or a Mule and Miner (which serves the
                  same pages), cannot say which machine it sits in until the
-                 first listing, so the wizard asks. -->
-            @if (source === 'mm' || source === 'ezshare') {
+                 first listing, so the wizard asks; so does a FlashAir. -->
+            @if (source === 'mm' || source === 'ezshare' || source === 'flashair') {
               <label class="field">
                 {{ 'setup.source.formatLabel' | translate }}
                 <select [(ngModel)]="cardFormat" name="cardFormat">

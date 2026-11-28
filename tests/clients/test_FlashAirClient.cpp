@@ -284,6 +284,25 @@ TEST_F(FlashAirClientTest, ARangeAppendsAfterTheBytesWeHad) {
     EXPECT_TRUE(client.supportsRange());
 }
 
+// A Luna keeps its raw files at the card root, and the mirror asks for the
+// rest of one with no date folder (as of an ez Share, SDD-060 D4). That is the
+// root, not /DATALOG/, which a Luna card does not have.
+TEST_F(FlashAirClientTest, ARangeWithNoDateFolderIsAFileAtTheCardRoot) {
+    const auto p = path("22B39570.000");
+    write(p, std::string(100, 'A'));
+    OneShotHttpServer srv("206 Partial Content", std::string(50, 'B'),
+                          "Content-Range: bytes 100-149/150\r\n");
+    FlashAirClient client;
+    client.setBaseURL(srv.baseUrl());
+
+    size_t got = 0;
+    ASSERT_TRUE(client.downloadFileRange("", "22B39570.000", p, 100, got));
+    EXPECT_EQ(read(p), std::string(100, 'A') + std::string(50, 'B'));
+    const auto req = srv.request();
+    EXPECT_NE(req.find("GET /22B39570.000 HTTP"), std::string::npos) << req;
+    EXPECT_NE(req.find("Range: bytes=100-"), std::string::npos) << req;
+}
+
 // The card answers a file it does not have with a 307 to http://flashair/.
 TEST_F(FlashAirClientTest, AMissingFileIsNotFetchedAndLeavesNothing) {
     OneShotHttpServer srv("307 Temporary Redirect", "", "Location: http://flashair/\r\n");
