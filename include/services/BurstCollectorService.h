@@ -189,6 +189,9 @@ public:
      */
     bool isRunning() const;
     bool forceCompleteSession(const std::string& sleep_day);
+    /// The MQTT command/force_complete: closes the newest session and its
+    /// night (#136). False when there is no session.
+    bool forceCompleteLastSession();
     bool generateSummaryForDate(const std::string& sleep_day);
 
     /// Issue #74: the configured LLM's summary of a summary-only night (no
@@ -994,6 +997,15 @@ private:
     /// SDD-046 D4: a parsed STR that changed the newest announced night's
     /// record publishes that night again.
     void republishRevisedNight();
+
+    /// #136: the card folders the night of [session_start] is stored under:
+    /// the ledger rows whose str_day is its sleep day and the hour rows
+    /// (cpap_night_quiet) whose newest session start is in that night, else
+    /// the folder of the start's own date.
+    std::vector<std::string> nightFoldersOf(std::chrono::system_clock::time_point session_start);
+    /// A force_complete's close of the night (SDD-046): announced under each
+    /// of its folders, and landed (SDD-013 D-701-3).
+    void closeNightByHand(std::chrono::system_clock::time_point session_start);
 
     /// The cached STR record for the therapy day [session_start] belongs to,
     /// or null when the STR has none for it.

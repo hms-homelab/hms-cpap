@@ -10,8 +10,13 @@
 
 #include <algorithm>
 #include <gmock/gmock.h>
+#include "services/BackfillService.h"
 #include "services/BurstCollectorService.h"
 #include "services/CardFileFeed.h"
+#include "services/RemovedNights.h"
+#include "utils/MachineZone.h"
+#include "utils/NightQuiet.h"
+#include "web/QueryService.h"
 #include "services/DataPublisherService.h"
 #include "services/NightLanded.h"
 #include "services/SessionDiscoveryService.h"
@@ -5613,6 +5618,295 @@ TEST_F(BurstOrchestrationTest, Sdd069_ACardThatListsKeepsItsLedgerAsBefore) {
     auto it = db_raw->sync_folders.find("20200101");
     ASSERT_NE(it, db_raw->sync_folders.end());
     EXPECT_TRUE(it->second.complete);
+}
+
+// ── Issue #136: force_complete leaves a past-midnight night live ──────────
+//
+// The sessions page reads a night's state from its ledger row (str_day = the
+// sleep day) and the hour row of that row's card folder in cpap_night_quiet.
+// force_complete marked the hour of the folder named for the session START's
+// date, so a night that began at 00:53 on the 28th (card folder 20261127) was
+// closed under 20261128 and stayed live. The MQTT force_complete did not touch
+// the hour at all.
+
+namespace {
+
+const char* kI136Day = "2026-11-27";
+const char* kI136Folder = "20261127";
+
+std::string nightStateOn(const std::shared_ptr<IDatabase>& db, const std::string& device,
+                         const std::string& sleep_day) {
+    QueryService qs(db, device);
+    const auto rows = qs.getSessions(50, 0);
+    for (const auto& r : rows)
+        if (r["sleep_day"].asString() == sleep_day) return r["night_state"].asString();
+    return "";
+}
+
+std::optional<QuietNight> quietRowOf(IDatabase& db, const std::string& device,
+                                     const std::string& folder) {
+    night_quiet::ensureTable(db);
+    const auto rows = night_quiet::rowsOf(db.executeQuery(
+        "SELECT date_folder, last_growth, newest_start, announced, str_sig FROM cpap_night_quiet"
+        " WHERE device_id = ? AND date_folder = ?",
+        {device, folder}));
+    if (rows.empty()) return std::nullopt;
+    return rows.front();
+}
+
+/// A SQLite database and a collector on it, with a night stored the way a
+/// card sync leaves it: session 00:53:28 on the 28th, closed, its ledger row
+/// settled under 20261127, its hour still running.
+class Issue136Test : public ::testing::Test {
+protected:
+    std::string device_;
+    std::string path_;
+    std::shared_ptr<SQLiteDatabase> db_;
+    std::unique_ptr<BurstCollectorService> svc_;
+    std::chrono::system_clock::time_point start_;
+
+    void SetUp() override {
+        device_ = "i136_" + std::to_string(::getpid()) + "_" +
+                  ::testing::UnitTest::GetInstance()->current_test_info()->name();
+        path_ = (std::filesystem::temp_directory_path() / (device_ + ".db")).string();
+        std::filesystem::remove(path_);
+        db_ = std::make_shared<SQLiteDatabase>(path_);
+        ASSERT_TRUE(db_->connect());
+        start_ = wall::point(*wall::parseText("2026-11-28 00:53:28"));
+
+        setenv("CPAP_DEVICE_ID", device_.c_str(), 1);
+        svc_ = std::make_unique<BurstCollectorService>(60);
+        auto pub = std::make_unique<DataPublisherService>(std::shared_ptr<hms::MqttClient>{}, db_);
+        unsetenv("CPAP_DEVICE_ID");
+        svc_->injectDependenciesForTest(db_, nullptr, std::move(pub));
+    }
+    void TearDown() override {
+        svc_.reset();
+        db_.reset();
+        std::filesystem::remove(path_);
+    }
+
+    void storeTheNight(bool with_ledger = true, bool with_str_day = true, bool with_hour = true) {
+        CPAPSession s;
+        s.device_id = device_;
+        s.device_name = "AirSense 10";
+        s.session_start = start_;
+        s.duration_seconds = 7 * 3600 + 32 * 60;
+        ASSERT_TRUE(db_->saveSession(s));
+        ASSERT_TRUE(db_->markSessionCompleted(device_, start_));
+        if (with_ledger) {
+            FolderLedger l;
+            l.date_folder = kI136Folder;
+            l.files_listed = l.complete = l.stable = true;
+            if (with_str_day) l.str_day = kI136Folder;
+            ASSERT_TRUE(db_->upsertSyncFolder(l));
+        }
+        // The card sync saw the night grow ten minutes ago: its hour runs.
+        if (with_hour)
+            ASSERT_TRUE(noteNightGrowth(*db_, device_, kI136Folder, start_,
+                                        std::chrono::system_clock::now() - std::chrono::minutes(10)));
+    }
+};
+
+}  // namespace
+
+TEST_F(Issue136Test, ForceCompleteClosesAPastMidnightNightUnderItsCardFolder) {
+    storeTheNight();
+    ASSERT_EQ(nightStateOn(db_, device_, kI136Day), "live");
+
+    EXPECT_TRUE(svc_->forceCompleteSession(kI136Day));
+
+    EXPECT_EQ(nightStateOn(db_, device_, kI136Day), "complete")
+        << "force_complete closed the night under the start's date, not its card folder";
+    const auto row = quietRowOf(*db_, device_, kI136Folder);
+    ASSERT_TRUE(row.has_value());
+    EXPECT_GT(row->announced, 0);
+    EXPECT_FALSE(quietRowOf(*db_, device_, "20261128").has_value())
+        << "a folder the night is not in was written";
+}
+
+TEST_F(Issue136Test, MqttForceCompleteClosesTheNightToo) {
+    storeTheNight();
+    ASSERT_EQ(nightStateOn(db_, device_, kI136Day), "live");
+
+    EXPECT_TRUE(svc_->forceCompleteLastSession());
+
+    EXPECT_EQ(nightStateOn(db_, device_, kI136Day), "complete");
+    EXPECT_TRUE(db_->isForceCompleted(device_, start_));
+}
+
+TEST_F(Issue136Test, MqttForceCompleteWithNoSessionDoesNothing) {
+    EXPECT_FALSE(svc_->forceCompleteLastSession());
+}
+
+// A Remove night + Reparse deletes the ledger row; the restart after brings it
+// back without its str_day until the folder settles. The night's hour row
+// still names the folder.
+TEST_F(Issue136Test, ALedgerRowWithoutItsStrDayIsFoundByTheNightsHourRow) {
+    storeTheNight(/*with_ledger=*/true, /*with_str_day=*/false);
+    EXPECT_TRUE(svc_->forceCompleteSession(kI136Day));
+    const auto row = quietRowOf(*db_, device_, kI136Folder);
+    ASSERT_TRUE(row.has_value());
+    EXPECT_GT(row->announced, 0);
+    EXPECT_FALSE(quietRowOf(*db_, device_, "20261128").has_value());
+}
+
+TEST_F(Issue136Test, WithNoRecordOfItsFolderTheStartsDateIsClosedAsBefore) {
+    storeTheNight(/*with_ledger=*/false, /*with_str_day=*/false, /*with_hour=*/false);
+    EXPECT_TRUE(svc_->forceCompleteSession(kI136Day));
+    const auto row = quietRowOf(*db_, device_, "20261128");
+    ASSERT_TRUE(row.has_value());
+    EXPECT_GT(row->announced, 0);
+    EXPECT_EQ(nightStateOn(db_, device_, kI136Day), "complete");
+}
+
+// The restart half of #136, run through the real paths: a card sync by
+// bursts, Remove night + Reparse (the backfill from the archive), a restart (a
+// new collector) bursting over the unchanged card, then force_complete, then
+// another restart. [wipe]: the restart starts with an empty working folder (a
+// container recreated) instead of the one the last run left (an add-on
+// restart).
+class Issue136RestartTest : public BurstOrchestrationTest {
+protected:
+    void run(bool wipe);
+};
+
+TEST_F(Issue136RestartTest, WorkingFolderKept) { run(/*wipe=*/false); }
+TEST_F(Issue136RestartTest, WorkingFolderWiped) { run(/*wipe=*/true); }
+
+void Issue136RestartTest::run(bool wipe) {
+    namespace fs = std::filesystem;
+    using namespace std::chrono;
+    const std::string device = "i136r_" + std::to_string(::getpid());
+    const auto path = (fs::temp_directory_path() / (device + ".db")).string();
+    fs::remove(path);
+    auto db = std::make_shared<SQLiteDatabase>(path);
+    ASSERT_TRUE(db->connect());
+
+    const std::string stamp = "20261128_005328";
+    const std::string brp = edfBytes(stamp, "Flow.40ms", false, 30 * 60, 25);
+    const std::string tal = std::string("+0\x14\x14", 4) + '\0' + '\0';
+    const std::string eve = edfBytes(stamp, "EDF Annotations", true, 1, 3, tal);
+    const std::string csl = edfBytes(stamp, "EDF Annotations", true, 1, 3, tal);
+
+    long long now = 1795870800;   // 2026-11-28 13:00 UTC, 09:00 on the machine
+    auto boot = [&]() {
+        auto fake = std::make_unique<FakeDataSource>();
+        fake->date_folders = {kI136Folder};
+        fake->folder_files[kI136Folder] = {
+            mkEntry(stamp + "_BRP.edf", static_cast<int>(brp.size() / 1024)),
+            mkEntry(stamp + "_EVE.edf", 0),
+            mkEntry(stamp + "_CSL.edf", 0),
+        };
+        fake->bytes[stamp + "_BRP.edf"] = brp;
+        fake->bytes[stamp + "_EVE.edf"] = eve;
+        fake->bytes[stamp + "_CSL.edf"] = csl;
+        auto discovery = std::make_unique<SessionDiscoveryService>(*fake);
+        setenv("CPAP_DEVICE_ID", device.c_str(), 1);
+        auto publisher = std::make_unique<DataPublisherService>(std::shared_ptr<hms::MqttClient>{}, db);
+        auto svc = std::make_unique<BurstCollectorService>(60);
+        unsetenv("CPAP_DEVICE_ID");
+        svc->injectDependenciesForTest(db, std::move(fake), std::move(publisher), std::move(discovery));
+        onSdd054Clock(*svc, now);
+        return svc;
+    };
+    auto bursts = [&](BurstCollectorService& svc, std::initializer_list<int> minutes) {
+        const long long t0 = now;
+        for (int m : minutes) {
+            now = t0 + m * kSdd054Min;
+            svc.runBurstCycleForTest();
+        }
+    };
+    auto session = [&] { return db->getSessionStartForSleepDay(device, kI136Day, false); };
+
+    // 1. The card sync: the night stored under its card folder, settled, its
+    //    hour running.
+    auto first = boot();
+    bursts(*first, {0, 1, 2, 3});
+    ASSERT_TRUE(session().has_value()) << "the night was not stored";
+    const auto ledger = db->getSyncFolder(kI136Folder);
+    ASSERT_TRUE(ledger.has_value());
+    EXPECT_EQ(ledger->str_day, kI136Folder);
+    ASSERT_TRUE(quietRowOf(*db, device, kI136Folder).has_value());
+    EXPECT_EQ(nightStateOn(db, device, kI136Day), "live") << "inside its hour";
+    // Its last growth half an hour ago, so a restart that starts the hour
+    // again is seen.
+    const long long grew = night_quiet::epochOf(system_clock::now() - minutes(30));
+    db->executeQuery("UPDATE cpap_night_quiet SET last_growth = ? WHERE device_id = ? AND date_folder = ?",
+                     {std::to_string(grew), device, kI136Folder});
+    first.reset();
+
+    // 2. Remove night, then Reparse from the archive.
+    ASSERT_TRUE(removeNightByDate(*db, device, kI136Day).ok);
+    ASSERT_TRUE(restoreNightByDate(*db, device, kI136Day));
+    {
+        BackfillService::Config cfg;
+        cfg.local_dir = archive_dir.string();
+        cfg.device_id = device;
+        cfg.device_name = "AirSense 10";
+        BackfillService backfill(cfg, db);
+        backfill.start();
+        backfill.trigger(kI136Day, kI136Day);
+        for (int i = 0; i < 100; ++i) {
+            std::this_thread::sleep_for(milliseconds(100));
+            const auto st = backfill.getStatus()["status"].asString();
+            if (st != "running" && st != "idle") break;
+        }
+        backfill.stop();
+        ASSERT_EQ(backfill.getStatus()["status"].asString(), "complete");
+    }
+    ASSERT_TRUE(session().has_value()) << "the reparse did not bring the night back";
+    // The reparse deleted the ledger row, so the page fell back to the
+    // session's own end: this is the "complete after a re-parse".
+    EXPECT_EQ(nightStateOn(db, device, kI136Day), "complete");
+
+    // 3. A restart over the unchanged card: the ledger row comes back, the
+    //    night's hour is not started again.
+    auto restart = [&]() {
+        if (wipe) {
+            fs::remove_all(temp_dir);
+            fs::create_directories(temp_dir);
+        }
+        return boot();
+    };
+    auto second = restart();
+    bursts(*second, {0, 1, 2, 3});
+    const auto back = db->getSyncFolder(kI136Folder);
+    ASSERT_TRUE(back.has_value()) << "the restart did not list the folder";
+    auto row = quietRowOf(*db, device, kI136Folder);
+    ASSERT_TRUE(row.has_value());
+    EXPECT_EQ(row->last_growth, grew) << "the restart saw the unchanged night grow";
+    EXPECT_EQ(row->announced, 0);
+    if (wipe) {
+        // Its files are no longer in the working folder, so the row has not
+        // settled again and carries no str_day: the page still reads the
+        // session's own end.
+        EXPECT_EQ(back->str_day, "");
+        EXPECT_EQ(nightStateOn(db, device, kI136Day), "complete");
+    } else {
+        // Live again, as the issue saw: the row is back with its str_day, and
+        // the hour of the first sync is still running.
+        EXPECT_EQ(back->str_day, kI136Folder);
+        EXPECT_EQ(nightStateOn(db, device, kI136Day), "live");
+    }
+
+    // 4. force_complete: complete.
+    EXPECT_TRUE(second->forceCompleteSession(kI136Day));
+    EXPECT_EQ(nightStateOn(db, device, kI136Day), "complete");
+    second.reset();
+
+    // 5. Another restart: still complete, and the night's own folder is the
+    //    one closed, whatever its ledger row knows yet.
+    auto third = restart();
+    bursts(*third, {0, 1, 2, 3});
+    EXPECT_EQ(nightStateOn(db, device, kI136Day), "complete") << "a restart undid force_complete";
+    row = quietRowOf(*db, device, kI136Folder);
+    ASSERT_TRUE(row.has_value());
+    EXPECT_GT(row->announced, 0);
+
+    third.reset();
+    db.reset();
+    fs::remove(path);
 }
 
 }  // namespace burst_orch
