@@ -56,14 +56,26 @@ bool OximetryService::retainRawFile(const std::string& archive_dir, const std::s
     return true;
 }
 
-bool OximetryService::collectAndPublish() {
+const char* OximetryService::collectStatus(const CollectResult& r) {
+    if (r.saved > 0) return "collected";
+    if (r.download_failed > 0) return "download_failed";
+    if (r.unreachable) return "ring_unreachable";
+    return "no_new_files";
+}
+
+OximetryService::CollectResult OximetryService::collect() {
+    std::lock_guard<std::mutex> collecting(collect_mtx_);
+    CollectResult result;
+
     // Step 1: List available files
     auto files = client_->listFiles();
     if (files.empty()) {
         std::cout << "O2Ring: No files available" << std::endl;
         // Nothing listed: no file yet, or no ring. Its own answer says which.
-        noteFacts(client_->isConnected());
-        return false;
+        const bool connected = client_->isConnected();
+        noteFacts(connected);
+        result.unreachable = !connected;
+        return result;
     }
 
     std::cout << "O2Ring: " << files.size() << " file(s) on device"
@@ -75,7 +87,6 @@ bool OximetryService::collectAndPublish() {
         : removedNightSet(*db_, cpap_device_id_);
 
     // Step 2: Filter out already-processed files
-    bool any_new = false;
     for (const auto& filename : files) {
         // Skip if already processed in this session
         if (processed_files_.count(filename)) {
@@ -102,6 +113,7 @@ bool OximetryService::collectAndPublish() {
         auto data = client_->downloadFile(filename);
         if (data.empty()) {
             std::cerr << "O2Ring: Failed to download " << filename << std::endl;
+            ++result.download_failed;
             continue;
         }
 
@@ -143,7 +155,7 @@ bool OximetryService::collectAndPublish() {
         // Step 4: Save to database
         if (db_->saveOximetrySession(device_id, session.value())) {
             processed_files_.insert(filename);
-            any_new = true;
+            ++result.saved;
             std::cout << "O2Ring: Saved " << filename << " to database" << std::endl;
             // SDD-079 D4: the ring's own file goes to CpapDash, byte for byte.
             oximetry_outbox::stored(session.value(), IDatabase::OximetryOrigin{},
@@ -171,7 +183,7 @@ bool OximetryService::collectAndPublish() {
     }
 
     noteFacts(true);
-    return any_new;
+    return result;
 }
 
 std::vector<std::string> OximetryService::takeSavedNights() {

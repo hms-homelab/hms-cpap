@@ -5,7 +5,10 @@
 #include "clients/O2RingClient.h"
 #include "database/IDatabase.h"
 #include "parsers/CpapdashBridge.h"
+#include <atomic>
+#include <chrono>
 #include <filesystem>
+#include <thread>
 #include <fstream>
 #ifndef _WIN32
 #include <unistd.h>
@@ -915,6 +918,87 @@ TEST_F(LastReadTest, AFileReadThisRunIsNotReplacedByTheOlderOne) {
     EXPECT_EQ(f.last_file, "20260418_220000.vld");
     EXPECT_NEAR(static_cast<double>(f.last_read_at), static_cast<double>(std::time(nullptr)), 5);
     EXPECT_EQ(db->queries, 0) << "a real read means there is nothing to look up";
+}
+
+// ── What a collection reports (issue #135) ──────────────────────────────
+
+TEST_F(OximetryServiceTest, Collect_CountsSavedAndFailedDownloads) {
+    client->files = {"good.vld", "gone.vld"};
+    client->contents["good.vld"] = makeVld(20);   // gone.vld downloads empty
+    EXPECT_CALL(*db, oximetrySessionExists(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db, saveOximetrySession(_, _)).WillOnce(Return(true));
+
+    const auto r = svc->collect();
+    EXPECT_EQ(r.saved, 1);
+    EXPECT_EQ(r.download_failed, 1);
+    EXPECT_FALSE(r.unreachable);
+    EXPECT_STREQ(OximetryService::collectStatus(r), "collected");
+}
+
+TEST_F(OximetryServiceTest, Collect_AFailedDownloadIsNotNoNewFiles) {
+    client->files = {"gone.vld"};
+    EXPECT_CALL(*db, oximetrySessionExists(_, _)).WillRepeatedly(Return(false));
+
+    const auto r = svc->collect();
+    EXPECT_EQ(r.saved, 0);
+    EXPECT_EQ(r.download_failed, 1);
+    EXPECT_STREQ(OximetryService::collectStatus(r), "download_failed");
+}
+
+TEST_F(OximetryServiceTest, Collect_NothingListedAndNoAnswerIsUnreachable) {
+    client->files.clear();
+    client->connected = false;
+
+    const auto r = svc->collect();
+    EXPECT_TRUE(r.unreachable);
+    EXPECT_STREQ(OximetryService::collectStatus(r), "ring_unreachable");
+}
+
+TEST_F(OximetryServiceTest, Collect_NothingListedFromARingThatAnswersIsNoNewFiles) {
+    client->files.clear();
+    client->connected = true;
+
+    const auto r = svc->collect();
+    EXPECT_FALSE(r.unreachable);
+    EXPECT_STREQ(OximetryService::collectStatus(r), "no_new_files");
+}
+
+TEST_F(OximetryServiceTest, Collect_AFileAlreadyStoredIsNoNewFiles) {
+    client->files = {"old.vld"};
+    EXPECT_CALL(*db, oximetrySessionExists(_, _)).WillRepeatedly(Return(true));
+    EXPECT_STREQ(OximetryService::collectStatus(svc->collect()), "no_new_files");
+}
+
+// A ring whose download takes a while, counting downloads from any thread.
+class SlowO2RingClient : public FakeO2RingClient {
+public:
+    std::atomic<int> downloads{0};
+    std::vector<uint8_t> downloadFile(const std::string& filename) override {
+        ++downloads;
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        auto it = contents.find(filename);
+        return it == contents.end() ? std::vector<uint8_t>{} : it->second;
+    }
+};
+
+TEST(OximetryCollectOneAtATime, TwoAsksAtOnceReadAFileOnce) {
+    auto ring = std::make_shared<SlowO2RingClient>();
+    ring->files = {"20260418_220000.vld"};
+    ring->contents["20260418_220000.vld"] = makeVld(20);
+    auto db = std::make_shared<NiceMock<MockDatabase>>();
+    ON_CALL(*db, oximetrySessionExists(_, _)).WillByDefault(Return(false));
+    EXPECT_CALL(*db, saveOximetrySession(_, _)).Times(1).WillOnce(Return(true));
+    OximetryService svc(ring, db);
+
+    // The collect endpoint and the collection cycle, both asking.
+    OximetryService::CollectResult a, b;
+    std::thread endpoint([&] { a = svc.collect(); });
+    std::thread cycle([&] { b = svc.collect(); });
+    endpoint.join();
+    cycle.join();
+
+    EXPECT_EQ(ring->downloads.load(), 1) << "the second ask waits, then finds it read";
+    EXPECT_EQ(a.saved + b.saved, 1);
 }
 
 }  // namespace oxi_service

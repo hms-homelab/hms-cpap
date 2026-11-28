@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <mutex>
 #include <curl/curl.h>
 #include "utils/FailureLogThrottle.h"
 
@@ -54,8 +55,31 @@ public:
 
     std::string getBaseURL() const { return base_url_; }
 
+protected:
+    /// Called for each piece of a reply body before it is kept. Does nothing;
+    /// a test overrides it to throw, which is what a failed append looks like
+    /// (#135: a std::bad_alloc inside the write callback).
+    virtual void onBodyChunk(size_t /*bytes*/) {}
+
 private:
+    /// Where a reply body goes: one of the two, and the client for onBodyChunk.
+    struct WriteTarget {
+        O2RingClient* self = nullptr;
+        std::string* text = nullptr;
+        std::vector<uint8_t>* bytes = nullptr;
+    };
+
+    /// A fresh handle after a failed request, so no failure sticks to the
+    /// handle. Called with curl_mtx_ held.
+    void renewHandle();
+
     CURL* curl_;
+    // The one handle, one request at a time. The collect endpoint downloads on
+    // a web thread while the collection cycle polls /o2ring/live; a poll that
+    // set the handle's options mid-download sent the file's bytes into its own
+    // buffer, and the exception that threw out of curl's callback left the
+    // handle answering "Failed initialization" to every request after.
+    std::mutex curl_mtx_;
     // Collapses repeated identical HTTP failures (offline device) into one
     // line plus periodic summaries, instead of one error per poll cycle.
     FailureLogThrottle http_fail_log_;
