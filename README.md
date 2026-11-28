@@ -41,7 +41,7 @@ and shows you the data. It is a fully local-first experience.
 
 **How each machine gets here**
 
-| Machine | Card reader or upload page | Sleep Bridge Lite | Bluetooth from this computer | Mule & Miner (Bluetooth) | Mule & Miner (WiFi SD card, ez Share) | Toshiba FlashAir |
+| Machine | Card reader or upload page | [Sleep Bridge Lite](https://www.cpapdash.com/hardware/sleep-bridge-lite) | Bluetooth from this computer | [Mule & Miner](https://www.cpapdash.com/hardware/mule-miner) (Bluetooth) | [Mule & Miner](https://www.cpapdash.com/hardware/mule-miner) (WiFi SD card, ez Share) | Toshiba FlashAir |
 |---|---|---|---|---|---|---|
 | ResMed AirSense 10 | ✅ after the night | ✅ live | ❌ | ❌ | ✅ live | ✅ live |
 | ResMed AirSense 11 | ✅ after the night | ✅ live | ✅ live | ✅ live | ✅ live | Not tested yet |
