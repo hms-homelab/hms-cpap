@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "services/As11CardEdf.h"
+#include "services/CardFileFeed.h"
 #include "services/As11NightWriter.h"
 #include "services/As11StrWriter.h"
 
@@ -739,6 +740,29 @@ TEST_F(NightTest, StrictBlocksAFewMsLateStayOneSegment) {
     w2.onStreamEnd(kSerial);
     EXPECT_TRUE(fs::exists(fs::path(dir_.string() + "_b") / "as11" / kSerial / "DATALOG" / "20261016" /
                            "20261016_220020_BRP.edf"));
+}
+
+// A segment under a second has no whole one-second BRP record: no BRP is
+// written for it (an empty file is not a card's), and none is noted for the
+// uploader. Its PLD still carries what the slow channels gave.
+TEST_F(NightTest, ASegmentUnderASecondWritesNoEmptyBrp) {
+    std::vector<std::string> noted;
+    card_feed::setSinks([&](const std::string&, const std::string& rel, const std::string&, const std::string&) {
+        noted.push_back(rel);
+    }, nullptr);
+    As11NightWriter w(dir_.string(), fixedOffsetClock(-300), true);
+    StreamBlock part = second(kT0, {{kLeak, 200}});
+    for (auto& c : part.channels) if (c.cadence == 0) c.values.resize(15);   // 600 ms
+    w.onBlock(part);
+    for (int i = 0; i < 10; ++i) w.onBlock(second(kT0 + 5000 + i * 1000));   // its own segment
+    w.onStreamEnd(kSerial);
+    card_feed::setSinks(nullptr, nullptr);
+
+    EXPECT_FALSE(fs::exists(night() / "20261016_220000_BRP.edf"));
+    EXPECT_TRUE(fs::exists(night() / "20261016_220000_PLD.edf"));
+    EXPECT_EQ(records(night() / "20261016_220005_BRP.edf"), 10);
+    for (const auto& f : files(night())) EXPECT_GT(fs::file_size(night() / f), 0u) << f;
+    for (const auto& rel : noted) EXPECT_EQ(rel.find("20261016_220000_BRP"), std::string::npos) << rel;
 }
 
 // The Settings switch reaches a running writer: from the next block on.

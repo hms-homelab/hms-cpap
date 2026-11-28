@@ -81,9 +81,12 @@ bool writeFileAtomic(const fs::path& path, const std::vector<uint8_t>& bytes) {
 }
 
 // A card file of the night, written whole and moved into place, then noted for
-// the CpapDash uploader (platform SDD-059 D3) once it is on disk.
+// the CpapDash uploader (platform SDD-059 D3) once it is on disk. Nothing to
+// write (an EDF of no whole record, as a segment under a second makes for its
+// BRP) writes no file: a card has no empty EDF, and an empty one is not noted.
 bool writeCardFile(const fs::path& root, const fs::path& path, const std::vector<uint8_t>& bytes,
                    const std::string& serial) {
+    if (bytes.empty()) return false;
     if (!writeFileAtomic(path, bytes)) return false;
     std::error_code ec;
     const auto rel = fs::relative(path, root, ec).generic_string();
