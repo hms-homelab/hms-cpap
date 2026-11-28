@@ -14,7 +14,7 @@ export const DEFAULT_SETUP_SOURCE: SetupSource = 'sleepbridge';
 
 /** What the user filled in beside the choice. */
 export interface SetupSourceInputs {
-  /** The machine behind an ez Share or a Mule and Miner. */
+  /** The machine behind an ez Share, a Mule and Miner or a FlashAir. */
   cardFormat: string;
   /** The machine that wrote a local folder. */
   localFormat: string;
@@ -46,7 +46,8 @@ export function sourceConfig(source: SetupSource, i: SetupSourceInputs): Record<
       return { source: 'ezshare', transport: 'ezshare', format: i.cardFormat,
                ezshare_url: i.ezshareUrl };
     case 'flashair':
-      return { source: 'flashair', transport: 'flashair', format: 'resmed',
+      // The machine the FlashAir sits in, asked as for an ez Share.
+      return { source: 'flashair', transport: 'flashair', format: i.cardFormat,
                flashair_url: i.flashairUrl };
     case 'local':
       // SDD-022: a folder is ONE transport read by several parsers.

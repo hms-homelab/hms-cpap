@@ -324,6 +324,8 @@ public:
     /// Apply a pending config change synchronously. Test-only — drives the same
     /// reloadConfig() path the worker thread runs when markConfigDirty() fires.
     void reloadConfigForTest() { reloadConfig(); }
+    /// Build the source from CPAP_TRANSPORT/CPAP_FORMAT as a start does. Test-only.
+    void initDataSourceForTest() { initDataSource(); }
     void setAirSense11PairingForTest(std::shared_ptr<IAirSense11Pairing> p) {
         std::lock_guard<std::mutex> lk(airsense11_mtx_);
         airsense11_pairing_ = std::move(p);
@@ -350,6 +352,14 @@ public:
     /// SDD-058 D6: the gate is closed in every build; only a test opens it,
     /// to exercise what the computed events would do.
     void setComputedEventsOpenForTest(bool open) { computed_events_open_ = open; }
+
+    /// Test-only: the card client the collector reads through, by the name its
+    /// log lines use ("ez Share", "the FlashAir"), "" when it has none.
+    std::string dataSourceNameForTest() const {
+        return data_source_ ? data_source_->sourceName() : std::string();
+    }
+    /// Test-only: the source everything downstream compares against.
+    const std::string& cpapSourceForTest() const { return cpap_source_; }
 
     /// Test-only: the id nights are being stored under (SDD-042).
     const std::string& deviceIdForTest() const { return device_id_; }
@@ -549,20 +559,25 @@ private:
     /// Bluetooth DreamStation 2 night is.
     void publishOscarNight();
 
-    /// SDD-031: a Sefam card behind an ez Share. data_source_ is the ez Share
-    /// client; each burst copies the card into sefam_archive_dir_ and the
-    /// Sefam ingestion reads it there.
+    /// The client for a card read over WiFi: a FlashAir, or an ez Share (the
+    /// card, or a Mule and Miner serving the same pages).
+    std::unique_ptr<IDataSource> makeWifiCardClient(bool flashair) const;
+
+    /// SDD-031: a Sefam card behind an ez Share, or behind a FlashAir.
+    /// data_source_ is that card's client; each burst copies the card into
+    /// sefam_archive_dir_ and the Sefam ingestion reads it there. The flag's
+    /// name is from when an ez Share was the only such card.
     bool sefam_over_ezshare_ = false;
     std::string sefam_archive_dir_;
-    void startSefamOverEzShare(const std::string& archive_dir);
+    void startSefamOverCard(const std::string& archive_dir, bool flashair);
 
-    /// SDD-060: a Luna card behind an ez Share, or a Mule and Miner in local
-    /// mode. data_source_ is the ez Share client; each burst copies the card's
-    /// root files into bmc_mirror_dir_ (<archive>/bmc) and the BMC ingestion
-    /// reads them there.
+    /// SDD-060: a Luna card behind an ez Share (or a Mule and Miner in local
+    /// mode), or behind a FlashAir. data_source_ is that card's client; each
+    /// burst copies the card's root files into bmc_mirror_dir_ (<archive>/bmc)
+    /// and the BMC ingestion reads them there.
     bool bmc_over_ezshare_ = false;
     std::string bmc_mirror_dir_;
-    void startBmcOverEzShare(const std::string& archive_dir);
+    void startBmcOverCard(const std::string& archive_dir, bool flashair);
 
     // Services
     std::unique_ptr<SessionDiscoveryService> discovery_service_;

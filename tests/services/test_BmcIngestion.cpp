@@ -7,12 +7,17 @@
 #include <gtest/gtest.h>
 #include "utils/TimeCompat.h"
 
+#include "clients/FlashAirClient.h"
 #include "database/SQLiteDatabase.h"
 #include "services/BmcCardMirror.h"
 #include "services/BmcIngestion.h"
 #include "services/BurstCollectorService.h"
 #include "services/CardUpload.h"
 #include "services/DataPublisherService.h"
+#include "utils/AppConfig.h"
+
+#include "FakeFlashAir.h"
+#include "PosixCompat.h"
 
 #include <filesystem>
 #include <fstream>
@@ -418,4 +423,158 @@ TEST_F(BmcCardTest, ASessionBegunWhileWatchedIsOpenAndThePreviousOneIsClosed) {
         "SELECT session_end AS v FROM cpap_sessions WHERE device_id = ?"
         " ORDER BY session_start ASC LIMIT 1", {svc.deviceIdForTest()});
     EXPECT_FALSE(earlier[0]["v"].isNull()) << "the earlier session is closed";
+}
+
+// ── A Luna card in a Toshiba FlashAir ───────────────────────────────────────
+//
+// The FlashAir in the Luna's slot, on the home WiFi: a loopback server that
+// answers as the card does (op=100 listings of DIR=/, files at their card
+// path, Range honoured with a 206, a missing file a 307 to http://flashair/),
+// serving a folder. The collector reaches it through its own FlashAirClient.
+
+
+// The mirror over a real FlashAirClient: the five root files copied, and a
+// night that went on appended from the card ROOT, not looked for in a DATALOG.
+TEST_F(BmcCardTest, ThroughAFlashAirTheCopyReadsAsTheCardDoesAndTheRawFileIsAppended) {
+    const fs::path card = root_ / "card";
+    const fs::path copy = root_ / "archive" / "bmc";
+    writeCard(card, 1800);
+    FakeFlashAir fa(card);
+    FlashAirClient client;
+    client.setBaseURL(fa.baseUrl());
+
+    auto m = mirrorBmcCard(client, copy.string());
+    ASSERT_TRUE(m.ok) << m.error;
+    EXPECT_EQ(m.stem, kSerial);
+    EXPECT_EQ(m.fetched, 3);
+    auto read = BmcIngestion(copy.string()).readSessions("dev", "Luna");
+    ASSERT_TRUE(read.ok) << read.error;
+    ASSERT_EQ(read.sessions.size(), 2u);
+    EXPECT_EQ(read.sessions[1]->duration_seconds.value_or(0), 1800);
+
+    fa.clearRequests();
+    writeCard(card, 3600);
+    m = mirrorBmcCard(client, copy.string());
+    ASSERT_TRUE(m.ok) << m.error;
+    EXPECT_EQ(m.appended, 1) << "only the rest of the .000 was fetched";
+    EXPECT_TRUE(fa.asked(std::string("GET /") + kSerial + ".000 range="));
+    EXPECT_FALSE(fa.asked("/DATALOG")) << "a Luna card has no DATALOG";
+    read = BmcIngestion(copy.string()).readSessions("dev", "Luna");
+    ASSERT_TRUE(read.ok) << read.error;
+    EXPECT_EQ(read.sessions[1]->duration_seconds.value_or(0), 3600);
+    EXPECT_EQ(read.sessions[1]->metrics->obstructive_apneas, 1);
+}
+
+// transport flashair + format bmc, set in Settings: the burst copies the card
+// off the FlashAir into <archive>/bmc and stores its nights, and a night that
+// went on is read longer.
+TEST_F(BmcCardTest, ALunaOnAFlashAirSetInSettingsIsCopiedAndItsNightsStored) {
+    const fs::path card = root_ / "card";
+    writeCard(card, 1800);
+    FakeFlashAir fa(card);
+    auto db = std::make_shared<SQLiteDatabase>((root_ / "cpap.db").string());
+    ASSERT_TRUE(db->connect());
+
+    BurstCollectorService svc(60);
+    svc.injectDependenciesForTest(
+        db, nullptr,
+        std::make_unique<DataPublisherService>(std::shared_ptr<hms::MqttClient>{}, db));
+    AppConfig cfg;
+    cfg.transport = "flashair";
+    cfg.format = "bmc";
+    cfg.flashair_url = fa.baseUrl();
+    cfg.archive_dir = (root_ / "archive").string();
+    cfg.mqtt.enabled = false;
+    svc.setAppConfig(&cfg);
+    svc.markConfigDirty();
+    svc.reloadConfigForTest();
+    EXPECT_EQ(svc.dataSourceNameForTest(), "the FlashAir");
+    EXPECT_EQ(svc.cpapSourceForTest(), "bmc") << "a BMC source to everything downstream";
+
+    const auto number = [&](const std::string& sql) {
+        const Json::Value rows = db->executeQuery(sql, {svc.deviceIdForTest()});
+        if (!rows.isArray() || rows.empty()) return -1.0;
+        const Json::Value& v = rows[0]["v"];
+        return v.isString() ? std::stod(v.asString()) : v.asDouble();
+    };
+    ASSERT_TRUE(svc.runBurstCycleForTest());
+    EXPECT_EQ(number("SELECT COUNT(*) AS v FROM cpap_sessions WHERE device_id = ?"), 2);
+    EXPECT_TRUE(fs::exists(root_ / "archive" / "bmc" / (std::string(kSerial) + ".000")));
+
+    writeCard(card, 3600);
+    ASSERT_TRUE(svc.runBurstCycleForTest());
+    EXPECT_EQ(number("SELECT COUNT(*) AS v FROM cpap_sessions WHERE device_id = ?"), 2);
+    EXPECT_EQ(number("SELECT MAX(duration_seconds) AS v FROM cpap_sessions WHERE device_id = ?"), 3600);
+    EXPECT_FALSE(fa.asked("/DATALOG"));
+}
+
+// The same Luna moved between an ez Share and a FlashAir in Settings: the
+// client follows the transport, the source stays BMC, and no restart.
+TEST(BmcFlashAirReload, ALunaSwitchesBetweenAnEzShareAndAFlashAirWithoutARestart) {
+    const auto archive = fs::temp_directory_path() / ("hms_bmc_switch_" + std::to_string(::getpid()));
+    BurstCollectorService svc(60);
+    AppConfig cfg;
+    cfg.transport = "ezshare";
+    cfg.format = "bmc";
+    cfg.ezshare_url = "http://127.0.0.1:1";
+    cfg.flashair_url = "http://127.0.0.1:1";
+    cfg.archive_dir = archive.string();
+    cfg.mqtt.enabled = false;
+    svc.setAppConfig(&cfg);
+    svc.markConfigDirty();
+    svc.reloadConfigForTest();
+    EXPECT_EQ(svc.dataSourceNameForTest(), "ez Share");
+    EXPECT_EQ(svc.cpapSourceForTest(), "bmc");
+
+    cfg.transport = "flashair";
+    svc.markConfigDirty();
+    svc.reloadConfigForTest();
+    EXPECT_EQ(svc.dataSourceNameForTest(), "the FlashAir");
+    EXPECT_EQ(svc.cpapSourceForTest(), "bmc");
+
+    cfg.transport = "ezshare";
+    svc.markConfigDirty();
+    svc.reloadConfigForTest();
+    EXPECT_EQ(svc.dataSourceNameForTest(), "ez Share");
+    EXPECT_EQ(svc.cpapSourceForTest(), "bmc");
+
+    // A ResMed card on the FlashAir is still the ResMed path.
+    cfg.transport = "flashair";
+    cfg.format = "resmed";
+    svc.markConfigDirty();
+    svc.reloadConfigForTest();
+    EXPECT_EQ(svc.dataSourceNameForTest(), "the FlashAir");
+    EXPECT_EQ(svc.cpapSourceForTest(), "flashair");
+
+    // And a Sefam card behind one is read through a copy, as behind an ez Share.
+    cfg.format = "sefam";
+    svc.markConfigDirty();
+    svc.reloadConfigForTest();
+    EXPECT_EQ(svc.dataSourceNameForTest(), "the FlashAir");
+    EXPECT_EQ(svc.cpapSourceForTest(), "sefam");
+    std::error_code ec;
+    fs::remove_all(archive, ec);
+}
+
+// At start, from CPAP_TRANSPORT/CPAP_FORMAT, the same as on a reload.
+TEST(BmcFlashAirReload, AStartWithALunaOnAFlashAirBuildsTheFlashAirCopy) {
+    setenv("CPAP_TRANSPORT", "flashair", 1);
+    setenv("CPAP_FORMAT", "bmc", 1);
+    setenv("CPAP_ARCHIVE_DIR", (fs::temp_directory_path() / "hms_bmc_start").string().c_str(), 1);
+    setenv("FLASHAIR_BASE_URL", "http://127.0.0.1:1", 1);
+    BurstCollectorService svc(60);
+    svc.initDataSourceForTest();
+    EXPECT_EQ(svc.dataSourceNameForTest(), "the FlashAir");
+    EXPECT_EQ(svc.cpapSourceForTest(), "bmc");
+
+    setenv("CPAP_FORMAT", "sefam", 1);
+    BurstCollectorService sefam(60);
+    sefam.initDataSourceForTest();
+    EXPECT_EQ(sefam.dataSourceNameForTest(), "the FlashAir");
+    EXPECT_EQ(sefam.cpapSourceForTest(), "sefam");
+
+    unsetenv("CPAP_TRANSPORT");
+    unsetenv("CPAP_FORMAT");
+    unsetenv("CPAP_ARCHIVE_DIR");
+    unsetenv("FLASHAIR_BASE_URL");
 }

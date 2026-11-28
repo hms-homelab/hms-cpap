@@ -1,5 +1,7 @@
 #include "sleepbridge/BridgeSource.h"
 
+#include "services/SefamIngestion.h"   // SefamIngestion::holdsCard
+
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
@@ -32,7 +34,19 @@ std::string formatForBrand(const std::string& brand) {
     if (b.find("philips") != std::string::npos || b.find("respironics") != std::string::npos ||
         b.find("dreamstation") != std::string::npos)
         return "philips";
+    // A Sefam card learned on a computer (the upload page's name for it).
+    if (b.find("sefam") != std::string::npos) return "sefam";
     return {};
+}
+
+bool holdsSefamCard(const std::string& dir) {
+    // A ResMed card is not walked: the bridge status asks this on every
+    // answer, and a DATALOG holds hundreds of night folders.
+    std::error_code ec;
+    if (dir.empty() || fs::exists(fs::path(dir) / "DATALOG", ec) ||
+        fs::exists(fs::path(dir) / "STR.edf", ec))
+        return false;
+    return SefamIngestion::holdsCard(dir);
 }
 
 bool holdsPhilipsCard(const std::string& dir) {
@@ -71,6 +85,7 @@ std::optional<BridgeSource> bridgeSource(const Json::Value& status, const std::s
         // DreamStation 2's folder holds P-SERIES/, read as a Philips card
         // (through OSCAR when encrypted), never as the ResMed default.
         if (s.format.empty() && holdsPhilipsCard(s.local_dir)) s.format = "philips";
+        if (s.format.empty() && holdsSefamCard(s.local_dir)) s.format = "sefam";
         if (s.format.empty() && status["learned_card"].isObject())
             s.format = formatForBrand(status["learned_card"].get("brand", "").asString());
         s.format_known = !s.format.empty();

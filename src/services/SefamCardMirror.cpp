@@ -198,7 +198,7 @@ SefamMirrorResult mirrorSefamCard(IDataSource& card, const std::string& archive_
     const auto root_entries = card.listDir("");
     ++p.r.dirs_listed;
     if (root_entries.empty()) {
-        p.r.error = "the ez Share did not answer a listing of the card root";
+        p.r.error = card.sourceName() + " did not answer a listing of the card root";
         return p.r;
     }
     p.walkEntries(root_entries, "", "", kMaxDepth, whole_card);
@@ -208,7 +208,7 @@ SefamMirrorResult mirrorSefamCard(IDataSource& card, const std::string& archive_
         for (const auto& [rel, sig] : p.manifest) out << rel << "\t" << sig << "\n";
     }
     p.r.ok = true;
-    std::cout << "Sefam ez Share: " << (whole_card ? "whole card" : "last two nights") << ", "
+    std::cout << "Sefam card copy (" << card.sourceName() << "): " << (whole_card ? "whole card" : "last two nights") << ", "
               << p.r.dirs_listed << " folder(s) listed, " << p.r.fetched << " file(s) fetched, "
               << p.r.unchanged << " unchanged, " << p.r.failed << " failed" << std::endl;
     return p.r;

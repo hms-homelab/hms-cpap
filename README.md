@@ -48,9 +48,9 @@ and shows you the data. It is a fully local-first experience.
 | ResMed AirCurve 10 | ✅ after the night | ✅ live | ❌ | ❌ | ✅ live | ✅ live |
 | ResMed AirCurve 11 | ✅ after the night | ✅ live | ✅ live | ✅ live | ✅ live | Not tested yet |
 | Philips DreamStation 2 | ✅ after the night, through OSCAR | ✅ live, through OSCAR | ✅ after the night | ✅ after the night | ❌ | ❌ |
-| BMC / React Health Luna | ✅ after the night | ✅ live | ❌ | ❌ | ✅ after the night | ❌ |
+| BMC / React Health Luna | ✅ after the night | ✅ live | ❌ | ❌ | ✅ after the night | Not tested yet |
 | Löwenstein Prisma Line, Prisma Smart | ✅ after the night | ❌ | ❌ | ❌ | ❌ | ❌ |
-| Sefam S.Box, SleepBox | ✅ after the night | ❌ | ❌ | ❌ | Not tested yet | ❌ |
+| Sefam S.Box, SleepBox | ✅ after the night | Not tested yet | ❌ | ❌ | Not tested yet | Not tested yet |
 
 ✅ live: charts update during therapy. ✅ after the night: the night arrives
 once it has ended. ❌: not supported. Not tested yet: the code reads it, not
@@ -193,8 +193,10 @@ The device and what it does are introduced in
 [Introducing Sleep Bridge Lite](https://www.cpapdash.com/blog/introducing-sleep-bridge-lite).
 
 Supported today: ResMed AirSense 10 and 11, AirCurve 10 and 11, and the BMC
-Luna G3, live. A Philips DreamStation 2 encrypts its card, so on a
-Sleep Bridge Lite it is read through the OSCAR you install yourself, live
+Luna G3, live. A Sefam S.Box card rebuilt by a Lite is read by its files
+as a Sefam card; that is not tested yet on a real machine. A Philips
+DreamStation 2 encrypts its card, so on a Sleep Bridge Lite it is read
+through the OSCAR you install yourself, live
 once OSCAR is paired; it is also read over Bluetooth (2 and 3 below).
 The brand work happens once, in the bridge, and hms-cpap
 reads a card as it always has. That is what makes hms-cpap brand agnostic,
@@ -431,9 +433,11 @@ can take hours.
 needed. Set it to join your network (`APPMODE=5` in its `SD_WLAN/CONFIG`)
 and pick FlashAir in the wizard; it is found as `http://flashair.local`, or
 give its address. In `config.json`: `"transport": "flashair"`,
-`"flashair_url": "http://flashair.local"`, and an `archive_dir`. ResMed
-cards only. Tested on a FlashAir W-02 in an AirSense 10, read live through a
-full night.
+`"flashair_url": "http://flashair.local"`, and an `archive_dir`. Tested on a
+FlashAir W-02 in an AirSense 10, read live through a full night. A BMC Luna
+card (`"format": "bmc"`) and a Sefam S.Box card (`"format": "sefam"`) in a
+FlashAir are read the way an ez Share reads them, through a copy of the card
+in `archive_dir`; neither is tested yet on a real machine.
 
 #### 5. Local folder and the upload page
 

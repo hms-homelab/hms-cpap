@@ -8,7 +8,8 @@
 // What it sets: the Local folder source at the bridge's own card folder, read
 // with the card format of the machine the bridge's card was recognised as
 // (`card_format`: "resmed" or "bmc"; a folder holding P-SERIES/ is "philips",
-// SDD-080 D1). Before the rebuild has recognised it,
+// SDD-080 D1, and one holding a Sefam card is "sefam"). Before the rebuild has
+// recognised it,
 // the card learned on this computer names its brand (a label, but the only
 // word there is); with neither, ResMed, this build's default format.
 //
@@ -25,7 +26,7 @@ namespace hms_cpap::sleepbridge {
 
 struct BridgeSource {
     std::string local_dir;
-    std::string format;          // "resmed" | "bmc" | "philips" (SDD-080 D1)
+    std::string format;          // "resmed" | "bmc" | "philips" (SDD-080 D1) | "sefam"
     bool        format_known{false};   // from the bridge's card or the learned card's brand
 };
 
@@ -33,13 +34,19 @@ struct BridgeSource {
 /// `why` when the bridge is not listed or has no folder.
 std::optional<BridgeSource> bridgeSource(const Json::Value& status, const std::string& sender, std::string* why);
 
-/// "resmed", "bmc" or "philips" for a learned card's brand label, "" when it
-/// names none of them.
+/// "resmed", "bmc", "philips" or "sefam" for a learned card's brand label, ""
+/// when it names none of them.
 std::string formatForBrand(const std::string& brand);
 
 /// SDD-080 D1: [dir] holds a Philips card (P-SERIES/<machine>/PROP.BIN or
 /// PROP.TXT), as a Sleep Bridge on a DreamStation 2 rebuilds one.
 bool holdsPhilipsCard(const std::string& dir);
+
+/// [dir] holds a Sefam S.Box or SleepBox card: a session folder whose
+/// manifest the Sefam reader accepts, as the upload page recognises one. The
+/// rebuild names ResMed and Luna cards only, so a bridge in an S.Box is known
+/// by the files it rebuilt.
+bool holdsSefamCard(const std::string& dir);
 
 /// {"t":"sleepbridge","event":<event>,"sender":<sender>,"status":<status>}.
 /// Events: snapshot (on connect), hello (a bridge's own hello, never a

@@ -450,6 +450,8 @@ if(BUILD_WITH_WEB AND NOT WIN32)
         ${CMAKE_SOURCE_DIR}/src/utils/MachineClocks.cpp
         # SDD-058 D1: the live Luna night reads its card as the burst does.
         ${CMAKE_SOURCE_DIR}/src/services/BmcIngestion.cpp
+        # A Sefam card copied off a FlashAir is named by the card's own files.
+        ${CMAKE_SOURCE_DIR}/src/services/SefamIngestion.cpp
         ${STR_LAYOUTS_SOURCE}
     )
     # CURL::libcurl: the Mule & Miner's firmware updater (src/mule/MuleFirmware.cpp)

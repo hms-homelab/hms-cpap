@@ -126,14 +126,17 @@ struct AppConfig {
     /// at start and on a Settings reload. "local" for a ResMed folder, the
     /// format for any other folder, "sefam_ezshare" for a Sefam card behind an
     /// ez Share (SDD-031), "bmc_ezshare" for a Luna card behind one (SDD-060),
-    /// else the transport. A Löwenstein behind an ez Share is not a pair: the
-    /// Prisma answers the ez Share with error 601.
+    /// "sefam_flashair" and "bmc_flashair" for the same cards behind a
+    /// FlashAir, read the same way, else the transport. A Löwenstein behind an
+    /// ez Share is not a pair: the Prisma answers the ez Share with error 601.
     static std::string collectorSource(const std::string& transport,
                                        const std::string& format) {
         if (transport == "local") return format == "resmed" ? "local" : format;
         if (transport == "ezshare" && format == "sefam") return "sefam_ezshare";
         if (transport == "ezshare" && format == "bmc") return "bmc_ezshare";
         if (transport == "ezshare" && format == "philips") return "philips_ezshare";
+        if (transport == "flashair" && format == "sefam") return "sefam_flashair";
+        if (transport == "flashair" && format == "bmc") return "bmc_flashair";
         return transport;
     }
 

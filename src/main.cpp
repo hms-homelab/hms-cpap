@@ -218,6 +218,9 @@ void printConfiguration() {
     } else if (source == "philips") {
         std::cout << "  Source:             Philips Respironics (experimental)" << std::endl;
         std::cout << "  Card Dir:           " << hms_cpap::ConfigManager::get("CPAP_LOCAL_DIR", "(not set)") << std::endl;
+    } else if (source == "flashair") {
+        std::cout << "  Source:             Toshiba FlashAir" << std::endl;
+        std::cout << "  FlashAir URL:       " << hms_cpap::ConfigManager::get("FLASHAIR_BASE_URL", "http://flashair.local") << std::endl;
     } else {
         std::cout << "  Source:             ez Share" << std::endl;
         std::cout << "  ez Share URL:       " << hms_cpap::ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;

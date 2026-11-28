@@ -25,5 +25,6 @@ test('in use only as a local folder source at that folder', () => {
 test('the card format is named, or not known yet', () => {
   assert.equal(formatLabel('resmed'), 'ResMed');
   assert.equal(formatLabel('bmc'), 'BMC / React Health Luna');
+  assert.equal(formatLabel('sefam'), 'Sefam S.Box');
   assert.equal(formatLabel(''), null);
 });
